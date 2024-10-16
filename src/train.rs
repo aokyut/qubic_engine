@@ -5,11 +5,11 @@ use rand::Rng;
 
 const EPOCH: usize = 10;
 const DEPTH: u8 = 3;
-const DATASET_SIZE: usize = 2 << 11;
-const BATCH_SIZE: usize = 2 << 5;
-const BATCH_NUM: usize = 2 << 8;
+const DATASET_SIZE: usize = 2 << 13;
+const BATCH_SIZE: usize = 2 << 6;
+const BATCH_NUM: usize = 2 << 13;
 const LAMBDA: f32 = 0.5;
-const EVAL_NUM: usize = 5;
+const EVAL_NUM: usize = 20;
 
 #[derive(Debug)]
 pub struct Transition {
@@ -170,5 +170,7 @@ pub fn train() {
 
             println!("[loss]:{}", loss.get_item().unwrap());
         }
+
+        model.save(format!("test_graph"));
     }
 }
