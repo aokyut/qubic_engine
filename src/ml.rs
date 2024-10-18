@@ -1,5 +1,4 @@
 pub mod funcs;
-pub mod mm;
 pub mod ops;
 pub mod optim;
 pub mod params;
@@ -225,7 +224,7 @@ pub struct Graph {
     parameters: Vec<usize>,
     inputs: Vec<Vec<usize>>,
     output: Vec<usize>,
-    target: usize,
+    pub target: usize,
 }
 
 impl Graph {
@@ -280,10 +279,11 @@ impl Graph {
         assert_eq!(placeholder.len(), input_vec.len());
         let mut flows = vec![None; self.layers.len()];
 
+        // println!("placeholder:{placeholder:?}");
         for i in 0..placeholder.len() {
             let id = placeholder[i];
 
-            let input = std::mem::replace(&mut input_vec[id], Tensor::null());
+            let input = std::mem::replace(&mut input_vec[i], Tensor::null());
             flows[id] = Some(input);
         }
 
@@ -312,6 +312,7 @@ impl Graph {
             flows[tar] = Some(out);
         }
         let output = flows[self.target].clone().unwrap();
+        // println!("{flows:?}");
         return output.clone();
     }
 

@@ -659,6 +659,15 @@ pub fn mcts_action(board: &Board, n: usize, ex_n: usize) -> u8 {
 pub trait GetAction {
     fn get_action(&self, b: &Board) -> u8;
 }
+pub trait GetActionMut {
+    fn get_action_mut(&mut self, b: &Board) -> u8;
+}
+
+impl<T: GetAction> GetActionMut for T {
+    fn get_action_mut(&mut self, b: &Board) -> u8 {
+        return self.get_action(b);
+    }
+}
 
 pub enum Agent {
     Human,
@@ -795,10 +804,12 @@ pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize) -> (f32, f
 
     for i in 0..n {
         let (s1, s2) = play_actor(a1, a2);
+        println!("[{}/{}]black: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
         // println!("game black: {}, s1:{}, s2:{}", i, s1, s2);
         let (s2, s1) = play_actor(a2, a1);
+        println!("[{}/{}]white: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
         // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);

@@ -1,4 +1,5 @@
 use super::{ai::*, board::*, ml::*};
+use indicatif::{ProgressBar, ProgressStyle};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::Rng;
@@ -30,7 +31,7 @@ impl Transition {
     }
 }
 
-fn play_and_record(agent: &MLEvaluator) -> Vec<Transition> {
+fn play_and_record(agent: &NNUE) -> Vec<Transition> {
     let mut b = Board::new();
     let mut transitions = Vec::new();
     let mut reward = 0;
@@ -106,7 +107,6 @@ impl Iterator for BatchIterator {
             let mut result = Vec::new();
 
             for t in &self.data[self.cursor..(self.cursor + self.batch_size)] {
-                board.push(b2onehot(t.att, t.def));
                 let res = t.result as f32;
                 result.push(Tensor::new(
                     vec![res * LAMBDA + (1.0 - LAMBDA) * t.t_val],
@@ -124,22 +124,25 @@ impl Iterator for BatchIterator {
     }
 }
 
-pub fn eval_model(model: &MLEvaluator, tar: &impl GetAction) -> (f32, f32) {
+pub fn eval_model(model: &NNUE, tar: &impl GetAction) -> (f32, f32) {
     let (result1, result2) = eval_actor(model, tar, EVAL_NUM);
     return (result1, result2);
 }
 
 pub fn train() {
-    let mut model = MLEvaluator::default();
+    let mut model = NNUE::default();
     let mut rng = rand::thread_rng();
 
     let test_actor1 = Agent::Mcts(10, 100);
     let test_actor2 = Agent::Mcts(50, 500);
 
+    return;
+
     model.save(format!("test_graph"));
 
     for epoch in 0..EPOCH {
         model.eval();
+        model.set_inference();
 
         let (e11, e12) = eval_model(&model, &test_actor1);
         let (e21, e22) = eval_model(&model, &test_actor2);
@@ -148,14 +151,23 @@ pub fn train() {
 
         let mut dataset = Vec::new();
 
+        let pb = ProgressBar::new(DATASET_SIZE as u64);
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-"));
+
         while dataset.len() < DATASET_SIZE {
             let mut record = play_and_record(&model);
+            pb.inc(record.len() as u64);
             dataset.append(&mut record);
-            println!(
-                "loading:{}",
-                dataset.len() as f32 * 100.0 / DATASET_SIZE as f32
-            );
+            // print!(
+            //     "loading:{}",
+            //     dataset.len() as f32 * 100.0 / DATASET_SIZE as f32
+            // );
         }
+
+        pb.finish();
 
         dataset.shuffle(&mut rng);
 
