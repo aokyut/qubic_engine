@@ -398,11 +398,18 @@ impl Node for BinaryCrossEntropy {
         let scale = 1.0 / (left.data.len() as f32);
 
         for i in 0..left.data.len() {
-            left.data[i] = (-right.data[i] / (left.data[i] + self.eps)
-                + (1.0 - right.data[i]) / (1.0 - left.data[i] + self.eps))
-                * grad.data[0];
-            right.data[i] = -left.data[i].ln() + (1.0 - left.data[i]).ln();
+            left.data[i] = (-inputs[1].data[i] / (inputs[0].data[i] + self.eps)
+                + (1.0 - inputs[1].data[i]) / (1.0 - inputs[0].data[i] + self.eps))
+                * grad.data[0]
+                * scale;
+            right.data[i] =
+                -(inputs[0].data[i].ln() + (1.0 - inputs[0].data[i]).ln()) * grad.data[0] * scale;
         }
+
+        // println!(
+        //     "grad:{:?}, left:{:?}, right:{:?}, left':{:?}, right':{:?}",
+        //     grad, inputs[0], inputs[1], left, right
+        // );
 
         return vec![left, right];
     }

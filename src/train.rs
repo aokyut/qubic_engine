@@ -10,7 +10,7 @@ const DATASET_SIZE: usize = 1 << 14;
 const BATCH_SIZE: usize = 1 << 6;
 const BATCH_NUM: usize = 1 << 14;
 const LAMBDA: f32 = 0.3;
-const EVAL_NUM: usize = 20;
+const EVAL_NUM: usize = 2;
 const LOG_LOSS_N: usize = 1000;
 
 #[derive(Debug)]
