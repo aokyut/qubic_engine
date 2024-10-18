@@ -352,9 +352,8 @@ impl GetAction for MLEvaluator {
         let end = start.elapsed();
         let time = end.as_nanos();
         println!(
-            "[MLEvaluator]action:{action}, val:{val}, count:{count}, time:{}, time/1:{}",
+            "[MLEvaluator]action:{action}, val:{val}, count:{count}, time:{}",
             time,
-            time / count as u128
         );
         return action;
     }
@@ -678,14 +677,13 @@ impl NNUE {
 impl GetAction for NNUE {
     fn get_action(&self, b: &Board) -> u8 {
         let start = Instant::now();
-        let (action, val, count) = self.eval_with_negalpha(b, 4);
+        let (action, val, count) = self.eval_with_negalpha(b, 3);
         let end = start.elapsed();
         let time = end.as_nanos();
-        println!(
-            "[NNUE]action:{action}, val:{val}, count:{count}, time:{}, time/1:{}",
-            time,
-            time / count as u128
-        );
+        // println!(
+        //     "[NNUE]action:{action}, val:{val}, count:{count}, time:{}",
+        //     time,
+        // );
         return action;
     }
 }

@@ -733,10 +733,12 @@ pub fn play(a1: &Agent, a2: &Agent) -> (f32, f32) {
     }
 }
 
-pub fn play_actor(a1: &impl GetAction, a2: &impl GetAction) -> (f32, f32) {
+pub fn play_actor(a1: &impl GetAction, a2: &impl GetAction, render: bool) -> (f32, f32) {
     let mut b = Board::new();
     loop {
-        pprint_board(&b);
+        if render {
+            pprint_board(&b);
+        }
         if b.is_black() {
             let action = a1.get_action(&b);
             b = b.next(action);
@@ -798,17 +800,17 @@ pub fn eval(a1: &Agent, a2: &Agent, n: usize) -> (f32, f32) {
     return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
 }
 
-pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize) -> (f32, f32) {
+pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bool) -> (f32, f32) {
     let mut score1 = 0.0;
     let mut score2 = 0.0;
 
     for i in 0..n {
-        let (s1, s2) = play_actor(a1, a2);
+        let (s1, s2) = play_actor(a1, a2, render);
         println!("[{}/{}]black: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
         // println!("game black: {}, s1:{}, s2:{}", i, s1, s2);
-        let (s2, s1) = play_actor(a2, a1);
+        let (s2, s1) = play_actor(a2, a1, render);
         println!("[{}/{}]white: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;

@@ -10,7 +10,7 @@ const DATASET_SIZE: usize = 2 << 13;
 const BATCH_SIZE: usize = 2 << 6;
 const BATCH_NUM: usize = 2 << 13;
 const LAMBDA: f32 = 0.5;
-const EVAL_NUM: usize = 20;
+const EVAL_NUM: usize = 5;
 
 #[derive(Debug)]
 pub struct Transition {
@@ -125,7 +125,7 @@ impl Iterator for BatchIterator {
 }
 
 pub fn eval_model(model: &NNUE, tar: &impl GetAction) -> (f32, f32) {
-    let (result1, result2) = eval_actor(model, tar, EVAL_NUM);
+    let (result1, result2) = eval_actor(model, tar, EVAL_NUM, false);
     return (result1, result2);
 }
 
@@ -133,10 +133,8 @@ pub fn train() {
     let mut model = NNUE::default();
     let mut rng = rand::thread_rng();
 
-    let test_actor1 = Agent::Mcts(10, 100);
+    let test_actor1 = Agent::Minimax(3);
     let test_actor2 = Agent::Mcts(50, 500);
-
-    return;
 
     model.save(format!("test_graph"));
 
