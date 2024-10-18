@@ -11,6 +11,7 @@ const BATCH_SIZE: usize = 1 << 6;
 const BATCH_NUM: usize = 1 << 14;
 const LAMBDA: f32 = 0.3;
 const EVAL_NUM: usize = 20;
+const LOG_LOSS_N: usize = 1000;
 
 #[derive(Debug)]
 pub struct Transition {
@@ -228,8 +229,8 @@ pub fn train(load: bool, save: bool, name: String) {
             .unwrap()
             .progress_chars("#>-"));
 
+        let mut i = 0;
         for (board, result) in dataset {
-            println!("{result:?}");
             model.g.reset();
             let loss = model.g.forward(vec![board, result]);
             model.g.backward();
@@ -237,6 +238,10 @@ pub fn train(load: bool, save: bool, name: String) {
 
             pb.inc(1);
             pb.set_message(format!("[loss]:{}", loss.get_item().unwrap()));
+            if i % LOG_LOSS_N == 0 {
+                println!("[loss]:{}", loss.get_item().unwrap());
+            }
+            i += 1;
         }
 
         if save {
