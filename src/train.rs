@@ -103,7 +103,16 @@ impl Iterator for BatchIterator {
             let mut result = Vec::new();
 
             for t in &self.data[self.cursor..(self.cursor + self.batch_size)] {
-                let res = t.result as f32;
+                // pprint_board(&u128_to_b(t.board));
+                let res;
+                if t.result == 1 {
+                    res = 1.0;
+                } else if t.result == -1 {
+                    res = 0.0;
+                } else {
+                    res = 0.5;
+                }
+                // println!("res:{res}, val:{}", t.t_val);
                 board.push(Tensor::new(u2vec(t.board), vec![128, 1]));
                 result.push(Tensor::new(
                     vec![res * LAMBDA + (1.0 - LAMBDA) * t.t_val],
@@ -126,14 +135,55 @@ pub fn eval_model(model: &NNUE, tar: &impl GetAction) -> (f32, f32) {
     return (result1, result2);
 }
 
-pub fn train() {
+fn play_with_analyze(agent: &NNUE) -> Vec<Transition> {
+    let mut b = Board::new();
+    let mut transitions = Vec::new();
+    let mut reward = 0;
+
+    loop {
+        let (_, val, count) = agent.eval_with_negalpha(&b, DEPTH);
+        agent.analyze(&b);
+        let action = mcts_action(&b, 1000, 50);
+        // pprint_board(&b);
+        // println!("[{action}]");
+        transitions.push(Transition {
+            board: b2u128(&b),
+            result: 0,
+            t_val: val,
+        });
+
+        let b_ = b.next(action);
+        if b_.is_win() {
+            reward = 1;
+            break;
+        } else if b_.is_draw() {
+            reward = 0;
+            break;
+        }
+        b = b_;
+    }
+
+    let size = transitions.len();
+    for i in 0..size {
+        transitions[size - i - 1].result = reward;
+        reward *= -1;
+    }
+
+    return transitions;
+}
+
+pub fn train(load: bool, save: bool, name: String) {
     let mut model = NNUE::default();
     let mut rng = rand::thread_rng();
 
     let test_actor1 = Agent::Minimax(3);
     let test_actor2 = Agent::Mcts(50, 500);
 
-    model.save(format!("test_graph"));
+    if load {
+        model.load(name.clone());
+    } else if save {
+        model.save(name.clone());
+    }
 
     for epoch in 0..EPOCH {
         model.eval();
@@ -141,8 +191,10 @@ pub fn train() {
 
         let (e11, e12) = eval_model(&model, &test_actor1);
         let (e21, e22) = eval_model(&model, &test_actor2);
-        println!("[a1]:({}, {})", e11, e12);
-        println!("[a2]:({}, {})", e21, e22);
+        println!("[minimax(3)]:({}, {})", e11, e12);
+        println!("[mcts(50, 500)]:({}, {})", e21, e22);
+
+        play_with_analyze(&model);
 
         let mut dataset = Vec::new();
 
@@ -169,15 +221,26 @@ pub fn train() {
         let mut dataset = BatchIterator::new(dataset, BATCH_SIZE, BATCH_NUM);
 
         model.train();
+
+        let pb = ProgressBar::new(BATCH_NUM as u64);
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-"));
+
         for (board, result) in dataset {
+            println!("{result:?}");
             model.g.reset();
             let loss = model.g.forward(vec![board, result]);
             model.g.backward();
             model.g.optimize();
 
-            println!("[loss]:{}", loss.get_item().unwrap());
+            pb.inc(1);
+            pb.set_message(format!("[loss]:{}", loss.get_item().unwrap()));
         }
 
-        model.save(format!("test_graph"));
+        if save {
+            model.save(name.clone());
+        }
     }
 }

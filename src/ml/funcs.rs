@@ -1,9 +1,18 @@
+use std::fmt::Binary;
+
 use super::Node;
 use super::Tensor;
 
 pub trait SingleShoot {
     fn single_forward(&self, x: f32) -> f32;
     fn single_backward(&self, x: f32, y: f32) -> f32;
+    fn no_grad(&self) -> bool {
+        false
+    }
+}
+trait SingleShootLoss {
+    fn single_forward_loss(&self, x1: f32, x2: f32) -> f32;
+    fn single_backward_loss(&self, x1: f32, x2: f32, y: f32) -> (f32, f32);
     fn no_grad(&self) -> bool {
         false
     }
@@ -30,6 +39,35 @@ impl<F: SingleShoot> Node for F {
         return output;
     }
 }
+
+// impl<F: SingleShootLoss> Node for F {
+//     fn backward(&mut self, grad: &Tensor, inputs: Vec<&Tensor>, output: &Tensor) -> Vec<Tensor> {
+//         let mut igrad1 = Tensor::zeros_like(inputs[0]);
+//         let mut igrad2 = Tensor::zeros_like(inputs[1]);
+//         let scale = 1.0 / inputs[0].data.len() as f32;
+//         let loss = output.data[0];
+
+//         for i in 0..grad.data.len() {
+//             let (x1_, x2_) = self.single_backward_loss(inputs[0].data[i], inputs[1].data[i], loss);
+//             igrad1.data[i] = grad.data[i] * scale * x1_;
+//             igrad2.data[i] = grad.data[i] * scale * x2_;
+//         }
+
+//         return vec![igrad1, igrad2];
+//     }
+//     fn call(&self, input: Vec<Tensor>) -> Tensor {
+//         assert_eq!(input.len(), 1);
+//         let xs1 = &input[0];
+//         let xs2 = &input[1];
+//         let size = xs1.data.len() as f32;
+//         let mut loss = 0.0;
+//         for i in 0..input.data.len() {
+//             loss += self.single_forward_loss(xs1.data[i], xs2.data[i]);
+//         }
+
+//         return Tensor::new(vec![loss / size], vec![1]);
+//     }
+// }
 
 pub struct ReLU {
     ignore_grad: bool,
@@ -207,6 +245,26 @@ impl Node for Tanh {
     }
 }
 
+pub struct Sigmoid {
+    alpha: f32,
+}
+
+impl Sigmoid {
+    pub fn new(alpha: f32) -> Self {
+        return Sigmoid { alpha: alpha };
+    }
+}
+
+impl SingleShoot for Sigmoid {
+    fn single_backward(&self, _: f32, y: f32) -> f32 {
+        self.alpha * y * (1.0 - y)
+    }
+    fn single_forward(&self, x: f32) -> f32 {
+        let y = 1.0 / (1.0 + (-x * self.alpha).exp());
+        return y;
+    }
+}
+
 pub struct Softmax {}
 
 impl Softmax {
@@ -297,6 +355,53 @@ impl Node for MSE {
                 / left.data.len() as f32;
             right.data[i] = 2.0 * (inputs[1].data[i] - inputs[0].data[i]) * grad.data[0]
                 / left.data.len() as f32;
+        }
+
+        return vec![left, right];
+    }
+    fn no_grad(&self) -> bool {
+        false
+    }
+}
+
+pub struct BinaryCrossEntropy {
+    eps: f32,
+}
+
+impl BinaryCrossEntropy {
+    pub fn default() -> Self {
+        return BinaryCrossEntropy { eps: 0.001 };
+    }
+}
+
+impl Node for BinaryCrossEntropy {
+    fn call(&self, input: Vec<Tensor>) -> Tensor {
+        assert_eq!(input.len(), 2);
+        // let loss = Tensor::zeros(vec![1]);
+        let left = &input[0].data;
+        let right = &input[1].data;
+        assert_eq!(left.len(), right.len());
+        let mut loss = 0.0;
+        let scale = 1.0 / (left.len()) as f32;
+
+        // left: src
+        // right: tar
+        for i in 0..left.len() {
+            loss += -left[i].ln() * right[i] - (1.0 - left[i]).ln() * (1.0 - right[i]);
+        }
+
+        return Tensor::new(vec![loss * scale], vec![1]);
+    }
+    fn backward(&mut self, grad: &Tensor, inputs: Vec<&Tensor>, _: &Tensor) -> Vec<Tensor> {
+        let mut left = Tensor::zeros_like(inputs[0]);
+        let mut right = Tensor::zeros_like(inputs[1]);
+        let scale = 1.0 / (left.data.len() as f32);
+
+        for i in 0..left.data.len() {
+            left.data[i] = (-right.data[i] / (left.data[i] + self.eps)
+                + (1.0 - right.data[i]) / (1.0 - left.data[i] + self.eps))
+                * grad.data[0];
+            right.data[i] = -left.data[i].ln() + (1.0 - left.data[i]).ln();
         }
 
         return vec![left, right];

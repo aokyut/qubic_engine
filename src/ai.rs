@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
+use crate::board::{self, pprint_board};
+
 use super::board::{Board, GetAction};
 use super::ml::{Graph, Tensor};
 use rand::Rng;
@@ -106,6 +108,20 @@ impl GetAction for NegAlpha {
 
 pub trait Evaluator {
     fn eval_func(&self, b: &Board) -> i32;
+}
+
+pub trait Analyzer {
+    fn analyze_eval(&self, b: &Board) -> f32;
+    fn analyze(&self, b: &Board) {
+        pprint_board(b);
+        let actions = b.valid_actions();
+
+        for &action in actions.iter() {
+            let next_b = b.next(action);
+            let val = -self.analyze_eval(&next_b);
+            println!("[{}]:{}", action, val);
+        }
+    }
 }
 pub struct PositionEvaluator {
     posmap: Vec<i32>,
@@ -364,6 +380,16 @@ pub fn b2u128(b: &Board) -> u128 {
     return (att as u128) | ((def as u128) << 64);
 }
 
+pub fn u128_to_b(b: u128) -> Board {
+    let mut board = Board::new();
+    let black = b as u64;
+    let white = (b >> 64) as u64;
+    board.black = black;
+    board.white = white;
+
+    return board;
+}
+
 pub struct NNUE {
     pub g: Graph,
     loss: usize,
@@ -425,15 +451,16 @@ impl NNUE {
         let last = g.add_layer(vec![l3], Box::new(Tanh::new()));
 
         // t = lambda * result + (1 - lambda) * t_in
-        let loss = g.add_layer(vec![last, i2], Box::new(MSE::new()));
+        let sig = g.add_layer(vec![last], Box::new(Sigmoid::new(1.0 / 600.0)));
+        let loss = g.add_layer(vec![sig, i2], Box::new(BinaryCrossEntropy::default()));
 
-        g.set_target(last);
+        g.set_target(sig);
         g.set_placeholder(vec![i1]);
 
         return NNUE {
             g: g,
             loss: loss,
-            g_out: last,
+            g_out: sig,
             input: i1,
             t: i2,
             w1: w1,
@@ -519,7 +546,8 @@ impl NNUE {
             if depth <= 1 {
                 let w1 = Tensor::new(next_vec, vec![self.w1_size, 1]);
 
-                let val = -self.g.inference(vec![w1]).get_item().unwrap();
+                let val = 1.0 - self.g.inference(vec![w1]).get_item().unwrap();
+
                 count += 1;
                 if max_val < val {
                     max_val = val;
@@ -539,7 +567,7 @@ impl NNUE {
                     -max_val,
                     -alpha,
                 );
-                let val = -val;
+                let val = 1.0 - val;
                 count += _count;
                 if max_val < val {
                     max_val = val;
@@ -587,7 +615,7 @@ impl NNUE {
             if depth <= 1 {
                 let w1 = Tensor::new(next_vec, vec![self.w1_size, 1]);
 
-                let val = -self.g.inference(vec![w1]).get_item().unwrap();
+                let val = 1.0 - self.g.inference(vec![w1]).get_item().unwrap();
                 count += 1;
                 if max_val < val {
                     max_val = val;
@@ -607,7 +635,7 @@ impl NNUE {
                     -max_val,
                     -alpha,
                 );
-                let val = -val;
+                let val = 1.0 - val;
                 count += _count;
                 if max_val < val {
                     max_val = val;
@@ -690,5 +718,12 @@ impl GetAction for NNUE {
         //     time,
         // );
         return action;
+    }
+}
+
+impl Analyzer for NNUE {
+    fn analyze_eval(&self, b: &Board) -> f32 {
+        let (action, val, count) = self.eval_with_negalpha(b, 3);
+        return val;
     }
 }

@@ -1,5 +1,5 @@
 use qubic_engine::train;
 
 fn main() {
-    train::train();
+    train::train(false, false, format!("test_graph"));
 }
