@@ -477,7 +477,7 @@ impl Node for Bias {
 
     fn apply_update(&mut self, update: Vec<Tensor>) {
         for i in 0..self.b.data.len() {
-            self.b.data[i] += update[1].data[i];
+            self.b.data[i] += update[0].data[i];
         }
 
         self.b_grad = None;

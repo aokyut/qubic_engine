@@ -359,6 +359,11 @@ impl GetAction for MLEvaluator {
     }
 }
 
+pub fn b2u128(b: &Board) -> u128 {
+    let (att, def) = b.get_att_def();
+    return (att as u128) | ((def as u128) << 64);
+}
+
 pub struct NNUE {
     pub g: Graph,
     loss: usize,

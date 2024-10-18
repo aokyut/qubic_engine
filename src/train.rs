@@ -6,16 +6,15 @@ use rand::Rng;
 
 const EPOCH: usize = 10;
 const DEPTH: u8 = 3;
-const DATASET_SIZE: usize = 2 << 13;
-const BATCH_SIZE: usize = 2 << 6;
-const BATCH_NUM: usize = 2 << 13;
+const DATASET_SIZE: usize = 1 << 14;
+const BATCH_SIZE: usize = 1 << 6;
+const BATCH_NUM: usize = 1 << 14;
 const LAMBDA: f32 = 0.5;
-const EVAL_NUM: usize = 5;
+const EVAL_NUM: usize = 1;
 
 #[derive(Debug)]
 pub struct Transition {
-    att: u64,
-    def: u64,
+    board: u128,
     result: i32,
     t_val: f32,
 }
@@ -23,8 +22,7 @@ pub struct Transition {
 impl Transition {
     pub fn new() -> Transition {
         return Transition {
-            att: 0,
-            def: 0,
+            board: 0,
             result: 0,
             t_val: 0.0,
         };
@@ -41,10 +39,8 @@ fn play_and_record(agent: &NNUE) -> Vec<Transition> {
         let action = mcts_action(&b, 1000, 50);
         // pprint_board(&b);
         // println!("[{action}]");
-        let (att, def) = b.get_att_def();
         transitions.push(Transition {
-            att: att,
-            def: def,
+            board: b2u128(&b),
             result: 0,
             t_val: val,
         });
@@ -108,6 +104,7 @@ impl Iterator for BatchIterator {
 
             for t in &self.data[self.cursor..(self.cursor + self.batch_size)] {
                 let res = t.result as f32;
+                board.push(Tensor::new(u2vec(t.board), vec![128, 1]));
                 result.push(Tensor::new(
                     vec![res * LAMBDA + (1.0 - LAMBDA) * t.t_val],
                     vec![1, 1],
