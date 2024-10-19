@@ -806,12 +806,12 @@ pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bo
 
     for i in 0..n {
         let (s1, s2) = play_actor(a1, a2, render);
-        println!("[{}/{}]black: {}, {}", i, n, s1, s2);
+        // println!("[{}/{}]black: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
         // println!("game black: {}, s1:{}, s2:{}", i, s1, s2);
         let (s2, s1) = play_actor(a2, a1, render);
-        println!("[{}/{}]white: {}, {}", i, n, s1, s2);
+        // println!("[{}/{}]white: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
         // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);

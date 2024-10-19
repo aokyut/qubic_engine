@@ -3,6 +3,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::Rng;
+use std::thread;
+use std::time::Duration;
 
 const EPOCH: usize = 100;
 const DEPTH: u8 = 3;
@@ -12,9 +14,7 @@ const BATCH_NUM: usize = 1 << 14;
 const LAMBDA: f32 = 0.3;
 const EVAL_NUM: usize = 50;
 const LOG_LOSS_N: usize = 1000;
-const SMOOOTING: f32 = 0.99;
-
-// TODO: data argumentation
+const SMOOOTING: f32 = 0.999;
 
 #[derive(Debug)]
 pub struct Transition {
@@ -223,6 +223,7 @@ pub fn train(load: bool, save: bool, name: String) {
 
         while dataset.len() < DATASET_SIZE {
             let mut record = play_and_record(&model);
+            // thread::sleep(Duration::from_secs(1));
             pb.inc(record.len() as u64);
             dataset.append(&mut record);
             // print!(
@@ -246,20 +247,32 @@ pub fn train(load: bool, save: bool, name: String) {
             .progress_chars("#>-"));
 
         let mut i = 0;
-        let mut smoothed_loss = 0.0;
+        let mut smoothed_loss = None;
         for (board, result) in dataset {
             model.g.reset();
             let loss = model.g.forward(vec![board, result]);
             model.g.backward();
             model.g.optimize();
+            // thread::sleep(Duration::from_millis(200));
 
             let loss = loss.get_item().unwrap();
-            smoothed_loss = SMOOOTING * smoothed_loss + (1.0 - SMOOOTING) * loss;
+            match smoothed_loss {
+                None => {
+                    smoothed_loss = Some(loss);
+                }
+                Some(s) => {
+                    smoothed_loss = Some(SMOOOTING * s + (1.0 - SMOOOTING) * loss);
+                }
+            }
 
             pb.inc(1);
-            pb.set_message(format!("[loss]:{} \n[smoothed]:{}", loss, smoothed_loss));
+            pb.set_message(format!(
+                "[loss]:{} \n[smoothed]:{}",
+                loss,
+                smoothed_loss.unwrap()
+            ));
             if i % LOG_LOSS_N == 0 {
-                println!("[loss]:{}", loss);
+                println!("[loss]:{}", smoothed_loss.unwrap());
             }
             i += 1;
         }
