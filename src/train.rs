@@ -40,7 +40,8 @@ fn play_and_record(agent: &NNUE) -> Vec<Transition> {
 
     loop {
         let (_, val, count) = agent.eval_with_negalpha(&b, DEPTH);
-        let action = mcts_action(&b, 1000, 50);
+        // let action = mcts_action(&b, 1000, 50);
+        let action = get_random(&b);
         // pprint_board(&b);
         // println!("[{action}]");
         transitions.push(Transition {
