@@ -406,11 +406,6 @@ impl Node for BinaryCrossEntropy {
                 -(inputs[0].data[i].ln() + (1.0 - inputs[0].data[i]).ln()) * grad.data[0] * scale;
         }
 
-        // println!(
-        //     "grad:{:?}, left:{:?}, right:{:?}, left':{:?}, right':{:?}",
-        //     grad, inputs[0], inputs[1], left, right
-        // );
-
         return vec![left, right];
     }
     fn no_grad(&self) -> bool {

@@ -7,11 +7,13 @@ use rand::Rng;
 const EPOCH: usize = 100;
 const DEPTH: u8 = 3;
 const DATASET_SIZE: usize = 1 << 14;
-const BATCH_SIZE: usize = 1 << 6;
+const BATCH_SIZE: usize = 1 << 3;
 const BATCH_NUM: usize = 1 << 14;
 const LAMBDA: f32 = 0.3;
 const EVAL_NUM: usize = 2;
 const LOG_LOSS_N: usize = 1000;
+
+// TODO: data argumentation
 
 #[derive(Debug)]
 pub struct Transition {
@@ -91,6 +93,18 @@ impl BatchIterator {
     }
 }
 
+fn random_rot(b: u128, id: usize) -> u128 {
+    let id = id % 8;
+    let mut b = b;
+    if id < 4 {
+        b = Board::hflip(b);
+    }
+    for i in 0..(id % 4) {
+        b = Board::rot(b);
+    }
+    return b;
+}
+
 impl Iterator for BatchIterator {
     type Item = (Tensor, Tensor);
     fn next(&mut self) -> Option<Self::Item> {
@@ -114,7 +128,8 @@ impl Iterator for BatchIterator {
                     res = 0.5;
                 }
                 // println!("res:{res}, val:{}", t.t_val);
-                board.push(Tensor::new(u2vec(t.board), vec![128, 1]));
+                let rot_b = random_rot(t.board, self.rng.gen());
+                board.push(Tensor::new(u2vec(rot_b), vec![128, 1]));
                 result.push(Tensor::new(
                     vec![res * LAMBDA + (1.0 - LAMBDA) * t.t_val],
                     vec![1, 1],

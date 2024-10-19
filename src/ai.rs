@@ -399,8 +399,6 @@ pub struct NNUE {
     pub w1: usize,
     pub w1_size: usize,
     base_vec: Vec<Vec<f32>>,
-    parent: HashMap<u128, u128>,
-    vals: HashMap<u128, f32>,
 }
 
 impl NNUE {
@@ -414,8 +412,6 @@ impl NNUE {
             w1: 0,
             w1_size: 0,
             base_vec: Vec::new(),
-            parent: HashMap::new(),
-            vals: HashMap::new(),
         };
     }
 
@@ -448,10 +444,8 @@ impl NNUE {
         let l3 = Linear::auto(16, 1);
         let l3 = g.add_layer(vec![relu2], Box::new(l3));
 
-        let last = g.add_layer(vec![l3], Box::new(Tanh::new()));
-
         // t = lambda * result + (1 - lambda) * t_in
-        let sig = g.add_layer(vec![last], Box::new(Sigmoid::new(1.0 / 600.0)));
+        let sig = g.add_layer(vec![l3], Box::new(Sigmoid::new(1.0)));
         let loss = g.add_layer(vec![sig, i2], Box::new(BinaryCrossEntropy::default()));
 
         g.set_target(sig);
@@ -466,8 +460,6 @@ impl NNUE {
             w1: w1,
             w1_size: w1_size,
             base_vec: Vec::new(),
-            parent: HashMap::new(),
-            vals: HashMap::new(),
         };
     }
 
