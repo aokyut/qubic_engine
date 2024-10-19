@@ -7,7 +7,7 @@ use rand::Rng;
 const EPOCH: usize = 100;
 const DEPTH: u8 = 3;
 const DATASET_SIZE: usize = 1 << 14;
-const BATCH_SIZE: usize = 1 << 3;
+const BATCH_SIZE: usize = 1 << 6;
 const BATCH_NUM: usize = 1 << 14;
 const LAMBDA: f32 = 0.3;
 const EVAL_NUM: usize = 20;
