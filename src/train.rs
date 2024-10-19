@@ -6,11 +6,11 @@ use rand::Rng;
 
 const EPOCH: usize = 100;
 const DEPTH: u8 = 3;
-const DATASET_SIZE: usize = 1 << 10;
+const DATASET_SIZE: usize = 1 << 15;
 const BATCH_SIZE: usize = 1 << 6;
-const BATCH_NUM: usize = 1 << 10;
+const BATCH_NUM: usize = 1 << 14;
 const LAMBDA: f32 = 0.3;
-const EVAL_NUM: usize = 20;
+const EVAL_NUM: usize = 50;
 const LOG_LOSS_N: usize = 1000;
 const SMOOOTING: f32 = 0.99;
 
