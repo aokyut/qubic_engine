@@ -6,12 +6,13 @@ use rand::Rng;
 
 const EPOCH: usize = 100;
 const DEPTH: u8 = 3;
-const DATASET_SIZE: usize = 1 << 14;
+const DATASET_SIZE: usize = 1 << 10;
 const BATCH_SIZE: usize = 1 << 6;
-const BATCH_NUM: usize = 1 << 14;
+const BATCH_NUM: usize = 1 << 10;
 const LAMBDA: f32 = 0.3;
 const EVAL_NUM: usize = 20;
 const LOG_LOSS_N: usize = 1000;
+const SMOOOTING: f32 = 0.99;
 
 // TODO: data argumentation
 
@@ -210,7 +211,7 @@ pub fn train(load: bool, save: bool, name: String) {
         println!("[minimax(3)]:({}, {})", e11, e12);
         println!("[mcts(50, 500)]:({}, {})", e21, e22);
 
-        play_with_analyze(&model);
+        // play_with_analyze(&model);
 
         let mut dataset = Vec::new();
 
@@ -245,16 +246,20 @@ pub fn train(load: bool, save: bool, name: String) {
             .progress_chars("#>-"));
 
         let mut i = 0;
+        let mut smoothed_loss = 0.0;
         for (board, result) in dataset {
             model.g.reset();
             let loss = model.g.forward(vec![board, result]);
             model.g.backward();
             model.g.optimize();
 
+            let loss = loss.get_item().unwrap();
+            smoothed_loss = SMOOOTING * smoothed_loss + (1.0 - SMOOOTING) * loss;
+
             pb.inc(1);
-            pb.set_message(format!("[loss]:{}", loss.get_item().unwrap()));
+            pb.set_message(format!("[loss]:{} \n[smoothed]:{}", loss, smoothed_loss));
             if i % LOG_LOSS_N == 0 {
-                println!("[loss]:{}", loss.get_item().unwrap());
+                println!("[loss]:{}", loss);
             }
             i += 1;
         }

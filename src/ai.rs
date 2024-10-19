@@ -433,19 +433,22 @@ impl NNUE {
         let l1 = Bias::auto(w1_size);
         let l1 = g.add_layer(vec![w1], Box::new(l1));
 
-        let activate = ClippedReLU::default();
+        let activate = LeaklyReLU::default();
         let relu = g.add_layer(vec![l1], Box::new(activate));
 
-        let l2 = Linear::auto(w1_size, 16);
+        let l2 = Linear::auto(w1_size, 32);
         let l2 = g.add_layer(vec![relu], Box::new(l2));
+        let relu2 = g.add_layer(vec![l2], Box::new(LeaklyReLU::default()));
 
-        let relu2 = g.add_layer(vec![l2], Box::new(ClippedReLU::default()));
-
-        let l3 = Linear::auto(16, 1);
+        let l3 = Linear::auto(32, 32);
         let l3 = g.add_layer(vec![relu2], Box::new(l3));
+        let relu3 = g.add_layer(vec![l3], Box::new(LeaklyReLU::default()));
+
+        let l4 = Linear::auto(32, 1);
+        let l4 = g.add_layer(vec![relu3], Box::new(l4));
 
         // t = lambda * result + (1 - lambda) * t_in
-        let sig = g.add_layer(vec![l3], Box::new(Sigmoid::new(1.0)));
+        let sig = g.add_layer(vec![l4], Box::new(Sigmoid::new(1.0)));
         let loss = g.add_layer(vec![sig, i2], Box::new(BinaryCrossEntropy::default()));
 
         g.set_target(sig);
@@ -486,7 +489,7 @@ impl NNUE {
             let val = self.g.inference(vec![onehot]);
             self.base_vec.push(val.clone().data);
         }
-        println!("{:?}", self.base_vec);
+        // println!("{:?}", self.base_vec);
         self.set_after_w1();
     }
 

@@ -387,7 +387,10 @@ impl Node for BinaryCrossEntropy {
         // left: src
         // right: tar
         for i in 0..left.len() {
-            loss += -left[i].ln() * right[i] - (1.0 - left[i]).ln() * (1.0 - right[i]);
+            loss += -left[i].ln() * right[i]
+                - (1.0 - left[i]).ln() * (1.0 - right[i])
+                - (-(right[i] + self.eps).ln() * right[i]
+                    - (1.0 - right[i] + self.eps).ln() * (1.0 - right[i]));
         }
 
         return Tensor::new(vec![loss * scale], vec![1]);
