@@ -426,7 +426,7 @@ impl Graph {
         fs::create_dir_all(path.clone());
 
         for i in 0..self.layers.len() {
-            path.push(format!("{}", i));
+            path.push(format!("{}.json", i));
 
             self.layers[i].save_param(path.clone());
             path = path.parent().unwrap().to_path_buf();

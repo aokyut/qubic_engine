@@ -38,10 +38,16 @@ fn play_and_record(agent: &NNUE) -> Vec<Transition> {
     let mut transitions = Vec::new();
     let mut reward = 0;
 
+    let turn = 0;
+
     loop {
         let (_, val, count) = agent.eval_with_negalpha(&b, DEPTH);
-        // let action = mcts_action(&b, 1000, 50);
-        let action = get_random(&b);
+        let action;
+        if turn < 5 {
+            action = get_random(&b);
+        } else {
+            action = mcts_action(&b, 2000, 50);
+        }
         // pprint_board(&b);
         // println!("[{action}]");
         transitions.push(Transition {

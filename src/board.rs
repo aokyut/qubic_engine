@@ -326,7 +326,7 @@ pub fn pprint_board(board: &Board) {
         }
         s += "\n"
     }
-    print!("{}", s);
+    print!("{}\n", s);
 }
 
 fn playout(board: &Board) -> f32 {
@@ -642,16 +642,6 @@ pub fn mcts_action(board: &Board, n: usize, ex_n: usize) -> u8 {
         }
     }
     let mut rng = rand::thread_rng();
-    if max_actions.len() == 0 {
-        pprint_board(board);
-        println!(
-            "{}, {}, {:?}, {}",
-            board.black,
-            board.white,
-            board.player,
-            board.is_draw()
-        );
-    }
     return max_actions[rng.gen::<usize>() % max_actions.len()];
     // return max_action;
 }
