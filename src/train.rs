@@ -33,6 +33,25 @@ impl Transition {
     }
 }
 
+pub fn create_db(load_model: &str, db_name: &str) {
+    use super::db;
+    let mut model = NNUE::default();
+
+    model.load(String::from(load_model));
+    let board_db = db::BoardDB::new(db_name);
+    let mut count = 0;
+    loop {
+        println!("count:{count}");
+        let ts = play_and_record(&model);
+        for t in ts {
+            let att = t.board as u64;
+            let def = (t.board >> 64) as u64;
+            board_db.add(att, def, t.result, t.t_val);
+        }
+        count += 1;
+    }
+}
+
 fn play_and_record(agent: &NNUE) -> Vec<Transition> {
     let mut b = Board::new();
     let mut transitions = Vec::new();

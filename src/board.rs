@@ -1,4 +1,5 @@
 // use std::collections::VecDeque;
+use indicatif::{ProgressBar, ProgressStyle};
 use proconio::input;
 use rand::Rng;
 use std::fmt;
@@ -794,16 +795,26 @@ pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bo
     let mut score1 = 0.0;
     let mut score2 = 0.0;
 
+    let pb = ProgressBar::new((n * 2) as u64);
+    pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-"));
+
     for i in 0..n {
         let (s1, s2) = play_actor(a1, a2, render);
         // println!("[{}/{}]black: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
+        pb.inc(1);
+        pb.set_message(format!("[{s1}, {s2}]"));
         // println!("game black: {}, s1:{}, s2:{}", i, s1, s2);
         let (s2, s1) = play_actor(a2, a1, render);
         // println!("[{}/{}]white: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
+        pb.inc(1);
+        pb.set_message(format!("[{s1}, {s2}]"));
         // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);
     }
     return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
