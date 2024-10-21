@@ -14,5 +14,5 @@ fn main() {
     // println!("{result:?}")
     // train::train(false, true, format!("test_graph"));
 
-    train::create_db("test_model", "record.db");
+    train::create_db("test_graph", "record.db");
 }

@@ -3,8 +3,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::Rng;
-use std::thread;
 use std::time::Duration;
+use std::{thread, time};
 
 const EPOCH: usize = 100;
 const DEPTH: u8 = 5;
@@ -41,16 +41,21 @@ pub fn create_db(load_model: &str, db_name: &str) {
     // model.load(String::from(load_model));
     model.set_inference();
     let board_db = db::BoardDB::new(db_name);
+    let base = board_db.get_count();
     let mut count = 0;
+    let start = time::Instant::now();
     loop {
-        println!("count:{count}");
+        println!(
+            "count:{base}+{count}, {}count/sec",
+            count / (1 + start.elapsed().as_secs())
+        );
         let ts = play_and_record(&model);
+        count += ts.len() as u64;
         for t in ts {
             let att = t.board as u64;
             let def = (t.board >> 64) as u64;
             board_db.add(att, def, t.result, t.t_val);
         }
-        count += 1;
     }
 }
 

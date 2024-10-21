@@ -44,4 +44,20 @@ impl BoardDB {
             })
             .unwrap();
     }
+
+    pub fn get_count(&self) -> usize {
+        let query = "SELECT COUNT(*) FROM board_record";
+
+        let mut count = 0;
+        self.conn
+            .iterate(query, |pairs| {
+                for &(name, value) in pairs.iter() {
+                    println!("{} = {}", name, value.unwrap());
+                    count = value.unwrap().parse().unwrap();
+                }
+                true
+            })
+            .unwrap();
+        return count as usize;
+    }
 }
