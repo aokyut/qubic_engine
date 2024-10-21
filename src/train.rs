@@ -7,7 +7,8 @@ use std::thread;
 use std::time::Duration;
 
 const EPOCH: usize = 100;
-const DEPTH: u8 = 3;
+const DEPTH: u8 = 5;
+const RANDOM_MOVE: usize = 7;
 const DATASET_SIZE: usize = 1 << 15;
 const BATCH_SIZE: usize = 1 << 6;
 const BATCH_NUM: usize = 1 << 14;
@@ -37,7 +38,8 @@ pub fn create_db(load_model: &str, db_name: &str) {
     use super::db;
     let mut model = NNUE::default();
 
-    model.load(String::from(load_model));
+    // model.load(String::from(load_model));
+    model.set_inference();
     let board_db = db::BoardDB::new(db_name);
     let mut count = 0;
     loop {
@@ -60,9 +62,10 @@ fn play_and_record(agent: &NNUE) -> Vec<Transition> {
     let turn = 0;
 
     loop {
+        // pprint_board(&b);
         let (_, val, count) = agent.eval_with_negalpha(&b, DEPTH);
         let action;
-        if turn < 5 {
+        if turn < RANDOM_MOVE {
             action = get_random(&b);
         } else {
             action = mcts_action(&b, 2000, 50);

@@ -25,8 +25,8 @@ impl BoardDB {
         let query = format!(
             "
                 insert into board_record(att, def, flag, val)
-                values({}, {}, {})",
-            att as i64, def as i64, flag
+                values({}, {}, {}, {})",
+            att as i64, def as i64, flag, val
         );
 
         self.conn.execute(query).unwrap();
