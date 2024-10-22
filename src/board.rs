@@ -303,6 +303,164 @@ pub fn _is_win_board(bit: u64) -> bool {
         > 0
 }
 
+pub fn count_2row_(a1: u64, a2: u64, a3: u64, a4: u64, b1: u64, b2: u64, b3: u64, b4: u64) -> u64 {
+    return a1 & a2 & b3 & b4
+        | a1 & b2 & a3 & b4
+        | a1 & b2 & b3 & a4
+        | b1 & a2 & a3 & b4
+        | b1 & a2 & b3 & a4
+        | b1 & b2 & a3 & a4;
+}
+
+pub fn count_2row(s: u64, b: u64) -> u32 {
+    let x = (count_2row_(s, s >> 1, s >> 2, s >> 3, b, b >> 1, b >> 2, b >> 3)
+        & 0x1111_1111_1111_1111)
+        .count_ones();
+    let y = (count_2row_(s, s >> 4, s >> 8, s >> 12, b, b >> 4, b >> 8, b >> 12)
+        & 0x000f_000f_000f_000f)
+        .count_ones();
+    let z = count_2row_(s, s >> 16, s >> 32, s >> 48, b, b >> 16, b >> 32, b >> 48).count_ones();
+    let xy = (count_2row_(s, s >> 5, s >> 10, s >> 15, b, b >> 5, b >> 10, b >> 15)
+        & 0x0001_0001_0001_0001)
+        .count_ones();
+    let xy_ = (count_2row_(s, s >> 3, s >> 6, s >> 9, b, b >> 3, b >> 6, b >> 9)
+        & 0x0008_0008_0008_0008)
+        .count_ones();
+    let xz = (count_2row_(s, s >> 17, s >> 34, s >> 51, b, b >> 17, b >> 34, b >> 51)
+        & 0x0000_0000_0000_1111)
+        .count_ones();
+    let xz_ = (count_2row_(s, s >> 15, s >> 30, s >> 45, b, b >> 15, b >> 30, b >> 45) & 0x8888)
+        .count_ones();
+    let yz = (count_2row_(s, s >> 20, s >> 40, s >> 60, b, b >> 20, b >> 40, b >> 60)
+        & 0x0000_0000_0000_000f)
+        .count_ones();
+    let yz_ = (count_2row_(s, s >> 12, s >> 24, s >> 36, b, b >> 12, b >> 24, b >> 36) & 0xf000)
+        .count_ones();
+    let xyz1 = count_2row_(s, s >> 21, s >> 42, s >> 63, b, b >> 21, b >> 42, b >> 63);
+    let xyz2 = count_2row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 51) & 0x0008;
+    let xyz3 = count_2row_(s, s >> 13, s >> 26, s >> 39, b, b >> 13, b >> 26, b >> 39) & 0x1000;
+    let xyz4 = count_2row_(s, s >> 11, s >> 22, s >> 33, b, b >> 11, b >> 22, b >> 33) & 0x8000;
+
+    let xyz = (xyz1 | xyz2 | xyz3 | xyz4).count_ones();
+    return x + y + z + xy + xy_ + xz + xz_ + yz + yz_ + xyz;
+}
+
+fn count_1row_(a1: u64, a2: u64, a3: u64, a4: u64, b1: u64, b2: u64, b3: u64, b4: u64) -> u64 {
+    return a1 & b2 & b3 & b4 | b1 & a2 & b3 & b4 | b1 & b2 & a3 & b4 | b1 & b2 & b3 & a4;
+}
+
+pub fn count_1row(s: u64, b: u64) -> u32 {
+    let x = (count_1row_(s, s >> 1, s >> 2, s >> 3, b, b >> 1, b >> 2, b >> 3)
+        & 0x1111_1111_1111_1111)
+        .count_ones();
+    let y = (count_1row_(s, s >> 4, s >> 8, s >> 12, b, b >> 4, b >> 8, b >> 12)
+        & 0x000f_000f_000f_000f)
+        .count_ones();
+    let z = count_1row_(s, s >> 16, s >> 32, s >> 48, b, b >> 16, b >> 32, b >> 48).count_ones();
+    let xy = (count_1row_(s, s >> 5, s >> 10, s >> 15, b, b >> 5, b >> 10, b >> 15)
+        & 0x0001_0001_0001_0001)
+        .count_ones();
+    let xy_ = (count_1row_(s, s >> 3, s >> 6, s >> 9, b, b >> 3, b >> 6, b >> 9)
+        & 0x0008_0008_0008_0008)
+        .count_ones();
+    let xz = (count_1row_(s, s >> 17, s >> 34, s >> 51, b, b >> 17, b >> 34, b >> 51)
+        & 0x0000_0000_0000_1111)
+        .count_ones();
+    let xz_ = (count_1row_(s, s >> 15, s >> 30, s >> 45, b, b >> 15, b >> 30, b >> 45) & 0x8888)
+        .count_ones();
+    let yz = (count_1row_(s, s >> 20, s >> 40, s >> 60, b, b >> 20, b >> 40, b >> 60)
+        & 0x0000_0000_0000_000f)
+        .count_ones();
+    let yz_ = (count_1row_(s, s >> 12, s >> 24, s >> 36, b, b >> 12, b >> 24, b >> 36) & 0xf000)
+        .count_ones();
+    let xyz1 = count_1row_(s, s >> 21, s >> 42, s >> 63, b, b >> 21, b >> 42, b >> 63);
+    let xyz2 = count_1row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 51) & 0x0008;
+    let xyz3 = count_1row_(s, s >> 13, s >> 26, s >> 39, b, b >> 13, b >> 26, b >> 39) & 0x1000;
+    let xyz4 = count_1row_(s, s >> 11, s >> 22, s >> 33, b, b >> 11, b >> 22, b >> 33) & 0x8000;
+
+    let xyz = (xyz1 | xyz2 | xyz3 | xyz4).count_ones();
+    return x + y + z + xy + xy_ + xz + xz_ + yz + yz_ + xyz;
+}
+
+pub fn count_3row(s: u64, b: u64) -> u32 {
+    let (s, b) = (b, s);
+
+    let x = (count_1row_(s, s >> 1, s >> 2, s >> 3, b, b >> 1, b >> 2, b >> 3)
+        & 0x1111_1111_1111_1111)
+        .count_ones();
+    let y = (count_1row_(s, s >> 4, s >> 8, s >> 12, b, b >> 4, b >> 8, b >> 12)
+        & 0x000f_000f_000f_000f)
+        .count_ones();
+    let z = count_1row_(s, s >> 16, s >> 32, s >> 48, b, b >> 16, b >> 32, b >> 48).count_ones();
+    let xy = (count_1row_(s, s >> 5, s >> 10, s >> 15, b, b >> 5, b >> 10, b >> 15)
+        & 0x0001_0001_0001_0001)
+        .count_ones();
+    let xy_ = (count_1row_(s, s >> 3, s >> 6, s >> 9, b, b >> 3, b >> 6, b >> 9)
+        & 0x0008_0008_0008_0008)
+        .count_ones();
+    let xz = (count_1row_(s, s >> 17, s >> 34, s >> 51, b, b >> 17, b >> 34, b >> 51)
+        & 0x0000_0000_0000_1111)
+        .count_ones();
+    let xz_ = (count_1row_(s, s >> 15, s >> 30, s >> 45, b, b >> 15, b >> 30, b >> 45) & 0x8888)
+        .count_ones();
+    let yz = (count_1row_(s, s >> 20, s >> 40, s >> 60, b, b >> 20, b >> 40, b >> 60)
+        & 0x0000_0000_0000_000f)
+        .count_ones();
+    let yz_ = (count_1row_(s, s >> 12, s >> 24, s >> 36, b, b >> 12, b >> 24, b >> 36) & 0xf000)
+        .count_ones();
+    let xyz1 = count_1row_(s, s >> 21, s >> 42, s >> 63, b, b >> 21, b >> 42, b >> 63);
+    let xyz2 = count_1row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 51) & 0x0008;
+    let xyz3 = count_1row_(s, s >> 13, s >> 26, s >> 39, b, b >> 13, b >> 26, b >> 39) & 0x1000;
+    let xyz4 = count_1row_(s, s >> 11, s >> 22, s >> 33, b, b >> 11, b >> 22, b >> 33) & 0x8000;
+
+    let xyz = (xyz1 | xyz2 | xyz3 | xyz4).count_ones();
+    return x + y + z + xy + xy_ + xz + xz_ + yz + yz_ + xyz;
+}
+
+const fn _get_1row_mask(a: u64, b: u64, c: u64, d: u64) -> u64 {
+    return a & b & c & d;
+}
+
+pub const fn get_1row_mask(s: u64, b: u64) -> u64 {
+    let (b1, b2, b3, b4, b6, b8, b9, b11, b12, b13, b15) = (
+        b >> 1,
+        b >> 2,
+        b >> 3,
+        b >> 4,
+        b >> 6,
+        b >> 8,
+        b >> 9,
+        b >> 11,
+        b >> 12,
+        b >> 13,
+        b >> 15,
+    );
+    let (b16, b17, b19, b20, b21, b22, b24, b26, b30) = (
+        b >> 16,
+        b >> 17,
+        b >> 19,
+        b >> 20,
+        b >> 21,
+        b >> 22,
+        b >> 24,
+        b >> 26,
+        b >> 30,
+    );
+    let (b32, b33, b34, b36, b38, b39, b40, b42, b45) = (
+        b >> 32,
+        b >> 33,
+        b >> 34,
+        b >> 36,
+        b >> 38,
+        b >> 39,
+        b >> 40,
+        b >> 42,
+        b >> 45,
+    );
+    let (b48, b49, b57, b60, b63) = (b >> 48, b >> 49, b >> 57, b >> 60, b >> 63);
+    0
+}
+
 pub fn get_random(board: &Board) -> u8 {
     let mut rng = rand::thread_rng();
     let actions = board.valid_actions();
@@ -789,6 +947,48 @@ pub fn eval(a1: &Agent, a2: &Agent, n: usize) -> (f32, f32) {
         // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);
     }
     return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
+}
+
+pub fn compare_agent(a1: &Agent, a2: &Agent, n: usize, th: f64, render: bool) -> (f32, f32) {
+    use super::utills::half_imcomplete_beta_func;
+    let mut score1 = 0.0;
+    let mut score2 = 0.0;
+
+    let pb = ProgressBar::new((n * 2) as u64);
+    pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-"));
+
+    let mut p = 0.5;
+    for _ in 0..n {
+        let (s1, s2) = play_actor(a1, a2, render);
+        score1 += s1;
+        score2 += s2;
+        pb.inc(1);
+        pb.set_message(format!(
+            "acum:[{score1}, {score2}], p:[{p:.6}:{:.6}][{s1}, {s2}]",
+            1.0 - p
+        ));
+        // println!("game black: {}, s1:{}, s2:{}", i, s1, s2);
+        let (s2, s1) = play_actor(a2, a1, render);
+        score1 += s1;
+        score2 += s2;
+        pb.inc(1);
+        p = half_imcomplete_beta_func(score1.floor() as f64, score2.floor() as f64);
+        pb.set_message(format!(
+            "acum:[{score1}, {score2}], p:[{p:.6}:{:.6}][{s1}, {s2}]",
+            1.0 - p
+        ));
+
+        // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);
+
+        if p < th || p > (1.0 - th) {
+            break;
+        }
+    }
+    pb.finish();
+    return (score1, score2);
 }
 
 pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bool) -> (f32, f32) {

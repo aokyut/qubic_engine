@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use crate::board::{self, pprint_board};
+use crate::board::{self, count_1row, count_2row, count_3row, pprint_board};
 
 use super::board::{Board, GetAction};
 use super::ml::{Graph, Tensor};
@@ -53,36 +53,46 @@ pub fn negalpha(
     let mut count = 0;
     let actions = b.valid_actions();
     let mut max_val = -MAX - 1;
-    let mut max_action: u8 = 16;
+    let mut max_actions = Vec::new();
     for action in actions.iter() {
         let next_board = &b.next(*action);
         if next_board.is_win() {
-            return (*action, -MAX, count);
+            return (*action, MAX, count);
         } else if next_board.is_draw() {
             return (*action, 0, count);
         } else if depth <= 1 {
-            let val = e.eval_func(b);
+            let val = -e.eval_func(next_board);
             if max_val < val {
                 max_val = val;
-                max_action = *action;
+                max_actions = vec![*action];
                 if max_val > beta {
-                    return (max_action, -max_val, count);
+                    return (*action, max_val, count);
                 }
+            } else if max_val == val {
+                max_actions.push(*action);
             }
         } else {
             let (_, val, _count) = negalpha(next_board, depth - 1, -max_val, -alpha, e);
             count += 1 + _count;
+            let val = -val;
             if max_val < val {
                 max_val = val;
-                max_action = *action;
+                max_actions = vec![*action];
                 if max_val > beta {
-                    return (max_action, -max_val, count);
+                    return (*action, max_val, count);
                 }
+            } else if max_val == val {
+                max_actions.push(*action);
             }
         }
     }
     // println!("[{}]max_val:{}", max_action, max_val);
-    return (max_action, max_val, count);
+    let mut rng = rand::thread_rng();
+    return (
+        max_actions[rng.gen::<usize>() % max_actions.len()],
+        max_val,
+        count,
+    );
 }
 
 pub struct NegAlpha {
@@ -101,7 +111,9 @@ impl NegAlpha {
 
 impl GetAction for NegAlpha {
     fn get_action(&self, b: &Board) -> u8 {
-        let (action, _, _) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
+        let (action, v, _) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
+        // pprint_board(b);
+        // println!("action:{action}, val:{v}");
         return action;
     }
 }
@@ -720,5 +732,68 @@ impl Analyzer for NNUE {
     fn analyze_eval(&self, b: &Board) -> f32 {
         let (action, val, count) = self.eval_with_negalpha(b, 3);
         return val;
+    }
+}
+
+pub struct RowEvaluator {
+    w_row3: i32,
+    w_row2: i32,
+    w_row1: i32,
+}
+
+impl RowEvaluator {
+    pub fn new() -> Self {
+        return RowEvaluator {
+            w_row1: 1,
+            w_row2: 1,
+            w_row3: 1,
+        };
+    }
+
+    pub fn best() -> Self {
+        RowEvaluator::from(2, 5, 12)
+    }
+
+    pub fn from(w1: i32, w2: i32, w3: i32) -> Self {
+        return RowEvaluator {
+            w_row3: w3,
+            w_row2: w2,
+            w_row1: w1,
+        };
+    }
+}
+
+impl Evaluator for RowEvaluator {
+    fn eval_func(&self, b: &Board) -> i32 {
+        let (att, def) = b.get_att_def();
+        let blank = !att & !def;
+
+        let att3 = count_3row(att, blank) as i32;
+        let def3 = count_3row(def, blank) as i32;
+
+        let att2 = count_2row(att, blank) as i32;
+        let def2 = count_2row(def, blank) as i32;
+
+        let att1 = count_1row(att, blank) as i32;
+        let def1 = count_1row(def, blank) as i32;
+
+        // pprint_board(b);
+        // println!("{att}, {def}");
+
+        return self.w_row3 * (att3 - def3)
+            + self.w_row2 * (att2 - def2)
+            + self.w_row1 * (att1 - def1);
+    }
+}
+
+pub struct NullEvaluator {}
+impl NullEvaluator {
+    pub fn new() -> Self {
+        return NullEvaluator {};
+    }
+}
+impl Evaluator for NullEvaluator {
+    fn eval_func(&self, b: &Board) -> i32 {
+        return 0;
     }
 }
