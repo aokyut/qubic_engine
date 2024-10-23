@@ -485,7 +485,7 @@ pub fn pprint_board(board: &Board) {
         }
         s += "\n"
     }
-    print!("{}\n", s);
+    print!("{}", s);
 }
 
 fn playout(board: &Board) -> f32 {
@@ -890,6 +890,9 @@ pub fn play_actor(a1: &impl GetAction, a2: &impl GetAction, render: bool) -> (f3
         }
         if b.is_black() {
             let action = a1.get_action(&b);
+            if render {
+                println!("action:{action}");
+            }
             b = b.next(action);
             if b.is_win() {
                 return (1.0, 0.0);
@@ -898,6 +901,9 @@ pub fn play_actor(a1: &impl GetAction, a2: &impl GetAction, render: bool) -> (f3
             }
         } else {
             let action = a2.get_action(&b);
+            if render {
+                println!("action:{action}");
+            }
             b = b.next(action);
             if b.is_win() {
                 return (0.0, 1.0);
@@ -949,7 +955,7 @@ pub fn eval(a1: &Agent, a2: &Agent, n: usize) -> (f32, f32) {
     return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
 }
 
-pub fn compare_agent(a1: &Agent, a2: &Agent, n: usize, th: f64, render: bool) -> (f32, f32) {
+pub fn compare_agent(a1: &Agent, a2: &Agent, n: usize, th: f64, render: bool) -> (f32, f32, bool) {
     use super::utills::half_imcomplete_beta_func;
     let mut score1 = 0.0;
     let mut score2 = 0.0;
@@ -984,11 +990,13 @@ pub fn compare_agent(a1: &Agent, a2: &Agent, n: usize, th: f64, render: bool) ->
         // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);
 
         if p < th || p > (1.0 - th) {
+            pb.finish();
+            return (score1, score2, true);
             break;
         }
     }
     pb.finish();
-    return (score1, score2);
+    return (score1, score2, false);
 }
 
 pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bool) -> (f32, f32) {

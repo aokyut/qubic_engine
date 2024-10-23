@@ -18,6 +18,11 @@ fn cal_rate(winner_loser: (f32, f32), temp: f32) -> (f32, f32) {
     return (winner + point, loser - point);
 }
 
+pub fn cal_elo_rate_diff(win_rate_a_to_b: f32) -> f32 {
+    assert!(win_rate_a_to_b != 0.0);
+    return -400.0 * (1.0 / win_rate_a_to_b - 1.0).log10();
+}
+
 impl Rating {
     pub fn new(in_vec: Vec<board::Agent>) -> Self {
         let size = in_vec.len();

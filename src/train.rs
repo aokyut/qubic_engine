@@ -1,3 +1,5 @@
+use crate::db::BoardDB;
+
 use super::{ai::*, board::*, ml::*};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::rngs::ThreadRng;
@@ -7,21 +9,22 @@ use std::time::Duration;
 use std::{thread, time};
 
 const EPOCH: usize = 100;
-const DEPTH: u8 = 5;
+const DEPTH: u8 = 3;
 const RANDOM_MOVE: usize = 7;
-const DATASET_SIZE: usize = 1 << 15;
-const BATCH_SIZE: usize = 1 << 6;
-const BATCH_NUM: usize = 1 << 14;
-const LAMBDA: f32 = 0.3;
-const EVAL_NUM: usize = 50;
+const DATASET_SIZE: usize = 1 << 14;
+const REPLAY_DELETE: usize = 1 << 12;
+const BATCH_SIZE: usize = 1 << 7;
+const BATCH_NUM: usize = 1 << 7;
+pub const LAMBDA: f32 = 0.3;
+const EVAL_NUM: usize = 5;
 const LOG_LOSS_N: usize = 1000;
-const SMOOOTING: f32 = 0.999;
+const SMOOOTING: f32 = 0.99;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Transition {
-    board: u128,
-    result: i32,
-    t_val: f32,
+    pub board: u128,
+    pub result: i32,
+    pub t_val: f32,
 }
 
 impl Transition {
@@ -34,22 +37,26 @@ impl Transition {
     }
 }
 
-pub fn create_db(load_model: &str, db_name: &str) {
+pub fn create_db(load_model: Option<&str>, db_name: &str, depth: usize) {
     use super::db;
     let mut model = NNUE::default();
+    model.set_depth(depth);
 
-    // model.load(String::from(load_model));
+    if let Some(path) = load_model {
+        model.load(String::from(path));
+    }
     model.set_inference();
-    let board_db = db::BoardDB::new(db_name);
+    let board_db = db::BoardDB::new(db_name, 1);
     let base = board_db.get_count();
     let mut count = 0;
     let start = time::Instant::now();
     loop {
+        // thread::sleep(Duration::from_millis(500));
         println!(
             "count:{base}+{count}, {}count/sec",
             count / (1 + start.elapsed().as_secs())
         );
-        let ts = play_and_record(&model);
+        let ts = play_with_eval(depth);
         count += ts.len() as u64;
         for t in ts {
             let att = t.board as u64;
@@ -57,6 +64,52 @@ pub fn create_db(load_model: &str, db_name: &str) {
             board_db.add(att, def, t.result, t.t_val);
         }
     }
+}
+
+fn play_with_eval(depth: usize) -> Vec<Transition> {
+    let mut b = Board::new();
+    let mut transitions = Vec::new();
+    let mut reward = 0;
+
+    let turn = 0;
+    let evaluator = super::ai::CoEvaluator::best();
+    let neg = super::ai::NegAlpha::new(Box::new(evaluator), depth as u8);
+
+    loop {
+        // pprint_board(&b);
+        let (_, val, count) = neg.eval_with_negalpha(&b);
+        let action;
+        if turn < RANDOM_MOVE {
+            action = get_random(&b);
+        } else {
+            action = mcts_action(&b, 2000, 50);
+        }
+        // pprint_board(&b);
+        // println!("[{action}]");
+        transitions.push(Transition {
+            board: b2u128(&b),
+            result: 0,
+            t_val: 1.0 / (1.0 + (-(val as f32) / 100.0).exp()),
+        });
+
+        let b_ = b.next(action);
+        if b_.is_win() {
+            reward = 1;
+            break;
+        } else if b_.is_draw() {
+            reward = 0;
+            break;
+        }
+        b = b_;
+    }
+
+    let size = transitions.len();
+    for i in 0..size {
+        transitions[size - i - 1].result = reward;
+        reward *= -1;
+    }
+
+    return transitions;
 }
 
 fn play_and_record(agent: &NNUE) -> Vec<Transition> {
@@ -68,7 +121,7 @@ fn play_and_record(agent: &NNUE) -> Vec<Transition> {
 
     loop {
         // pprint_board(&b);
-        let (_, val, count) = agent.eval_with_negalpha(&b, DEPTH);
+        let (_, val, count) = agent.eval_with_negalpha(&b);
         let action;
         if turn < RANDOM_MOVE {
             action = get_random(&b);
@@ -108,11 +161,12 @@ struct BatchIterator {
     cursor: usize,
     batch_size: usize,
     batch_num: usize,
+    lambda: f32,
     rng: ThreadRng,
 }
 
 impl BatchIterator {
-    fn new(data: Vec<Transition>, batch_size: usize, num: usize) -> Self {
+    fn new(data: Vec<Transition>, batch_size: usize, num: usize, lambda: f32) -> Self {
         let rng = rand::thread_rng();
         return BatchIterator {
             data: data,
@@ -120,6 +174,7 @@ impl BatchIterator {
             batch_num: num,
             batch_size: batch_size,
             rng: rng,
+            lambda: lambda,
         };
     }
     fn reset(&mut self) {
@@ -166,7 +221,7 @@ impl Iterator for BatchIterator {
                 let rot_b = random_rot(t.board, self.rng.gen());
                 board.push(Tensor::new(u2vec(rot_b), vec![128, 1]));
                 result.push(Tensor::new(
-                    vec![res * LAMBDA + (1.0 - LAMBDA) * t.t_val],
+                    vec![res * self.lambda + (1.0 - self.lambda) * t.t_val],
                     vec![1, 1],
                 ));
             }
@@ -192,7 +247,7 @@ fn play_with_analyze(agent: &NNUE) -> Vec<Transition> {
     let mut reward = 0;
 
     loop {
-        let (_, val, count) = agent.eval_with_negalpha(&b, DEPTH);
+        let (_, val, count) = agent.eval_with_negalpha(&b);
         agent.analyze(&b);
         let action = mcts_action(&b, 1000, 50);
         // pprint_board(&b);
@@ -223,7 +278,7 @@ fn play_with_analyze(agent: &NNUE) -> Vec<Transition> {
     return transitions;
 }
 
-pub fn train(load: bool, save: bool, name: String) {
+pub fn train(load: bool, save: bool, name: String, depth: usize) {
     let mut model = NNUE::default();
     let mut rng = rand::thread_rng();
 
@@ -236,6 +291,9 @@ pub fn train(load: bool, save: bool, name: String) {
         model.save(name.clone());
     }
 
+    model.set_depth(depth);
+    let mut dataset = Vec::new();
+
     for epoch in 0..EPOCH {
         model.eval();
         model.set_inference();
@@ -247,13 +305,14 @@ pub fn train(load: bool, save: bool, name: String) {
 
         // play_with_analyze(&model);
 
-        let mut dataset = Vec::new();
-
         let pb = ProgressBar::new(DATASET_SIZE as u64);
+
         pb.set_style(ProgressStyle::default_bar()
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
             .unwrap()
             .progress_chars("#>-"));
+
+        pb.inc(dataset.len() as u64);
 
         while dataset.len() < DATASET_SIZE {
             let mut record = play_and_record(&model);
@@ -268,9 +327,8 @@ pub fn train(load: bool, save: bool, name: String) {
 
         pb.finish();
 
-        dataset.shuffle(&mut rng);
-
-        let mut dataset = BatchIterator::new(dataset, BATCH_SIZE, BATCH_NUM);
+        let mut it = BatchIterator::new(dataset.clone(), BATCH_SIZE, BATCH_NUM, LAMBDA);
+        dataset = dataset[REPLAY_DELETE..].to_vec();
 
         model.train();
 
@@ -282,7 +340,7 @@ pub fn train(load: bool, save: bool, name: String) {
 
         let mut i = 0;
         let mut smoothed_loss = None;
-        for (board, result) in dataset {
+        for (board, result) in it {
             model.g.reset();
             let loss = model.g.forward(vec![board, result]);
             model.g.backward();
@@ -309,6 +367,91 @@ pub fn train(load: bool, save: bool, name: String) {
                 println!("[loss]:{}", smoothed_loss.unwrap());
             }
             i += 1;
+        }
+
+        if save {
+            model.save(name.clone());
+        }
+    }
+}
+
+pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval_db_name: String) {
+    let mut model = NNUE::default();
+
+    let test_actor1 = Agent::Minimax(3);
+    let test_actor2 = Agent::Mcts(50, 500);
+
+    if load {
+        model.load(name.clone());
+    } else if save {
+        model.save(name.clone());
+    }
+
+    let mut step = 0;
+
+    for epoch in 0..EPOCH {
+        model.eval();
+        model.set_inference();
+
+        let (e11, e12) = eval_model(&model, &test_actor1);
+        let (e21, e22) = eval_model(&model, &test_actor2);
+        println!("[minimax(3)]:({}, {})", e11, e12);
+        println!("[mcts(50, 500)]:({}, {})", e21, e22);
+
+        // play_with_analyze(&model);
+        let mut db = BoardDB::new(&db_name, BATCH_SIZE);
+        model.train();
+        db.set_batch_num();
+        // db.set_lambda(LAMBDA);
+
+        let pb = ProgressBar::new(db.get_batch_num() as u64);
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-"));
+
+        let mut smoothed_loss = None;
+        for (board, result) in db {
+            model.g.reset();
+            let loss = model.g.forward(vec![board, result]);
+            model.g.backward();
+            model.g.optimize();
+            // thread::sleep(Duration::from_millis(200));
+
+            let loss = loss.get_item().unwrap();
+            match smoothed_loss {
+                None => {
+                    smoothed_loss = Some(loss);
+                }
+                Some(s) => {
+                    smoothed_loss = Some(SMOOOTING * s + (1.0 - SMOOOTING) * loss);
+                }
+            }
+
+            pb.inc(1);
+            pb.set_message(format!(
+                "[loss]:{} \n[smoothed]:{}",
+                loss,
+                smoothed_loss.unwrap()
+            ));
+            if step % LOG_LOSS_N == 0 {
+                println!("[loss]:{}", smoothed_loss.unwrap());
+
+                let mut eval_db = BoardDB::new(&eval_db_name, 1);
+                let mut sum_loss = 0.0;
+
+                for (board, result) in eval_db {
+                    model.g.reset();
+                    let loss = model.g.forward(vec![board, result]);
+                    model.g.backward();
+                    model.g.optimize();
+                    // thread::sleep(Duration::from_millis(200));
+
+                    sum_loss += loss.get_item().unwrap();
+                }
+                println!("[eval_loss]:{}", sum_loss);
+            }
+            step += 1;
         }
 
         if save {

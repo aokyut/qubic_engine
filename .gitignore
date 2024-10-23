@@ -2,3 +2,5 @@
 /test_graph
 out
 record.db
+ratings
+*.db

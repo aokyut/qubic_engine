@@ -5,7 +5,9 @@ use crate::board::{self, count_1row, count_2row, count_3row, pprint_board};
 
 use super::board::{Board, GetAction};
 use super::ml::{Graph, Tensor};
+use rand::rngs::ThreadRng;
 use rand::Rng;
+use sqlite::Row;
 use std::time::{Duration, Instant};
 
 pub const MAX: i32 = 1600;
@@ -50,10 +52,13 @@ pub fn negalpha(
     beta: i32,
     e: &Box<dyn Evaluator>,
 ) -> (u8, i32, i32) {
+    // println!("depth:{depth}, alpha:{alpha}, beta:{beta}");
+    // pprint_board(b);
     let mut count = 0;
     let actions = b.valid_actions();
     let mut max_val = -MAX - 1;
     let mut max_actions = Vec::new();
+    let mut alpha = alpha;
     for action in actions.iter() {
         let next_board = &b.next(*action);
         if next_board.is_win() {
@@ -65,21 +70,29 @@ pub fn negalpha(
             if max_val < val {
                 max_val = val;
                 max_actions = vec![*action];
-                if max_val > beta {
-                    return (*action, max_val, count);
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (*action, max_val, count);
+                    }
                 }
             } else if max_val == val {
                 max_actions.push(*action);
             }
         } else {
-            let (_, val, _count) = negalpha(next_board, depth - 1, -max_val, -alpha, e);
+            let (_, val, _count) = negalpha(next_board, depth - 1, -beta, -alpha, e);
             count += 1 + _count;
             let val = -val;
             if max_val < val {
                 max_val = val;
                 max_actions = vec![*action];
-                if max_val > beta {
-                    return (*action, max_val, count);
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (*action, max_val, count);
+                    }
                 }
             } else if max_val == val {
                 max_actions.push(*action);
@@ -106,6 +119,9 @@ impl NegAlpha {
             evaluator: e,
             depth: depth,
         };
+    }
+    pub fn eval_with_negalpha(&self, b: &Board) -> (u8, i32, i32) {
+        return negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
     }
 }
 
@@ -144,6 +160,19 @@ impl PositionEvaluator {
         return PositionEvaluator {
             posmap: posmap.to_vec(),
         };
+    }
+    pub fn simpl(vertex: i32, edge: i32, surface: i32, core: i32) -> Self {
+        let (v, e, s, c) = (vertex, edge, surface, core);
+        let posmap = vec![
+            v, e, e, v, e, s, s, e, e, s, s, e, v, e, e, v, e, s, s, e, s, c, c, s, s, c, c, s, e,
+            s, s, e, e, s, s, e, s, c, c, s, s, c, c, s, e, s, s, e, v, e, e, v, e, s, s, e, e, s,
+            s, e, v, e, e, v,
+        ];
+        return PositionEvaluator { posmap: posmap };
+    }
+
+    pub fn best() -> Self {
+        return PositionEvaluator::simpl(6, 1, 5, 8);
     }
 }
 
@@ -411,6 +440,7 @@ pub struct NNUE {
     pub w1: usize,
     pub w1_size: usize,
     base_vec: Vec<Vec<f32>>,
+    depth: usize,
 }
 
 impl NNUE {
@@ -424,6 +454,7 @@ impl NNUE {
             w1: 0,
             w1_size: 0,
             base_vec: Vec::new(),
+            depth: 0,
         };
     }
 
@@ -431,7 +462,7 @@ impl NNUE {
         use super::ml::*;
         use super::ml::{funcs::*, optim::*, params::*};
 
-        let w1_size = 64;
+        let w1_size = 32;
 
         let mut g = Graph::new();
         g.optimizer = Some(Box::new(MomentumSGD::new(0.01, 0.9)));
@@ -475,6 +506,7 @@ impl NNUE {
             w1: w1,
             w1_size: w1_size,
             base_vec: Vec::new(),
+            depth: 3,
         };
     }
 
@@ -505,10 +537,14 @@ impl NNUE {
         self.set_after_w1();
     }
 
-    pub fn eval_with_negalpha(&self, b: &Board, depth: u8) -> (u8, f32, i32) {
+    pub fn set_depth(&mut self, depth: usize) {
+        self.depth = depth;
+    }
+
+    pub fn eval_with_negalpha(&self, b: &Board) -> (u8, f32, i32) {
         let b_hash = Self::b2u128(b);
         let mut b_vec = self.create_diff_vec(0, b_hash);
-        return self.eval_with_negalpha_1(b, b_hash, b_vec, depth, -2.0, 2.0);
+        return self.eval_with_negalpha_1(b, b_hash, b_vec, self.depth as u8, -2.0, 2.0);
     }
 
     pub fn eval_with_negalpha_1(
@@ -525,6 +561,7 @@ impl NNUE {
         let mut max_val = -2.0;
         let mut max_action: u8 = 16;
         let mut next_info: Option<(u128, Vec<f32>)> = None;
+        let mut alpha = alpha;
 
         for action in actions.iter() {
             let next_board = &b.next(*action);
@@ -559,8 +596,11 @@ impl NNUE {
                 if max_val < val {
                     max_val = val;
                     max_action = *action;
-                    if max_val > beta {
-                        return (max_action, max_val, count);
+                    if max_val > alpha {
+                        alpha = max_val;
+                        if alpha > beta {
+                            return (max_action, max_val, count);
+                        }
                     }
                 }
             } else {
@@ -571,16 +611,21 @@ impl NNUE {
                     b_hash,
                     &b_vec,
                     depth - 1,
-                    -max_val,
-                    -alpha,
+                    1.0 - beta,
+                    1.0 - alpha,
                 );
+                // pprint_board(&next_board);
                 let val = 1.0 - val;
+                // println!("[a:{}]{val}, {alpha}, {beta}\n", action);
                 count += _count;
                 if max_val < val {
                     max_val = val;
                     max_action = *action;
-                    if max_val > beta {
-                        return (max_action, max_val, count);
+                    if max_val > alpha {
+                        alpha = max_val;
+                        if alpha > beta {
+                            return (max_action, max_val, count);
+                        }
                     }
                 }
             }
@@ -603,11 +648,16 @@ impl NNUE {
         let actions = b.valid_actions();
         let mut max_val = -2.0;
         let mut max_action: u8 = 16;
+        let mut alpha = alpha;
 
         for action in actions.iter() {
             let next_board = &b.next(*action);
             let next_hash = Self::b2u128(next_board);
 
+            // if depth == 2 {
+            //     pprint_board(&next_board);
+            //     println!("d2[a:{}]alpha:{alpha}, beta:{beta}\n\n", *action)
+            // }
             if next_board.is_win() {
                 return (*action, 1.0, count);
             } else if next_board.is_draw() {
@@ -627,8 +677,11 @@ impl NNUE {
                 if max_val < val {
                     max_val = val;
                     max_action = *action;
-                    if max_val > beta {
-                        return (max_action, max_val, count);
+                    if max_val > alpha {
+                        alpha = max_val;
+                        if alpha > beta {
+                            return (max_action, max_val, count);
+                        }
                     }
                 }
             } else {
@@ -639,16 +692,19 @@ impl NNUE {
                     b_hash,
                     &b_vec,
                     depth - 1,
-                    -max_val,
-                    -alpha,
+                    1.0 - beta,
+                    1.0 - alpha,
                 );
                 let val = 1.0 - val;
                 count += _count;
                 if max_val < val {
                     max_val = val;
                     max_action = *action;
-                    if max_val > beta {
-                        return (max_action, max_val, count);
+                    if max_val > alpha {
+                        alpha = max_val;
+                        if alpha > beta {
+                            return (max_action, max_val, count);
+                        }
                     }
                 }
             }
@@ -717,7 +773,7 @@ impl NNUE {
 impl GetAction for NNUE {
     fn get_action(&self, b: &Board) -> u8 {
         let start = Instant::now();
-        let (action, val, count) = self.eval_with_negalpha(b, 3);
+        let (action, val, count) = self.eval_with_negalpha(b);
         let end = start.elapsed();
         let time = end.as_nanos();
         // println!(
@@ -730,7 +786,7 @@ impl GetAction for NNUE {
 
 impl Analyzer for NNUE {
     fn analyze_eval(&self, b: &Board) -> f32 {
-        let (action, val, count) = self.eval_with_negalpha(b, 3);
+        let (action, val, count) = self.eval_with_negalpha(b);
         return val;
     }
 }
@@ -792,8 +848,66 @@ impl NullEvaluator {
         return NullEvaluator {};
     }
 }
+
 impl Evaluator for NullEvaluator {
     fn eval_func(&self, b: &Board) -> i32 {
         return 0;
+    }
+}
+
+pub struct CoEvaluator {
+    a: Box<dyn Evaluator>,
+    b: Box<dyn Evaluator>,
+    a_weight: i32,
+    b_weight: i32,
+}
+
+impl CoEvaluator {
+    pub fn new(a: Box<dyn Evaluator>, b: Box<dyn Evaluator>, a_weight: i32, b_weight: i32) -> Self {
+        return CoEvaluator {
+            a: a,
+            b: b,
+            a_weight: a_weight,
+            b_weight: b_weight,
+        };
+    }
+
+    pub fn best() -> Self {
+        let a = RowEvaluator::best();
+        let b = PositionEvaluator::best();
+        return CoEvaluator {
+            a: Box::new(a),
+            b: Box::new(b),
+            a_weight: 3,
+            b_weight: 1,
+        };
+    }
+}
+
+impl Evaluator for CoEvaluator {
+    fn eval_func(&self, b: &Board) -> i32 {
+        let a_score = self.a.eval_func(b);
+        let b_score = self.b.eval_func(b);
+
+        let score =
+            (a_score * self.a_weight + b_score * self.b_weight) / (self.a_weight + self.b_weight);
+
+        return 3 * score;
+    }
+}
+
+pub struct RandomEvaluator {}
+
+impl RandomEvaluator {
+    pub fn new() -> Self {
+        return RandomEvaluator {};
+    }
+}
+
+impl Evaluator for RandomEvaluator {
+    fn eval_func(&self, b: &Board) -> i32 {
+        let mut rng = rand::thread_rng();
+        let u: usize = rng.gen();
+        return (u % 1300) as i32;
     }
 }
