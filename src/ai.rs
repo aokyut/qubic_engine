@@ -889,10 +889,10 @@ impl Evaluator for CoEvaluator {
         let a_score = self.a.eval_func(b);
         let b_score = self.b.eval_func(b);
 
-        let score =
-            (a_score * self.a_weight + b_score * self.b_weight) / (self.a_weight + self.b_weight);
+        let score = 10 * (a_score * self.a_weight + b_score * self.b_weight)
+            / (self.a_weight + self.b_weight);
 
-        return 3 * score;
+        return score;
     }
 }
 

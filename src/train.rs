@@ -89,7 +89,7 @@ fn play_with_eval(depth: usize) -> Vec<Transition> {
         transitions.push(Transition {
             board: b2u128(&b),
             result: 0,
-            t_val: 1.0 / (1.0 + (-(val as f32) / 100.0).exp()),
+            t_val: 1.0 / (1.0 + (-(val as f32) / 250.0).exp()),
         });
 
         let b_ = b.next(action);
