@@ -25,11 +25,11 @@ fn main() {
 
     // train::train(false, true, format!("test_graph"), 3);
 
-    println!("input db_name");
-    input! {
-        name: String
-    }
-    create_db(Some("test_graph"), &name, 3);
+    // println!("input db_name");
+    // input! {
+    //     name: String
+    // }
+    // create_db(Some("test_graph"), &name, 3);
 
     // let test = Agent::Minimax(3);
     // let agent = Agent::Minimax(3);
