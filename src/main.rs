@@ -31,13 +31,20 @@ fn main() {
     }
     create_db(Some("test_graph"), &name, 3);
 
-    // train_with_db(
-    //     false,
-    //     true,
-    //     String::from("test_graph"),
-    //     String::from("record.db"),
-    //     String::from("record2.db"),
-    // );
+    // let test = Agent::Minimax(3);
+    // let agent = Agent::Minimax(3);
+
+    // let result = eval_actor(&agent, &test, 100, false);
+
+    // println!("{result:?}");
+
+    train_with_db(
+        false,
+        true,
+        String::from("test_graph"),
+        String::from("record.db"),
+        String::from("valid_data.db"),
+    );
 }
 
 fn mc(a: usize, b: usize) -> Agent {

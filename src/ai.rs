@@ -5,6 +5,7 @@ use crate::board::{self, count_1row, count_2row, count_3row, pprint_board};
 
 use super::board::{Board, GetAction};
 use super::ml::{Graph, Tensor};
+use ort::{Environment, GraphOptimizationLevel, Session, SessionBuilder};
 use rand::rngs::ThreadRng;
 use rand::Rng;
 use sqlite::Row;
@@ -462,7 +463,7 @@ impl NNUE {
         use super::ml::*;
         use super::ml::{funcs::*, optim::*, params::*};
 
-        let w1_size = 32;
+        let w1_size = 64;
 
         let mut g = Graph::new();
         g.optimizer = Some(Box::new(MomentumSGD::new(0.01, 0.9)));
@@ -910,4 +911,29 @@ impl Evaluator for RandomEvaluator {
         let u: usize = rng.gen();
         return (u % 1300) as i32;
     }
+}
+
+pub struct OnnxEvaluator {
+    session: Session,
+}
+
+impl OnnxEvaluator {
+    pub fn new(file_path: &str) -> Self {
+        let environment = Environment::builder().build().unwrap().into_arc();
+        let session = SessionBuilder::new(&environment)
+            .unwrap()
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .unwrap()
+            .with_intra_threads(4)
+            .unwrap()
+            .with_model_from_file(file_path)
+            .unwrap();
+        return OnnxEvaluator { session: session };
+    }
+
+    // pub fn inference(&self, b: &Board) -> f32 {
+    //     let input_vec = u2vec(Self::b2u128(b));
+    //     let inputs = ort::Value::from_array(, array)
+    //     let output = self.session.run()
+    // }
 }

@@ -13,10 +13,10 @@ const DEPTH: u8 = 3;
 const RANDOM_MOVE: usize = 7;
 const DATASET_SIZE: usize = 1 << 14;
 const REPLAY_DELETE: usize = 1 << 12;
-const BATCH_SIZE: usize = 1 << 7;
+const BATCH_SIZE: usize = 1 << 5;
 const BATCH_NUM: usize = 1 << 7;
 pub const LAMBDA: f32 = 0.3;
-const EVAL_NUM: usize = 5;
+const EVAL_NUM: usize = 50;
 const LOG_LOSS_N: usize = 1000;
 const SMOOOTING: f32 = 0.99;
 
@@ -39,13 +39,13 @@ impl Transition {
 
 pub fn create_db(load_model: Option<&str>, db_name: &str, depth: usize) {
     use super::db;
-    let mut model = NNUE::default();
-    model.set_depth(depth);
+    // let mut model = NNUE::default();
+    // model.set_depth(depth);
 
-    if let Some(path) = load_model {
-        model.load(String::from(path));
-    }
-    model.set_inference();
+    // if let Some(path) = load_model {
+    //     model.load(String::from(path));
+    // }
+    // model.set_inference();
     let board_db = db::BoardDB::new(db_name, 1);
     let base = board_db.get_count();
     let mut count = 0;
@@ -410,8 +410,11 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
             .unwrap()
             .progress_chars("#>-"));
 
-        let mut smoothed_loss = None;
+        let mut train_loss_sum = 0.0;
+        let mut train_step = 0.0;
+        db.batch_num = 100_000_000;
         for (board, result) in db {
+            train_step += 1.0;
             model.g.reset();
             let loss = model.g.forward(vec![board, result]);
             model.g.backward();
@@ -419,23 +422,16 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
             // thread::sleep(Duration::from_millis(200));
 
             let loss = loss.get_item().unwrap();
-            match smoothed_loss {
-                None => {
-                    smoothed_loss = Some(loss);
-                }
-                Some(s) => {
-                    smoothed_loss = Some(SMOOOTING * s + (1.0 - SMOOOTING) * loss);
-                }
-            }
+            train_loss_sum += loss;
 
             pb.inc(1);
             pb.set_message(format!(
                 "[loss]:{} \n[smoothed]:{}",
                 loss,
-                smoothed_loss.unwrap()
+                train_loss_sum / train_step,
             ));
             if step % LOG_LOSS_N == 0 {
-                println!("[loss]:{}", smoothed_loss.unwrap());
+                println!("[loss]:{}", train_loss_sum / train_step);
 
                 let mut eval_db = BoardDB::new(&eval_db_name, 1);
                 let mut sum_loss = 0.0;

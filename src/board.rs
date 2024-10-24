@@ -1015,14 +1015,14 @@ pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bo
         score1 += s1;
         score2 += s2;
         pb.inc(1);
-        pb.set_message(format!("[{s1}, {s2}]"));
+        pb.set_message(format!("[{score1}, {score2}]"));
         // println!("game black: {}, s1:{}, s2:{}", i, s1, s2);
         let (s2, s1) = play_actor(a2, a1, render);
         // println!("[{}/{}]white: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
         pb.inc(1);
-        pb.set_message(format!("[{s1}, {s2}]"));
+        pb.set_message(format!("[{score1}, {score2}]"));
         // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);
     }
     return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
