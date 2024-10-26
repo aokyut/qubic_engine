@@ -2,7 +2,7 @@ use std::{cmp::Ordering, process::ExitCode, u64};
 
 use proconio::input;
 use qubic_engine::{
-    ai::{NegAlpha, NullEvaluator, NNUE},
+    ai::{CoEvaluator, NegAlpha, NegAlphaF, NullEvaluator, OnnxEvaluator, NNUE},
     board::{compare_agent, Agent},
     db::BoardDB,
     exp::cal_elo_rate_diff,
@@ -38,13 +38,22 @@ fn main() {
 
     // println!("{result:?}");
 
-    train_with_db(
-        false,
-        true,
-        String::from("test_graph"),
-        String::from("record.db"),
-        String::from("valid_data.db"),
-    );
+    // train_with_db(
+    //     false,
+    //     true,
+    //     String::from("test_graph"),
+    //     String::from("record.db"),
+    //     String::from("valid_data.db"),
+    // );
+
+    let onne = OnnxEvaluator::new("/Users/aokiyuuta/project_python/qubic_engine/nneval.onnx");
+    let neg = NegAlphaF::new(Box::new(onne), 1);
+    let max = Agent::Minimax(2);
+    let m3 = NegAlpha::new(Box::new(CoEvaluator::best()), 2);
+
+    let res = eval_actor(&neg, &m3, 100, false);
+    // let res = play_actor(&neg, &max, true);
+    println!("{res:?}");
 }
 
 fn mc(a: usize, b: usize) -> Agent {

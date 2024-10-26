@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::ops::Deref;
 
 use crate::board::{self, count_1row, count_2row, count_3row, pprint_board};
 
 use super::board::{Board, GetAction};
 use super::ml::{Graph, Tensor};
+use ndarray::{s, ArrayView, CowArray};
 use ort::{Environment, GraphOptimizationLevel, Session, SessionBuilder};
 use rand::rngs::ThreadRng;
 use rand::Rng;
@@ -109,6 +111,70 @@ pub fn negalpha(
     );
 }
 
+pub fn negalphaf(
+    b: &Board,
+    depth: u8,
+    alpha: f32,
+    beta: f32,
+    e: &Box<dyn EvalAndAnalyze>,
+) -> (u8, f32, i32) {
+    // println!("depth:{depth}, alpha:{alpha}, beta:{beta}");
+    // pprint_board(b);
+    let mut count = 0;
+    let actions = b.valid_actions();
+    let mut max_val = -2.0;
+    let mut max_actions = Vec::new();
+    let mut alpha = alpha;
+    for action in actions.iter() {
+        let next_board = &b.next(*action);
+        if next_board.is_win() {
+            return (*action, 1.0, count);
+        } else if next_board.is_draw() {
+            return (*action, 0.0, count);
+        } else if depth <= 1 {
+            let val = 1.0 - e.eval_func(next_board);
+            if max_val < val {
+                max_val = val;
+                max_actions = vec![*action];
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (*action, max_val, count);
+                    }
+                }
+            } else if max_val == val {
+                max_actions.push(*action);
+            }
+        } else {
+            // println!("a:{}, max_a:{:?}", *action, max_actions);
+            let (_, val, _count) = negalphaf(next_board, depth - 1, 1.0 - beta, 1.0 - alpha, e);
+            count += 1 + _count;
+            let val = 1.0 - val;
+            if max_val < val {
+                max_val = val;
+                max_actions = vec![*action];
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (*action, max_val, count);
+                    }
+                }
+            } else if max_val == val {
+                max_actions.push(*action);
+            }
+        }
+    }
+    // println!("[{}]max_val:{}", max_action, max_val);
+    let mut rng = rand::thread_rng();
+    return (
+        max_actions[rng.gen::<usize>() % max_actions.len()],
+        max_val,
+        count,
+    );
+}
+
 pub struct NegAlpha {
     evaluator: Box<dyn Evaluator>,
     depth: u8,
@@ -135,8 +201,47 @@ impl GetAction for NegAlpha {
     }
 }
 
+pub trait EvalAndAnalyze: EvaluatorF + Analyzer {}
+
+pub struct NegAlphaF {
+    evaluator: Box<dyn EvalAndAnalyze>,
+    depth: u8,
+}
+
+impl NegAlphaF {
+    pub fn new(e: Box<dyn EvalAndAnalyze>, depth: u8) -> Self {
+        return NegAlphaF {
+            evaluator: e,
+            depth: depth,
+        };
+    }
+    pub fn eval_with_negalpha(&self, b: &Board) -> (u8, f32, i32) {
+        let actions = b.valid_actions();
+
+        // for &action in actions.iter() {
+        //     let next_b = b.next(action);
+        //     let (_, val, _) = negalphaf(&next_b, self.depth - 1, -2.0, 2.0, &self.evaluator);
+        //     let val = 1.0 - val;
+        //     println!("[{}]:{}", action, val);
+        // }
+
+        return negalphaf(b, self.depth, -2.0, 2.0, &self.evaluator);
+    }
+}
+
+impl GetAction for NegAlphaF {
+    fn get_action(&self, b: &Board) -> u8 {
+        let (action, _, _) = self.eval_with_negalpha(b);
+        return action;
+    }
+}
+
 pub trait Evaluator {
     fn eval_func(&self, b: &Board) -> i32;
+}
+
+pub trait EvaluatorF {
+    fn eval_func(&self, b: &Board) -> f32;
 }
 
 pub trait Analyzer {
@@ -147,11 +252,12 @@ pub trait Analyzer {
 
         for &action in actions.iter() {
             let next_b = b.next(action);
-            let val = -self.analyze_eval(&next_b);
+            let val = 1.0 - self.analyze_eval(&next_b);
             println!("[{}]:{}", action, val);
         }
     }
 }
+
 pub struct PositionEvaluator {
     posmap: Vec<i32>,
 }
@@ -931,9 +1037,30 @@ impl OnnxEvaluator {
         return OnnxEvaluator { session: session };
     }
 
-    // pub fn inference(&self, b: &Board) -> f32 {
-    //     let input_vec = u2vec(Self::b2u128(b));
-    //     let inputs = ort::Value::from_array(, array)
-    //     let output = self.session.run()
-    // }
+    pub fn inference(&self, b: &Board) -> f32 {
+        let input_vec = u2vec(b2u128(b));
+        let inputs = ndarray::Array::from_vec(input_vec);
+        let inputs = CowArray::from(inputs.slice(s![..]).into_dyn());
+        let inputs = vec![ort::Value::from_array(self.session.allocator(), &inputs).unwrap()];
+
+        let output = self.session.run(inputs).unwrap();
+        let output = output[0].try_extract::<f32>().unwrap();
+        let output = output.view();
+
+        return output[0];
+    }
 }
+
+impl EvaluatorF for OnnxEvaluator {
+    fn eval_func(&self, b: &Board) -> f32 {
+        return self.inference(b);
+    }
+}
+
+impl Analyzer for OnnxEvaluator {
+    fn analyze_eval(&self, b: &Board) -> f32 {
+        return self.eval_func(b);
+    }
+}
+
+impl EvalAndAnalyze for OnnxEvaluator {}
