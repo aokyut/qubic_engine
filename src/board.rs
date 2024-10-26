@@ -286,6 +286,29 @@ impl Board {
     }
 }
 
+pub fn hash(att: u64, def: u64) -> u128 {
+    let mut bitboard = att as u128 | ((def as u128) << 64);
+    let mut min_bitboard = bitboard;
+
+    let hbitboard = Board::hflip(bitboard);
+    if min_bitboard > hbitboard {
+        min_bitboard = hbitboard;
+    }
+
+    for _ in 0..3 {
+        bitboard = Board::rot(bitboard);
+        if min_bitboard > bitboard {
+            min_bitboard = bitboard;
+        }
+        let hbitboard = Board::hflip(bitboard);
+        if min_bitboard > hbitboard {
+            min_bitboard = hbitboard;
+        }
+    }
+
+    return min_bitboard;
+}
+
 pub fn _is_win_board(bit: u64) -> bool {
     (bit & (bit >> 1) & (bit >> 2) & (bit >> 3) & 0x1111111111111111)
         | (bit & (bit >> 4) & (bit >> 8) & (bit >> 12) & 0x000f000f000f000f)

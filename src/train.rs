@@ -52,12 +52,14 @@ pub fn create_db(load_model: Option<&str>, db_name: &str, depth: usize) {
     let start = time::Instant::now();
     loop {
         // thread::sleep(Duration::from_millis(500));
+        let additional = board_db.get_count() - base;
         println!(
-            "count:{base}+{count}, {}count/sec",
-            count / (1 + start.elapsed().as_secs())
+            "count:{base}+{additional}, {}count/sec, {additional}/{count}[{}%]",
+            additional / (1 + start.elapsed().as_secs() as usize),
+            additional * 100 / (count + 1)
         );
-        let ts = play_with_eval(depth);
-        count += ts.len() as u64;
+        let ts = play_with_eval(depth, &board_db);
+        count += ts.len();
         for t in ts {
             let att = t.board as u64;
             let def = (t.board >> 64) as u64;
@@ -66,7 +68,7 @@ pub fn create_db(load_model: Option<&str>, db_name: &str, depth: usize) {
     }
 }
 
-fn play_with_eval(depth: usize) -> Vec<Transition> {
+fn play_with_eval(depth: usize, db: &BoardDB) -> Vec<Transition> {
     let mut b = Board::new();
     let mut transitions = Vec::new();
     let mut reward = 0;
@@ -77,20 +79,32 @@ fn play_with_eval(depth: usize) -> Vec<Transition> {
 
     loop {
         // pprint_board(&b);
-        let (_, val, count) = neg.eval_with_negalpha(&b);
-        let action;
-        if turn < RANDOM_MOVE {
-            action = get_random(&b);
+        let flag;
+        let (val, count);
+        if db.is_in(&b) {
+            flag = false;
+            val = 0;
         } else {
-            action = mcts_action(&b, 2000, 50);
+            flag = true;
+            (_, val, count) = neg.eval_with_negalpha(&b);
         }
+        let action;
+
+        action = get_random(&b);
+        // if turn < RANDOM_MOVE {
+        // } else {
+        //     action = mcts_action(&b, 2000, 50);
+        // }
         // pprint_board(&b);
         // println!("[{action}]");
-        transitions.push(Transition {
-            board: b2u128(&b),
-            result: 0,
-            t_val: 1.0 / (1.0 + (-(val as f32) / 250.0).exp()),
-        });
+        transitions.push((
+            Transition {
+                board: b2u128(&b),
+                result: 0,
+                t_val: 1.0 / (1.0 + (-(val as f32) / 250.0).exp()),
+            },
+            flag,
+        ));
 
         let b_ = b.next(action);
         if b_.is_win() {
@@ -103,13 +117,17 @@ fn play_with_eval(depth: usize) -> Vec<Transition> {
         b = b_;
     }
 
-    let size = transitions.len();
-    for i in 0..size {
-        transitions[size - i - 1].result = reward;
+    let mut new_transition = Vec::new();
+    transitions.reverse();
+    for (mut t, flag) in transitions {
+        t.result = reward;
         reward *= -1;
+        if flag {
+            new_transition.push(t);
+        }
     }
 
-    return transitions;
+    return new_transition;
 }
 
 fn play_and_record(agent: &NNUE) -> Vec<Transition> {

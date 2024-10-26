@@ -3,7 +3,7 @@ use rand::Rng;
 use sqlite::{open, Connection};
 
 use crate::ai::u2vec;
-use crate::board::Board;
+use crate::board::{hash, Board};
 use crate::train;
 use crate::{
     ml::{create_batch, Tensor},
@@ -27,7 +27,8 @@ impl BoardDB {
                 att integer,
                 def integer,
                 flag integer,
-                val real
+                val real,
+                primary key(att, def)
             )
         ";
 
@@ -59,14 +60,40 @@ impl BoardDB {
     }
 
     pub fn add(&self, att: u64, def: u64, flag: i32, val: f32) {
+        let h = hash(att, def);
+        let att = (h & 0xffff_ffff_ffff_ffff) as u64;
+        let def = (h >> 64) as u64;
         let query = format!(
             "
-                insert into board_record(att, def, flag, val)
-                values({}, {}, {}, {})",
+                INSERT INTO board_record(att, def, flag, val)
+                VALUES({}, {}, {}, {})
+                ON CONFLICT(att, def) DO NOTHING",
             att as i64, def as i64, flag, val
         );
-
         self.conn.execute(query).unwrap();
+    }
+
+    pub fn is_in(&self, board: &Board) -> bool {
+        let (att, def) = board.get_att_def();
+        let h = hash(att, def);
+        let att = (h & 0xffff_ffff_ffff_ffff) as u64;
+        let def = (h >> 64) as u64;
+
+        let query = format!(
+            "
+                SELECT COUNT(*) FROM board_record where att={} and def={}",
+            att as i64, def as i64
+        );
+        let mut count = 0;
+        self.conn
+            .iterate(query, |pairs| {
+                for &(name, value) in pairs.iter() {
+                    count = value.unwrap().parse().unwrap();
+                }
+                true
+            })
+            .unwrap();
+        return count > 0;
     }
 
     pub fn get(&self, size: usize) -> Vec<(u64, u64, i32, f32)> {
