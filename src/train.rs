@@ -51,11 +51,12 @@ pub fn create_db(load_model: Option<&str>, db_name: &str, depth: usize) {
     let mut count = 0;
     let start = time::Instant::now();
     loop {
-        // thread::sleep(Duration::from_millis(500));
+        thread::sleep(Duration::from_millis(100));
         let additional = board_db.get_count() - base;
         println!(
-            "count:{base}+{additional}, {}count/sec, {additional}/{count}[{}%]",
+            "count:{base}+{additional}, {}count/sec, {}count/hour, {additional}/{count}[{}%]",
             additional / (1 + start.elapsed().as_secs() as usize),
+            3600 * additional / (1 + start.elapsed().as_secs() as usize),
             additional * 100 / (count + 1)
         );
         let ts = play_with_eval(depth, &board_db);
@@ -119,13 +120,20 @@ fn play_with_eval(depth: usize, db: &BoardDB) -> Vec<Transition> {
 
     let mut new_transition = Vec::new();
     transitions.reverse();
+    let ts_num = transitions.len();
+    let mut flag_num = 0;
     for (mut t, flag) in transitions {
         t.result = reward;
         reward *= -1;
         if flag {
+            flag_num += 1;
             new_transition.push(t);
         }
     }
+    println!(
+        "flag_rate:{flag_num:>4}/{ts_num:>4}=[{:>3}%]",
+        100 * flag_num / ts_num
+    );
 
     return new_transition;
 }

@@ -29,7 +29,7 @@ fn main() {
     input! {
         name: String
     }
-    create_db(Some("test_graph"), &name, 5);
+    create_db(Some("test_graph"), &name, 3);
 
     // train_with_db(
     //     false,
