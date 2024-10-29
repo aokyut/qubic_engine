@@ -47,7 +47,7 @@ impl Player {
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Clone)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct Board {
     pub black: u64,
     pub white: u64,
@@ -78,6 +78,13 @@ impl Board {
                 player: Player::Black,
             },
         }
+    }
+
+    pub fn next_pos(&self, action_id: u8) -> u32 {
+        let board = self.black | self.white;
+        let action_bitboard: u64 =
+            (0x0001000100010001u64 << action_id) & ((!board << 16) ^ (!board));
+        return action_bitboard.trailing_zeros();
     }
 
     pub fn is_draw(&self) -> bool {

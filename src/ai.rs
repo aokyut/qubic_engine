@@ -54,12 +54,13 @@ pub fn negalpha(
 ) -> (u8, i32, i32) {
     // println!("depth:{depth}, alpha:{alpha}, beta:{beta}");
     // pprint_board(b);
-    let mut count = 0;
+    let mut count = 1;
     let actions = b.valid_actions();
     let mut max_val = -MAX - 1;
     let mut max_actions = Vec::new();
     let mut alpha = alpha;
     for action in actions.iter() {
+        count += 1;
         let next_board = &b.next(*action);
         if next_board.is_win() {
             return (*action, MAX, count);
@@ -82,7 +83,7 @@ pub fn negalpha(
             }
         } else {
             let (_, val, _count) = negalpha(next_board, depth - 1, -beta, -alpha, e);
-            count += 1 + _count;
+            count += _count;
             let val = -val;
             if max_val < val {
                 max_val = val;
@@ -101,6 +102,88 @@ pub fn negalpha(
     }
     // println!("[{}]max_val:{}", max_action, max_val);
     let mut rng = rand::thread_rng();
+
+    return (
+        max_actions[rng.gen::<usize>() % max_actions.len()],
+        max_val,
+        count,
+    );
+}
+
+pub fn negalpha_(
+    b: &Board,
+    depth: u8,
+    alpha: i32,
+    beta: i32,
+    e: &Box<dyn Evaluator>,
+) -> (u8, i32, i32) {
+    // println!("depth:{depth}, alpha:{alpha}, beta:{beta}");
+    // pprint_board(b);
+    let mut count = 1;
+    let mut actions = b.valid_actions();
+    let next_boards: Vec<(u8, Board)>;
+    if depth > 2 {
+        let mut act_b_vals: Vec<(u8, Board, i32)> = actions
+            .iter()
+            .map(|&act| {
+                let nb = b.next(act);
+                let val = -e.eval_func(&nb);
+                (act, nb, val)
+            })
+            .collect();
+
+        act_b_vals.sort_by(|(_, _, v1), (_, _, v2)| v1.cmp(v2).reverse());
+        next_boards = act_b_vals.iter().map(|(a, b, _)| (*a, b.clone())).collect();
+    } else {
+        next_boards = actions.iter().map(|act| (*act, b.next(*act))).collect();
+    }
+
+    let mut max_val = -MAX - 1;
+    let mut max_actions = Vec::new();
+    let mut alpha = alpha;
+    for (action, next_board) in next_boards.iter() {
+        count += 1;
+        if next_board.is_win() {
+            return (*action, MAX, count);
+        } else if next_board.is_draw() {
+            return (*action, 0, count);
+        } else if depth <= 1 {
+            let val = -e.eval_func(next_board);
+            if max_val < val {
+                max_val = val;
+                max_actions = vec![*action];
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (*action, max_val, count);
+                    }
+                }
+            } else if max_val == val {
+                max_actions.push(*action);
+            }
+        } else {
+            let (_, val, _count) = negalpha(next_board, depth - 1, -beta, -alpha, e);
+            count += _count;
+            let val = -val;
+            if max_val < val {
+                max_val = val;
+                max_actions = vec![*action];
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (*action, max_val, count);
+                    }
+                }
+            } else if max_val == val {
+                max_actions.push(*action);
+            }
+        }
+    }
+    // println!("[{}]max_val:{}", max_action, max_val);
+    let mut rng = rand::thread_rng();
+
     return (
         max_actions[rng.gen::<usize>() % max_actions.len()],
         max_val,
@@ -111,6 +194,10 @@ pub fn negalpha(
 pub struct NegAlpha {
     evaluator: Box<dyn Evaluator>,
     depth: u8,
+    pub c1: i32,
+    pub c2: i32,
+    pub t1: u128,
+    pub t2: u128,
 }
 
 impl NegAlpha {
@@ -118,18 +205,49 @@ impl NegAlpha {
         return NegAlpha {
             evaluator: e,
             depth: depth,
+            c1: 0,
+            c2: 0,
+            t1: 0,
+            t2: 0,
         };
     }
     pub fn eval_with_negalpha(&self, b: &Board) -> (u8, i32, i32) {
         return negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
     }
+
+    pub fn get_action_count(&mut self, b: &Board) -> u8 {
+        let now = Instant::now();
+        let (action, v, count) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
+        let a1 = now.elapsed().as_nanos();
+        // pprint_board(b);
+        let now = Instant::now();
+        let (action_, v_, count_) = negalpha_(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
+        let a2 = now.elapsed().as_nanos();
+        // println!("count:{count_}/{count}[{:>3}%]", count_ * 100 / count);
+        // println!("time:{a2}/{a1}[{:>3}%]", a2 * 100 / a1);
+        // println!();
+        self.c1 += count;
+        self.c2 += count_;
+        self.t1 += a1;
+        self.t2 += a2;
+        return action;
+    }
 }
 
 impl GetAction for NegAlpha {
     fn get_action(&self, b: &Board) -> u8 {
-        let (action, v, _) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
+        pprint_board(b);
+        let now = Instant::now();
+        let (action, v, count) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
+        let a1 = now.elapsed().as_nanos();
         // pprint_board(b);
-        // println!("action:{action}, val:{v}");
+        let now = Instant::now();
+        let (action_, v_, count_) = negalpha_(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
+        let a2 = now.elapsed().as_nanos();
+        println!("count:{count_}/{count}[{:>3}%]", count_ * 100 / count);
+        println!("time:{a2}/{a1}[{:>3}%]", a2 * 100 / a1);
+        println!();
+        assert_eq!(action, action_);
         return action;
     }
 }
