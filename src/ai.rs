@@ -1,3 +1,5 @@
+pub mod pattern;
+
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::Deref;
@@ -130,7 +132,7 @@ pub fn negalphaf(
         if next_board.is_win() {
             return (*action, 1.0, count);
         } else if next_board.is_draw() {
-            return (*action, 0.0, count);
+            return (*action, 0.5, count);
         } else if depth <= 1 {
             let val = 1.0 - e.eval_func(next_board);
             if max_val < val {
@@ -569,7 +571,7 @@ impl NNUE {
         use super::ml::*;
         use super::ml::{funcs::*, optim::*, params::*};
 
-        let w1_size = 64;
+        let w1_size = 128;
 
         let mut g = Graph::new();
         g.optimizer = Some(Box::new(MomentumSGD::new(0.01, 0.9)));
@@ -586,20 +588,21 @@ impl NNUE {
         let activate = LeaklyReLU::default();
         let relu = g.add_layer(vec![l1], Box::new(activate));
 
-        let l2 = Linear::auto(w1_size, 32);
+        let l2 = Linear::auto(w1_size, 16);
         let l2 = g.add_layer(vec![relu], Box::new(l2));
         let relu2 = g.add_layer(vec![l2], Box::new(LeaklyReLU::default()));
 
-        let l3 = Linear::auto(32, 32);
+        let l3 = Linear::auto(16, 16);
         let l3 = g.add_layer(vec![relu2], Box::new(l3));
         let relu3 = g.add_layer(vec![l3], Box::new(LeaklyReLU::default()));
 
-        let l4 = Linear::auto(32, 1);
+        let l4 = Linear::auto(16, 1);
         let l4 = g.add_layer(vec![relu3], Box::new(l4));
 
         // t = lambda * result + (1 - lambda) * t_in
         let sig = g.add_layer(vec![l4], Box::new(Sigmoid::new(1.0)));
         let loss = g.add_layer(vec![sig, i2], Box::new(BinaryCrossEntropy::default()));
+        // let loss = g.add_layer(vec![sig, i2], Box::new(MSE::new()));
 
         g.set_target(sig);
         g.set_placeholder(vec![i1]);

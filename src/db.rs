@@ -40,6 +40,12 @@ impl BoardDB {
             rng: rng,
             lambda: 0.0,
         };
+
+        if batch_size == 0 {
+            let count = db.get_count();
+            db.batch_size = count;
+        }
+
         db.set_batch_num();
 
         return db;
@@ -56,6 +62,14 @@ impl BoardDB {
 
     pub fn get_batch_num(&self) -> usize {
         return self.batch_num;
+    }
+
+    pub fn begine(&self) {
+        self.conn.execute("begine");
+    }
+
+    pub fn end(&self) {
+        self.conn.execute("end");
     }
 
     pub fn add(&self, att: u64, def: u64, flag: i32, val: f32) {
@@ -139,7 +153,7 @@ impl BoardDB {
     }
 }
 
-fn random_rot(b: u128, id: usize) -> u128 {
+pub fn random_rot(b: u128, id: usize) -> u128 {
     let id = id % 8;
     let mut b = b;
     if id < 4 {

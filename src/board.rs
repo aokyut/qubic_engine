@@ -1000,6 +1000,7 @@ pub fn compare_agent(a1: &Agent, a2: &Agent, n: usize, th: f64, render: bool) ->
 }
 
 pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bool) -> (f32, f32) {
+    use std::{thread, time::Duration};
     let mut score1 = 0.0;
     let mut score2 = 0.0;
 
@@ -1010,6 +1011,7 @@ pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bo
             .progress_chars("#>-"));
 
     for i in 0..n {
+        thread::sleep(Duration::from_millis(200));
         let (s1, s2) = play_actor(a1, a2, render);
         // println!("[{}/{}]black: {}, {}", i, n, s1, s2);
         score1 += s1;

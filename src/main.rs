@@ -18,6 +18,7 @@ fn main() {
     use qubic_engine::board::*;
 
     // let a1 = Agent::Mcts(50, 500);
+    // let m3 = NegAlpha::new(Box::new(CoEvaluator::best()), 2);
     // let a2 = Agent::Mcts(50, 1000);
     // let mut m = NNUE::default();
     // m.load(format!("test_graph"));
@@ -34,26 +35,26 @@ fn main() {
     // let test = Agent::Minimax(3);
     // let agent = Agent::Minimax(3);
 
-    // let result = eval_actor(&agent, &test, 100, false);
+    // let result = eval_actor(&m3, &m3, 100, false);
 
     // println!("{result:?}");
 
-    // train_with_db(
+    train_with_db(
+        false,
+        true,
+        String::from("test_graph"),
+        String::from("coe3_fromRandom"),
+        String::from("coe3_fromRandom_test2"),
+    );
+
+    // qubic_engine::ai::pattern::train_with_db(
     //     false,
-    //     true,
-    //     String::from("test_graph"),
-    //     String::from("record.db"),
-    //     String::from("valid_data.db"),
+    //     false,
+    //     String::from("test"),
+    //     String::from("coe3_fromRandom"),
+    //     String::from("coe3_fromRandom_test"),
+    //     100,
     // );
-
-    let onne = OnnxEvaluator::new("/Users/aokiyuuta/project_python/qubic_engine/nneval.onnx");
-    let neg = NegAlphaF::new(Box::new(onne), 1);
-    let max = Agent::Minimax(2);
-    let m3 = NegAlpha::new(Box::new(CoEvaluator::best()), 2);
-
-    let res = eval_actor(&neg, &m3, 100, false);
-    // let res = play_actor(&neg, &max, true);
-    println!("{res:?}");
 }
 
 fn mc(a: usize, b: usize) -> Agent {
