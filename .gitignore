@@ -4,3 +4,5 @@ out
 record.db
 ratings
 *.db
+coe*
+mcoe*
