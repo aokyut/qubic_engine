@@ -11,13 +11,15 @@ use std::{thread, time};
 const EPOCH: usize = 100;
 const DEPTH: u8 = 3;
 const RANDOM_MOVE: usize = 7;
-const RANDOM_MOVE_MAX: usize = 12;
+const RANDOM_MOVE_MAX: usize = 48;
+const RANDOM_MOVE_WIDTH: usize = 4;
 const DATASET_SIZE: usize = 1 << 14;
 const REPLAY_DELETE: usize = 1 << 13;
-const BATCH_SIZE: usize = 1 << 4;
+const BATCH_SIZE: usize = 1 << 2;
 const BATCH_NUM: usize = 1 << 10;
 pub const LAMBDA: f32 = 0.0;
-const EVAL_NUM: usize = 100;
+const DECAY_ALPHA: f32 = 0.92;
+const EVAL_NUM: usize = 25;
 const LOG_LOSS_N: usize = 5000;
 const SMOOTHING: f32 = 0.9975;
 
@@ -38,7 +40,7 @@ impl Transition {
     }
 }
 
-pub fn create_db(load_model: Option<&str>, db_name: &str, depth: usize) {
+pub fn create_db(load_model: Option<NNUE>, db_name: &str, depth: usize) {
     use super::db;
     let board_db = db::BoardDB::new(db_name, 1);
     let base = board_db.get_count();
@@ -52,13 +54,13 @@ pub fn create_db(load_model: Option<&str>, db_name: &str, depth: usize) {
     board_db.begine();
 
     loop {
-        thread::sleep(Duration::from_millis(100));
         println!(
             "count:{base}+{count}, {}count/sec",
             count / (1 + start.elapsed().as_secs())
         );
-        let random_step: usize = rng.gen::<usize>() % 12;
-        let ts = play_with_eval(depth, random_step);
+        let random_offset: usize = rng.gen::<usize>() % RANDOM_MOVE_MAX;
+        let random_step: usize = rng.gen::<usize>() % RANDOM_MOVE_WIDTH;
+        let ts = play_with_eval(depth, random_offset, random_step, &load_model);
         count += ts.len() as u64;
         step += 1;
         for t in ts {
@@ -74,7 +76,12 @@ pub fn create_db(load_model: Option<&str>, db_name: &str, depth: usize) {
     }
 }
 
-fn play_with_eval(depth: usize, random_step: usize) -> Vec<Transition> {
+fn play_with_eval(
+    depth: usize,
+    random_offset: usize,
+    random_step: usize,
+    model: &Option<NNUE>,
+) -> Vec<Transition> {
     let mut b = Board::new();
     let mut transitions = Vec::new();
     let mut reward = 0;
@@ -87,20 +94,39 @@ fn play_with_eval(depth: usize, random_step: usize) -> Vec<Transition> {
         // pprint_board(&b);
         let action;
         let val: i32;
+        let valf: f32;
         let count: i32;
-        if turn < random_step {
+        if random_offset <= turn && (random_offset + random_step) >= turn {
             action = get_random(&b);
         } else {
-            (action, val, count) = neg.eval_with_negalpha(&b);
+            match model {
+                Some(nnue) => {
+                    (action, valf, count) = nnue.eval_with_negalpha(&b);
+                }
+                None => {
+                    (action, val, count) = neg.eval_with_negalpha(&b);
+                    valf = 1.0 / (1.0 + (-(val as f32) / 250.0).exp());
+                }
+            }
+            if (random_offset + random_step) < turn {
+                transitions.push(Transition {
+                    board: b2u128(&b),
+                    result: 0,
+                    t_val: valf,
+                });
+            }
+            thread::sleep(Duration::from_micros(750));
             // action = mcts_action(&b, 500, 50);
-            transitions.push(Transition {
-                board: b2u128(&b),
-                result: 0,
-                t_val: 1.0 / (1.0 + (-(val as f32) / 250.0).exp()),
-            });
         }
 
         let b_ = b.next(action);
+        let end = mate_check_horizontal(&b);
+        if let Some((flag, action)) = end {
+            if flag {
+                reward = 1;
+                break;
+            }
+        }
         if b_.is_win() {
             reward = 1;
             break;
@@ -113,10 +139,27 @@ fn play_with_eval(depth: usize, random_step: usize) -> Vec<Transition> {
     }
 
     let size = transitions.len();
+    let mut decay = 1.0;
     for i in 0..size {
         transitions[size - i - 1].result = reward;
+        let win_rate;
+        if reward == 1 {
+            win_rate = 1.0;
+        } else if reward == 0 {
+            win_rate = 0.5;
+        } else {
+            win_rate = 0.0;
+        }
+        transitions[size - i - 1].t_val =
+            decay * win_rate + (1.0 - decay) * transitions[size - i - 1].t_val;
         reward *= -1;
+        decay *= DECAY_ALPHA;
     }
+
+    // if transitions.len() == 0 {
+    //     return transitions;
+    // }
+    // let transitions = vec![transitions[0].clone()];
 
     return transitions;
 }
@@ -299,7 +342,7 @@ fn play_with_analyze(agent: &NNUE) -> Vec<Transition> {
 
 pub fn train(load: bool, save: bool, name: String, depth: usize) {
     let mut model = NNUE::default();
-    let mut rng = rand::thread_rng();
+    let rng = rand::thread_rng();
 
     let test_actor1 = Agent::Minimax(3);
     let test_actor2 = Agent::Mcts(50, 500);
@@ -409,6 +452,7 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
     let test_actor2 = Agent::Mcts(50, 500);
     let evaluator = super::ai::CoEvaluator::best();
     let neg = super::ai::NegAlpha::new(Box::new(evaluator), 3);
+    let mut rng = thread_rng();
 
     if load {
         model.load(name.clone());
@@ -416,23 +460,26 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
         model.save(name.clone());
     }
 
-    let mut step = 0;
-
     let mut db: BoardDB = BoardDB::new(&db_name, 0);
-    let mut eval_db = BoardDB::new(&eval_db_name, 0);
+    let eval_db = BoardDB::new(&eval_db_name, 0);
     let ts = db.get_batch();
     let eval_ts = eval_db.get_batch()[..1024].to_vec();
+    let mut data = Vec::new();
 
     for epoch in 0..EPOCH {
+        let mut step = 0;
+
         model.eval();
         model.set_inference();
 
-        let (e11, e12) = eval_model(&model, &test_actor1);
-        let (e21, e22) = eval_model(&model, &test_actor2);
-        let (e31, e32) = eval_actor(&model, &neg, EVAL_NUM, false);
-        println!("[minimax(3)]:({}, {})", e11, e12);
-        println!("[mcts(50, 500)]:({}, {})", e21, e22);
-        println!("[neg(3)]:({}, {})", e31, e32);
+        if true {
+            let (e11, e12) = eval_model(&model, &test_actor1);
+            let (e21, e22) = eval_model(&model, &test_actor2);
+            let (e31, e32) = eval_actor(&model, &neg, EVAL_NUM, false);
+            println!("[minimax(3)]:({}, {})", e11, e12);
+            println!("[mcts(50, 500)]:({}, {})", e21, e22);
+            println!("[neg(3)]:({}, {})", e31, e32);
+        }
 
         // play_with_analyze(&model);
         model.train();
@@ -440,6 +487,8 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
         // db.set_lambda(LAMBDA);
 
         let batch_num = ts.len() / BATCH_SIZE;
+        let n = 80 * 10000;
+        let batch_num = n / BATCH_SIZE;
 
         let pb = ProgressBar::new(batch_num as u64);
         pb.set_style(ProgressStyle::default_bar()
@@ -448,7 +497,8 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
             .progress_chars("#>-"));
 
         let mut smoothing_loss = None;
-        let mut it = BatchIterator::new(ts.clone(), BATCH_SIZE, batch_num, LAMBDA);
+        data = ts.choose_multiple(&mut rng, n).cloned().collect();
+        let mut it = BatchIterator::new(data, BATCH_SIZE, batch_num, LAMBDA);
         it.reset();
 
         for (board, result) in it {
@@ -475,7 +525,7 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
 
                 let mut losses = Vec::new();
 
-                let mut eval_it =
+                let eval_it =
                     BatchIterator::new(ts.clone(), BATCH_SIZE, eval_ts.len() / BATCH_SIZE, LAMBDA);
 
                 for (board, result) in eval_it {

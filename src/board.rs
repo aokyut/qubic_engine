@@ -4,7 +4,7 @@ use proconio::input;
 use rand::Rng;
 use std::fmt;
 use std::{
-    cell::{Ref, RefCell},
+    cell::RefCell,
     collections::{HashMap, HashSet},
 };
 
@@ -349,6 +349,18 @@ fn count_1row_(a1: u64, a2: u64, a3: u64, a4: u64, b1: u64, b2: u64, b3: u64, b4
     return a1 & b2 & b3 & b4 | b1 & a2 & b3 & b4 | b1 & b2 & a3 & b4 | b1 & b2 & b3 & a4;
 }
 
+/// * a: right 3 shift attacker
+/// * b: right 2 shift attacker
+/// * c: right 1 shift attacker
+/// * d: blank mask
+/// * e: left 1 shift attacker
+/// * f: left 2 shift attacker
+/// * g: left 3 shift attacker
+/// * a, b, c and e, f, g are masked.
+const fn _get_reach_mask(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64) -> u64 {
+    return d & (b & c & (a | e) | e & f & (c | g));
+}
+
 pub fn count_1row(s: u64, b: u64) -> u32 {
     let x = (count_1row_(s, s >> 1, s >> 2, s >> 3, b, b >> 1, b >> 2, b >> 3)
         & 0x1111_1111_1111_1111)
@@ -459,6 +471,307 @@ pub const fn get_1row_mask(s: u64, b: u64) -> u64 {
     );
     let (b48, b49, b57, b60, b63) = (b >> 48, b >> 49, b >> 57, b >> 60, b >> 63);
     0
+}
+
+pub const fn get_reach_mask(a: u64, d: u64) -> u64 {
+    let stone = a | d;
+    let blank = !(stone) & ((stone << 16) | 0xffff);
+    let x = _get_reach_mask(
+        (a >> 3) & 0x1111_1111_1111_1111,
+        (a >> 2) & 0x3333_3333_3333_3333,
+        (a >> 1) & 0x7777_7777_7777_7777,
+        blank,
+        (a << 1) & 0xeeee_eeee_eeee_eeee,
+        (a << 2) & 0xcccc_cccc_cccc_cccc,
+        (a << 3) & 0x8888_8888_8888_8888,
+    );
+    let y = _get_reach_mask(
+        (a >> 12) & 0x000f_000f_000f_000f,
+        (a >> 8) & 0x00ff_00ff_00ff_00ff,
+        (a >> 4) & 0x0fff_0fff_0fff_0fff,
+        blank,
+        (a << 4) & 0xfff0_fff0_fff0_fff0,
+        (a << 8) & 0xff00_ff00_ff00_ff00,
+        (a << 12) & 0xf000_f000_f000_f000,
+    );
+    let z = _get_reach_mask(a >> 48, a >> 32, a >> 16, blank, a << 16, a << 32, a << 48);
+    let xy = _get_reach_mask(
+        (a >> 15) & 0x0001_0001_0001_0001,
+        (a >> 10) & 0x0033_0033_0033_0033,
+        (a >> 5) & 0x0777_0777_0777_0777,
+        blank,
+        (a << 5) & 0xeee0_eee0_eee0_eee0,
+        (a << 10) & 0xcc00_cc00_cc00_cc00,
+        (a << 15) & 0x8000_8000_8000_8000,
+    );
+    let yx = _get_reach_mask(
+        (a >> 9) & 0x0008_0008_0008_0008,
+        (a >> 6) & 0x00cc_00cc_00cc_00cc,
+        (a >> 3) & 0x0eee_0eee_0eee_0eee,
+        blank,
+        (a << 3) & 0x7770_7770_7770_7770,
+        (a << 6) & 0x3300_3300_3300_3300,
+        (a << 9) & 0x1000_1000_1000_1000,
+    );
+    let xz = _get_reach_mask(
+        (a >> 51) & 0x0000_0000_0000_1111,
+        (a >> 34) & 0x0000_0000_3333_3333,
+        (a >> 17) & 0x0000_7777_7777_7777,
+        blank,
+        (a << 17) & 0xeeee_eeee_eeee_0000,
+        (a << 34) & 0xcccc_cccc_0000_0000,
+        (a << 51) & 0x8888_0000_0000_0000,
+    );
+    let zx = _get_reach_mask(
+        (a >> 45) & 0x0000_0000_0000_8888,
+        (a >> 30) & 0x0000_0000_cccc_cccc,
+        (a >> 15) & 0x0000_eeee_eeee_eeee,
+        blank,
+        (a >> 15) & 0x7777_7777_7777_0000,
+        (a >> 30) & 0x3333_3333_0000_0000,
+        (a >> 45) & 0x1111_0000_0000_0000,
+    );
+    let yz = _get_reach_mask(
+        (a >> 60) & 0xf,
+        (a >> 40) & 0x00ff_00ff,
+        (a >> 20) & 0x0fff_0fff_0fff,
+        blank,
+        (a << 20) & 0xfff0_fff0_fff0_0000,
+        (a << 40) & 0xff00_ff00_0000_0000,
+        (a << 60) & 0xf000_0000_0000_0000,
+    );
+    let zy = _get_reach_mask(
+        (a >> 36) & 0xf000,
+        (a >> 24) & 0xff00_ff00,
+        (a >> 12) & 0xfff0_fff0_fff0,
+        blank,
+        (a << 12) & 0x0fff_0fff_0fff_0000,
+        (a << 24) & 0x00ff_00ff_0000_0000,
+        (a << 36) & 0x000f_0000_0000_0000,
+    );
+    let xyz = _get_reach_mask(
+        (a >> 63) & 0x1,
+        (a >> 42) & 0x0033_0033,
+        (a >> 21) & 0x0777_0777_0777,
+        blank,
+        (a << 21) & 0xeee0_eee0_eee0_0000,
+        (a << 42) & 0xcc00_cc00_0000_0000,
+        (a << 63) & 0x8000_0000_0000_0000,
+    );
+    let yzx = _get_reach_mask(
+        (a >> 57) & 0x8,
+        (a >> 38) & 0x00cc_00cc,
+        (a >> 19) & 0x0eee_0eee_0eee,
+        blank,
+        (a << 19) & 0x7770_7770_7770_0000,
+        (a << 38) & 0x3300_3300_0000_0000,
+        (a << 57) & 0x1000_0000_0000_0000,
+    );
+    let xzy = _get_reach_mask(
+        (a >> 39) & 0x1000,
+        (a >> 26) & 0x3300_3300,
+        (a >> 13) & 0x7770_7770_7770,
+        blank,
+        (a << 13) & 0x0eee_0eee_0eee_0000,
+        (a << 26) & 0x00cc_00cc_0000_0000,
+        (a << 39) & 0x0008_0000_0000_0000,
+    );
+    let zyx = _get_reach_mask(
+        (a >> 33) & 0x8000,
+        (a >> 22) & 0xcc00_cc00,
+        (a >> 11) & 0xeee0_eee0_eee0,
+        blank,
+        (a << 11) & 0x0777_0777_0777_0000,
+        (a << 22) & 0x0033_0033_0000_0000,
+        (a << 33) & 0x0001_0000_0000_0000,
+    );
+
+    return x | y | z | xy | yx | xz | zx | yz | zy | xyz | xzy | yzx | zyx;
+}
+
+pub fn search_four(board: &Board) -> Option<u8> {
+    let (att, def) = board.get_att_def();
+    let reach_mask = get_reach_mask(att, def);
+    if reach_mask == 0 {
+        return None;
+    } else {
+        let action = (reach_mask | (reach_mask >> 16) | (reach_mask >> 32) | (reach_mask >> 48))
+            .trailing_zeros();
+        return Some(action as u8);
+    }
+}
+
+pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
+    let mut board_vec = Vec::new();
+    for action in board.valid_actions() {
+        let def_board = board.next(action);
+        let (att, def) = def_board.get_att_def();
+        let reach_mask = get_reach_mask(def, att);
+        if reach_mask == 0 {
+            continue;
+        }
+        let action_mask = reach_mask | (reach_mask >> 16) | (reach_mask >> 32) | (reach_mask >> 48);
+        let def_action = action_mask.trailing_zeros();
+        // reach_maskの場所を把握して返す
+        let num = reach_mask.count_ones();
+        if num > 1 {
+            return (true, vec![(action, board.clone())]);
+        }
+        let mut next_board = def_board.next(def_action as u8);
+        let (att, def) = next_board.get_att_def();
+        let mut reach_mask = get_reach_mask(def, att);
+        if reach_mask != 0 {
+            loop {
+                if reach_mask.count_ones() > 1 {
+                    break;
+                }
+                let att_action =
+                    (reach_mask | (reach_mask >> 16) | (reach_mask >> 32) | (reach_mask >> 48))
+                        .trailing_zeros();
+                let def_board = next_board.next(att_action as u8);
+                let (att, def) = def_board.get_att_def();
+                let att_reach_mask = get_reach_mask(def, att);
+                if att_reach_mask == 0 {
+                    break;
+                }
+                let def_action = (att_reach_mask
+                    | (att_reach_mask >> 16)
+                    | (att_reach_mask >> 32)
+                    | (att_reach_mask >> 48))
+                    .trailing_zeros();
+
+                next_board = def_board.next(def_action as u8);
+                let (att, def) = next_board.get_att_def();
+                reach_mask = get_reach_mask(def, att);
+                if reach_mask == 0 {
+                    board_vec.push((action, next_board));
+                    break;
+                }
+            }
+        } else {
+            board_vec.push((action, next_board));
+        }
+    }
+    return (false, board_vec);
+}
+
+pub fn mate_check(board: &Board) -> Option<u8> {
+    // 既に四があるかチェック
+    let four = search_four(board);
+    if four.is_some() {
+        return four;
+    }
+    // 相手側の四があるかチェック
+    let (att, def) = board.get_att_def();
+    let reach_mask = get_reach_mask(def, att);
+    if reach_mask != 0 {
+        let action = (reach_mask | (reach_mask >> 16) | (reach_mask >> 32) | (reach_mask >> 48))
+            .trailing_zeros();
+        return Some(action as u8);
+    }
+
+    let mut hash = HashSet::new();
+    // 攻撃側のハッシュだけで十分か？
+    let mut expands;
+    let end_flag;
+    (end_flag, expands) = mate_expand(board);
+    if end_flag {
+        return Some(expands[0].0);
+    }
+    let mut count = 1;
+
+    loop {
+        if expands.len() == 0 {
+            break;
+        }
+        let (action, tar_board) = expands.pop().unwrap();
+        if hash.get(&tar_board).is_some() {
+            continue;
+        }
+
+        let (end_flag, new_nodes) = mate_expand(&tar_board);
+        count += 1;
+        if end_flag {
+            return Some(action);
+        }
+        hash.insert(tar_board);
+        for (_, next_board) in new_nodes {
+            expands.push((action, next_board));
+        }
+    }
+
+    return None;
+}
+
+/// 最短手数でのmateを知りたいときはこっち
+pub fn mate_check_horizontal(board: &Board) -> Option<(bool, u8)> {
+    use std::collections::VecDeque;
+    // 既に四があるかチェック
+    let four = search_four(board);
+    if let Some(action) = four {
+        return Some((true, action));
+    }
+    // 相手側の四があるかチェック
+    let (att, def) = board.get_att_def();
+    let reach_mask = get_reach_mask(def, att);
+    if reach_mask != 0 {
+        let action = (reach_mask | (reach_mask >> 16) | (reach_mask >> 32) | (reach_mask >> 48))
+            .trailing_zeros();
+        return Some((false, action as u8));
+    }
+
+    let mut hash = HashSet::new();
+    // 攻撃側のハッシュだけで十分か？
+    let mut expands: VecDeque<(u8, Board)>;
+    let (end_flag, root_expands) = mate_expand(board);
+    if end_flag {
+        return Some((true, root_expands[0].0));
+    }
+
+    expands = root_expands.into_iter().collect();
+
+    let mut count = 1;
+
+    loop {
+        if expands.len() == 0 {
+            break;
+        }
+        let (action, tar_board) = expands.pop_front().unwrap();
+        if hash.get(&tar_board).is_some() {
+            continue;
+        }
+
+        let (end_flag, new_nodes) = mate_expand(&tar_board);
+        count += 1;
+        if end_flag {
+            return Some((true, action));
+        }
+        hash.insert(tar_board);
+        for (_, next_board) in new_nodes {
+            expands.push_back((action, next_board));
+        }
+    }
+
+    return None;
+}
+
+pub fn pprint_u64(bit: u64) {
+    let mut s = String::new();
+    for i in 0..4 {
+        for j in 0..4 {
+            for k in 0..4 {
+                let idx = j * 16 + i * 4 + k;
+                if (bit >> idx) & 1 == 1 {
+                    s += "O";
+                } else {
+                    s += "-";
+                }
+            }
+            s += " | ";
+        }
+        s += "\n"
+    }
+    print!("{}", s);
 }
 
 pub fn get_random(board: &Board) -> u8 {
@@ -842,8 +1155,24 @@ impl Agent {
 
 impl GetAction for Agent {
     fn get_action(&self, board: &Board) -> u8 {
+        use std::time::Instant;
         match self {
             Agent::Human => {
+                // let (att, def) = board.get_att_def();
+                // let reach = get_reach_mask(att, def);
+                let start = Instant::now();
+                let mate_action = mate_check(board);
+                let end = start.elapsed();
+                let a_milis = end.as_nanos();
+                let start = Instant::now();
+                let mate_action_h = mate_check_horizontal(board);
+                let end = start.elapsed();
+                let b_milis = end.as_nanos();
+                println!("実行時間:{},{}", a_milis, b_milis);
+                if let Some(action) = mate_action {
+                    let (is_mate, h_action) = mate_action_h.unwrap();
+                    println!("mate:{is_mate}, v[{action}], h[{h_action}]");
+                }
                 input! {
                     action: u8
                 }
@@ -884,6 +1213,7 @@ pub fn play(a1: &Agent, a2: &Agent) -> (f32, f32) {
 
 pub fn play_actor(a1: &impl GetAction, a2: &impl GetAction, render: bool) -> (f32, f32) {
     let mut b = Board::new();
+
     loop {
         if render {
             pprint_board(&b);

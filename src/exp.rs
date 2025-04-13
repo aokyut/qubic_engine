@@ -1,6 +1,6 @@
-use super::{ai, board};
+use super::board;
 use rand::Rng;
-use std::{ops::Mul, thread, time};
+use std::{thread, time};
 
 const K: f32 = 16.0;
 const START: f32 = 1500.0;

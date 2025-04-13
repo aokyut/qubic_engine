@@ -1,12 +1,12 @@
-use super::board::{eval_actor, Agent, Board, GetAction};
+use super::board::{eval_actor, Agent, Board};
 use super::{b2u128, u128_to_b, Analyzer, EvalAndAnalyze, EvaluatorF, NegAlphaF};
 use crate::db::{random_rot, BoardDB};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::{thread_rng, Rng};
-use rand_distr::{Distribution, Normal};
+use rand_distr::Distribution;
 
+use std::thread;
 use std::time::Duration;
-use std::{thread, time};
 
 const EPS: f32 = 0.0000001;
 
@@ -429,27 +429,30 @@ pub fn train_with_db(
     eval_db_name: String,
     epochs: usize,
 ) {
+    use crate::ai::{CoEvaluator, NegAlpha};
     let mut trainable_pe = TrainablePatternEvaluator::from_pattern_evaluator(
         test_pattern_evaluator(),
-        0.01,
+        0.1,
         0.9,
         0.999,
     );
 
-    let eval_n = 30;
+    let eval_n = 25;
     let data_size = 1 << 20;
     let eval_data_size = 1 << 14;
     let lambda = 0.5;
 
     let test_actor1 = Agent::Minimax(3);
     let test_actor2 = Agent::Mcts(50, 500);
+    let m3 = NegAlpha::new(Box::new(CoEvaluator::best()), 3);
+    let test_actor3 = Agent::Struct(String::from("m3"), Box::new(m3));
     let mut rng = thread_rng();
 
     // TODO: resume and save
 
-    let mut step = 0;
+    let step = 0;
 
-    let mut eval_db = BoardDB::new(&eval_db_name, eval_data_size);
+    let eval_db = BoardDB::new(&eval_db_name, eval_data_size);
     let eval_ts = eval_db.get_batch();
 
     for epoch in 0..epochs {
@@ -458,10 +461,12 @@ pub fn train_with_db(
 
         let (e11, e12) = eval_actor(&neg, &test_actor1, eval_n, false);
         let (e21, e22) = eval_actor(&neg, &test_actor2, eval_n, false);
+        let (e31, e32) = eval_actor(&neg, &test_actor3, eval_n, false);
         println!("[epoch-{}][minimax(3)]:({}, {})", epoch, e11, e12);
         println!("[epoch-{}][mcts(50, 500)]:({}, {})", epoch, e21, e22);
+        println!("[epoch-{}][negmax(3)]:({}, {})", epoch, e31, e32);
 
-        let mut db: BoardDB = BoardDB::new(&db_name, data_size);
+        let db: BoardDB = BoardDB::new(&db_name, data_size);
 
         let pb = ProgressBar::new(data_size as u64 * 1);
         pb.set_style(ProgressStyle::default_bar()

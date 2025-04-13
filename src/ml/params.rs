@@ -229,6 +229,7 @@ impl MM {
     pub fn auto(input_size: usize, output_size: usize) -> Self {
         let weight = xiver_vec(output_size, output_size * input_size);
         let weight = Tensor::new(weight, vec![output_size, input_size]);
+        // println!("weight:{:#?}, size:{}", weight.shape, weight.data[0]);
         return MM::new(weight);
     }
 
@@ -275,7 +276,7 @@ impl Node for MM {
     }
 
     fn call(&self, input: Vec<Tensor>) -> Tensor {
-        // println!("input:{:?}", input);
+        // println!("input:{:?}, {}, {}, {}", self.w.shape, self.height, self.width, self.w.data[0]);
         assert_eq!(input.len(), 1);
         let input = &input[0];
         let shape_size = input.shape.len();
@@ -411,7 +412,7 @@ impl Node for Bias {
         let batch = input.data.len() / step;
 
         let mut b_grad = Tensor::zeros_like(&self.b);
-        let mut input_grad = Tensor::zeros_like(&input);
+        let input_grad = Tensor::zeros_like(&input);
 
         let grad_step = self.height * m;
 

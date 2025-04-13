@@ -1,4 +1,3 @@
-use std::fmt::Binary;
 
 use super::Node;
 use super::Tensor;

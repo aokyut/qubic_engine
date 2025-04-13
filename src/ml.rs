@@ -8,8 +8,8 @@ use rand::Rng;
 use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::ops::{Add, AddAssign, Sub};
-use std::path::{Path, PathBuf};
+use std::ops::{Add, AddAssign};
+use std::path::PathBuf;
 
 fn xiver_vec(n: usize, size: usize) -> Vec<f32> {
     let mut rng = rand::thread_rng();
@@ -36,7 +36,7 @@ impl Tensor {
         for s in shape.iter() {
             size *= s;
         }
-        let mut data = Tensor::create_random_array(size);
+        let data = Tensor::create_random_array(size);
         return Tensor {
             data: data,
             shape: shape,
@@ -44,8 +44,8 @@ impl Tensor {
     }
 
     pub fn zeros_like(tensor: &Tensor) -> Self {
-        let mut size = tensor.data.len();
-        let mut data = vec![0.0; size];
+        let size = tensor.data.len();
+        let data = vec![0.0; size];
 
         return Tensor {
             data: data,
@@ -58,7 +58,7 @@ impl Tensor {
         for s in shape.iter() {
             size *= s;
         }
-        let mut data = vec![0.0; size];
+        let data = vec![0.0; size];
 
         return Tensor {
             data: data,
@@ -67,8 +67,8 @@ impl Tensor {
     }
 
     pub fn ones_like(tensor: &Tensor) -> Self {
-        let mut size = tensor.data.len();
-        let mut data = vec![1.0; size];
+        let size = tensor.data.len();
+        let data = vec![1.0; size];
 
         return Tensor {
             data: data,
@@ -81,7 +81,7 @@ impl Tensor {
         for s in shape.iter() {
             size *= s;
         }
-        let mut data = vec![1.0; size];
+        let data = vec![1.0; size];
 
         return Tensor {
             data: data,
@@ -316,7 +316,7 @@ impl Graph {
         return output.clone();
     }
 
-    pub fn forward(&mut self, mut input_vec: Vec<Tensor>) -> Tensor {
+    pub fn forward(&mut self, input_vec: Vec<Tensor>) -> Tensor {
         // println!("[g]input:{:?}", input_vec);
         return self.forward_(self.placeholder.as_ref().unwrap().clone(), input_vec);
     }

@@ -32,7 +32,7 @@ impl BoardDB {
         ";
 
         conn.execute(query).unwrap();
-        let mut rng = rand::thread_rng();
+        let rng = rand::thread_rng();
         let mut db = BoardDB {
             conn: conn,
             batch_size: batch_size,

@@ -1,19 +1,13 @@
 pub mod pattern;
 
-use std::collections::HashMap;
-use std::hash::Hash;
-use std::ops::Deref;
-
-use crate::board::{self, count_1row, count_2row, count_3row, pprint_board};
+use crate::board::{self, count_1row, count_2row, count_3row, mate_check_horizontal, pprint_board};
 
 use super::board::{Board, GetAction};
 use super::ml::{Graph, Tensor};
-use ndarray::{s, ArrayView, CowArray};
+use ndarray::{s, CowArray};
 use ort::{Environment, GraphOptimizationLevel, Session, SessionBuilder};
-use rand::rngs::ThreadRng;
 use rand::Rng;
-use sqlite::Row;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub const MAX: i32 = 1600;
 
@@ -23,7 +17,7 @@ where
 {
     let mut count = 0;
     let mut max_val = -MAX - 1;
-    let mut max_action = 16;
+    let max_action = 16;
     let mut max_action: u8 = 16;
     let actions = b.valid_actions();
     for action in actions.iter() {
@@ -47,6 +41,7 @@ where
             }
         }
     }
+
     return (max_action, max_val, count);
 }
 
@@ -64,13 +59,15 @@ pub fn negalpha(
     let mut max_val = -MAX - 1;
     let mut max_actions = Vec::new();
     let mut alpha = alpha;
-    for action in actions.iter() {
-        let next_board = &b.next(*action);
-        if next_board.is_win() {
-            return (*action, MAX, count);
-        } else if next_board.is_draw() {
-            return (*action, 0, count);
-        } else if depth <= 1 {
+
+    if depth <= 1 {
+        for action in actions.iter() {
+            let next_board = &b.next(*action);
+            if next_board.is_win() {
+                return (*action, MAX, count);
+            } else if next_board.is_draw() {
+                return (*action, 0, count);
+            }
             let val = -e.eval_func(next_board);
             if max_val < val {
                 max_val = val;
@@ -85,26 +82,47 @@ pub fn negalpha(
             } else if max_val == val {
                 max_actions.push(*action);
             }
-        } else {
-            let (_, val, _count) = negalpha(next_board, depth - 1, -beta, -alpha, e);
+        }
+    } else {
+        let mut action_nb_vals: Vec<(u8, Board, i32)> = Vec::new();
+
+        for action in actions.into_iter() {
+            let next_board = b.next(action);
+            if next_board.is_win() {
+                return (action, MAX, count);
+            } else if next_board.is_draw() {
+                return (action, 0, count);
+            }
+
+            let val = -e.eval_func(&next_board);
+            action_nb_vals.push((action, next_board, val));
+        }
+
+        action_nb_vals.sort_by(|a, b| a.2.cmp(&b.2).reverse());
+        // for (a, b, c) in action_nb_vals.iter() {
+        //     print!("[{}, {}]", a, c);
+        // }
+        // println!("");
+
+        for (action, next_board, val) in action_nb_vals {
+            let (_, val, _count) = negalpha(&next_board, depth - 1, -beta, -alpha, e);
             count += 1 + _count;
-            let val = -val;
+            let val = -999 * val / 1000;
             if max_val < val {
                 max_val = val;
-                max_actions = vec![*action];
+                max_actions = vec![action];
                 if max_val > alpha {
                     alpha = max_val;
                     if alpha > beta {
                         // println!("[{depth}]->max_val:{max_val}");
-                        return (*action, max_val, count);
+                        return (action, max_val, count);
                     }
                 }
             } else if max_val == val {
-                max_actions.push(*action);
+                max_actions.push(action);
             }
         }
     }
-    // println!("[{}]max_val:{}", max_action, max_val);
     let mut rng = rand::thread_rng();
     return (
         max_actions[rng.gen::<usize>() % max_actions.len()],
@@ -196,9 +214,9 @@ impl NegAlpha {
 
 impl GetAction for NegAlpha {
     fn get_action(&self, b: &Board) -> u8 {
-        let (action, v, _) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
+        let (action, v, count) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
         // pprint_board(b);
-        // println!("action:{action}, val:{v}");
+        // println!("action:{action}, val:{v}, count:{count}");
         return action;
     }
 }
@@ -277,6 +295,44 @@ impl PositionEvaluator {
             s, s, e, e, s, s, e, s, c, c, s, s, c, c, s, e, s, s, e, v, e, e, v, e, s, s, e, e, s,
             s, e, v, e, e, v,
         ];
+        return PositionEvaluator { posmap: posmap };
+    }
+
+    pub fn simpl_alpha(
+        vertex1: i32,
+        vertex2: i32,
+        vertex3: i32,
+        vertex4: i32,
+        up_surface: i32,
+        bt_surfacce: i32,
+        edge1: i32,
+        edge2: i32,
+        edge3: i32,
+        edge4: i32,
+        up_core: i32,
+        bt_core: i32,
+    ) -> Self {
+        let (v0, v1, v2, v3, s0, s1, e0, e1, e2, e3, c0, c1) = (
+            vertex1,
+            vertex2,
+            vertex3,
+            vertex4,
+            bt_surfacce,
+            up_surface,
+            edge1,
+            edge2,
+            edge3,
+            edge4,
+            bt_core,
+            up_core,
+        );
+
+        let posmap = vec![
+            v0, e0, e0, v0, e0, s0, s0, e0, e0, s0, s0, e0, v0, e0, e0, v0, v1, e1, e1, v1, e1, c0,
+            c0, e1, e1, c0, c0, e1, v1, e1, e1, v1, v2, e2, e2, v2, e2, c1, c1, e2, e2, c1, c1, e2,
+            v2, e2, e2, v2, v3, e3, e3, v3, e3, s1, s1, e3, e3, s1, s1, e3, v3, e3, e3, v3,
+        ];
+
         return PositionEvaluator { posmap: posmap };
     }
 
@@ -362,7 +418,7 @@ impl MLEvaluator {
     }
 
     pub fn inference(&self, b: &Board) -> f32 {
-        let (mut att, mut def) = b.get_att_def();
+        let (att, def) = b.get_att_def();
 
         let mut att_vec = Vec::new();
         let mut def_vec = Vec::new();
@@ -484,7 +540,7 @@ pub fn onehot_vec(n: usize, idx: usize) -> Vec<f32> {
 
 impl Evaluator for MLEvaluator {
     fn eval_func(&self, b: &Board) -> i32 {
-        let (mut att, mut def) = b.get_att_def();
+        let (att, def) = b.get_att_def();
 
         let mut att_vec = Vec::new();
         let mut def_vec = Vec::new();
@@ -571,7 +627,8 @@ impl NNUE {
         use super::ml::*;
         use super::ml::{funcs::*, optim::*, params::*};
 
-        let w1_size = 128;
+        let w1_size = 256;
+        let middle_size = 16;
 
         let mut g = Graph::new();
         g.optimizer = Some(Box::new(MomentumSGD::new(0.01, 0.9)));
@@ -588,15 +645,15 @@ impl NNUE {
         let activate = LeaklyReLU::default();
         let relu = g.add_layer(vec![l1], Box::new(activate));
 
-        let l2 = Linear::auto(w1_size, 16);
+        let l2 = Linear::auto(w1_size, middle_size);
         let l2 = g.add_layer(vec![relu], Box::new(l2));
         let relu2 = g.add_layer(vec![l2], Box::new(LeaklyReLU::default()));
 
-        let l3 = Linear::auto(16, 16);
+        let l3 = Linear::auto(middle_size, middle_size);
         let l3 = g.add_layer(vec![relu2], Box::new(l3));
         let relu3 = g.add_layer(vec![l3], Box::new(LeaklyReLU::default()));
 
-        let l4 = Linear::auto(16, 1);
+        let l4 = Linear::auto(middle_size, 1);
         let l4 = g.add_layer(vec![relu3], Box::new(l4));
 
         // t = lambda * result + (1 - lambda) * t_in
@@ -653,84 +710,73 @@ impl NNUE {
 
     pub fn eval_with_negalpha(&self, b: &Board) -> (u8, f32, i32) {
         let b_hash = Self::b2u128(b);
-        let mut b_vec = self.create_diff_vec(0, b_hash);
-        return self.eval_with_negalpha_1(b, b_hash, b_vec, self.depth as u8, -2.0, 2.0);
+        let b_vec = self.create_diff_vec(0, b_hash);
+        // let start = Instant::now();
+        // let result = eval_actor(&m7, &m6, 10, false);
+        // let (a, b, c) = self.eval_with_negalpha_1(b, b_hash, b_vec, self.depth as u8, -2.0, 2.0);
+        let (a, b, c) =
+            self.eval_with_negalpha_(b.clone(), b_hash, b_vec, None, self.depth as u8, -2.0, 2.0);
+        return (a, b, c);
     }
 
-    pub fn eval_with_negalpha_1(
+    pub fn eval_with_negalpha_(
         &self,
-        b: &Board,
+        b: Board,
         b_hash: u128,
         b_vec: Vec<f32>,
+        next: Option<(u128, &Vec<f32>)>,
         depth: u8,
         alpha: f32,
         beta: f32,
     ) -> (u8, f32, i32) {
+        use std::cmp::Ordering::*;
+
         let mut count = 0;
         let actions = b.valid_actions();
         let mut max_val = -2.0;
         let mut max_action: u8 = 16;
-        let mut next_info: Option<(u128, Vec<f32>)> = None;
+        let mut next_info: Option<(u128, &Vec<f32>)> = next;
         let mut alpha = alpha;
 
-        for action in actions.iter() {
-            let next_board = &b.next(*action);
-            let next_hash = Self::b2u128(next_board);
-
-            if next_board.is_win() {
-                return (*action, 1.0, count);
-            } else if next_board.is_draw() {
-                return (*action, 0.0, count);
-            }
-
+        if depth <= 1 {
             let mut next_vec;
-            match next_info {
-                None => {
-                    next_vec = self.create_diff_vec(0, next_hash);
-                    next_info = Some((next_hash, next_vec.clone()));
+            for &action in actions.iter() {
+                let next_board = &b.next(action);
+
+                let next_hash = Self::b2u128(next_board);
+
+                if next_board.is_win() {
+                    return (action, 1.0, count);
+                } else if next_board.is_draw() {
+                    return (action, 0.5, count);
                 }
-                Some((hash, ref vec)) => {
-                    next_vec = self.create_diff_vec(hash, next_hash);
-                    for i in 0..next_vec.len() {
-                        next_vec[i] += vec[i];
+
+                let feed_vec: Vec<f32>;
+                match next_info {
+                    None => {
+                        next_vec = self.create_diff_vec(0, next_hash);
+                        next_info = Some((next_hash, &next_vec));
+                        feed_vec = next_vec.clone();
+                    }
+                    Some((hash, ref vec)) => {
+                        let next_vec_ = self.create_diff_vec(hash, next_hash);
+
+                        feed_vec = next_vec_
+                            .iter()
+                            .zip(vec.iter())
+                            .map(|(a, b)| a + b)
+                            .collect();
                     }
                 }
-            }
 
-            if depth <= 1 {
-                let w1 = Tensor::new(next_vec, vec![self.w1_size, 1]);
+                let w1 = Tensor::new(feed_vec, vec![self.w1_size, 1]);
 
                 let val = 1.0 - self.g.inference(vec![w1]).get_item().unwrap();
 
                 count += 1;
                 if max_val < val {
                     max_val = val;
-                    max_action = *action;
-                    if max_val > alpha {
-                        alpha = max_val;
-                        if alpha > beta {
-                            return (max_action, max_val, count);
-                        }
-                    }
-                }
-            } else {
-                let (_, val, _count) = self.eval_with_negalpha_2(
-                    next_board,
-                    next_hash,
-                    &next_vec,
-                    b_hash,
-                    &b_vec,
-                    depth - 1,
-                    1.0 - beta,
-                    1.0 - alpha,
-                );
-                // pprint_board(&next_board);
-                let val = 1.0 - val;
-                // println!("[a:{}]{val}, {alpha}, {beta}\n", action);
-                count += _count;
-                if max_val < val {
-                    max_val = val;
-                    max_action = *action;
+                    max_action = action;
                     if max_val > alpha {
                         alpha = max_val;
                         if alpha > beta {
@@ -739,77 +785,65 @@ impl NNUE {
                     }
                 }
             }
-        }
-        return (max_action, max_val, count);
-    }
+        } else {
+            let mut nexts = Vec::new();
+            let mut next_vec;
+            for &action in actions.iter() {
+                let next_board = b.next(action);
+                let next_hash = Self::b2u128(&next_board);
 
-    pub fn eval_with_negalpha_2(
-        &self,
-        b: &Board,
-        b_hash: u128,
-        b_vec: &Vec<f32>,
-        pre_hash: u128,
-        pre_vec: &Vec<f32>,
-        depth: u8,
-        alpha: f32,
-        beta: f32,
-    ) -> (u8, f32, i32) {
-        let mut count = 0;
-        let actions = b.valid_actions();
-        let mut max_val = -2.0;
-        let mut max_action: u8 = 16;
-        let mut alpha = alpha;
+                if next_board.is_win() {
+                    return (action, 1.0, count);
+                } else if next_board.is_draw() {
+                    return (action, 0.5, count);
+                }
 
-        for action in actions.iter() {
-            let next_board = &b.next(*action);
-            let next_hash = Self::b2u128(next_board);
-
-            // if depth == 2 {
-            //     pprint_board(&next_board);
-            //     println!("d2[a:{}]alpha:{alpha}, beta:{beta}\n\n", *action)
-            // }
-            if next_board.is_win() {
-                return (*action, 1.0, count);
-            } else if next_board.is_draw() {
-                return (*action, 0.0, count);
-            }
-
-            let mut next_vec = self.create_diff_vec(pre_hash, next_hash);
-            for i in 0..next_vec.len() {
-                next_vec[i] += pre_vec[i];
-            }
-
-            if depth <= 1 {
-                let w1 = Tensor::new(next_vec, vec![self.w1_size, 1]);
+                let feed_vec: Vec<f32>;
+                match next_info {
+                    None => {
+                        next_vec = self.create_diff_vec(0, next_hash);
+                        next_info = Some((next_hash, &next_vec));
+                        feed_vec = next_vec.clone();
+                    }
+                    Some((hash, ref vec)) => {
+                        let next_vec_ = self.create_diff_vec(hash, next_hash);
+                        feed_vec = next_vec_
+                            .iter()
+                            .zip(vec.iter())
+                            .map(|(a, b)| a + b)
+                            .collect();
+                    }
+                }
+                let w1 = Tensor::new(feed_vec.clone(), vec![self.w1_size, 1]);
 
                 let val = 1.0 - self.g.inference(vec![w1]).get_item().unwrap();
-                count += 1;
-                if max_val < val {
-                    max_val = val;
-                    max_action = *action;
-                    if max_val > alpha {
-                        alpha = max_val;
-                        if alpha > beta {
-                            return (max_action, max_val, count);
-                        }
-                    }
+
+                nexts.push((action, next_board, next_hash, feed_vec, val))
+            }
+            nexts.sort_by(|a, b| {
+                if a.4 < b.4 {
+                    return Greater;
+                } else {
+                    return Less;
                 }
-            } else {
-                let (_, val, _count) = self.eval_with_negalpha_2(
+            });
+
+            for (action, next_board, next_hash, next_vec, val) in nexts {
+                let (_, val, _count) = self.eval_with_negalpha_(
                     next_board,
                     next_hash,
-                    &next_vec,
-                    b_hash,
-                    &b_vec,
+                    next_vec,
+                    Some((b_hash, &b_vec)),
                     depth - 1,
                     1.0 - beta,
                     1.0 - alpha,
                 );
-                let val = 1.0 - val;
+                let val = -0.999 * (val - 0.5) + 0.5;
+
                 count += _count;
                 if max_val < val {
                     max_val = val;
-                    max_action = *action;
+                    max_action = action;
                     if max_val > alpha {
                         alpha = max_val;
                         if alpha > beta {
@@ -824,8 +858,8 @@ impl NNUE {
 
     fn create_diff_vec(&self, a: u128, b: u128) -> Vec<f32> {
         // a -> b を考える
-        let mut minus = a & !b;
-        let mut plus = b & !a;
+        let minus = a & !b;
+        let plus = b & !a;
 
         let mut minus_vec = vec![0.0; self.w1_size];
         let mut plus_vec = vec![0.0; self.w1_size];
@@ -885,11 +919,18 @@ impl GetAction for NNUE {
         let start = Instant::now();
         let (action, val, count) = self.eval_with_negalpha(b);
         let end = start.elapsed();
+        let hoge: Box<dyn Evaluator> = Box::new(CoEvaluator::best());
+        let (action_, val_, count) = negalpha(b, 3, -MAX - 1, MAX + 1, &hoge);
         let time = end.as_nanos();
         // println!(
-        //     "[NNUE]action:{action}, val:{val}, count:{count}, time:{}",
+        //     "[NNUE]action:{action}-{action_}, val:{val}, val_:{val_}, count:{count}, time:{}",
         //     time,
         // );
+        let res = mate_check_horizontal(b);
+        if let Some((flag, action)) = res {
+            // println!("{flag}");
+            return action;
+        }
         return action;
     }
 }
@@ -1019,6 +1060,52 @@ impl Evaluator for RandomEvaluator {
         let mut rng = rand::thread_rng();
         let u: usize = rng.gen();
         return (u % 1300) as i32;
+    }
+}
+
+pub struct MateNegAlpha {
+    main_eval: Box<dyn Evaluator>,
+    depth: u8,
+}
+
+impl MateNegAlpha {
+    pub fn new(main_eval: Box<dyn Evaluator>, depth: u8) -> Self {
+        return MateNegAlpha {
+            main_eval: main_eval,
+            depth: depth,
+        };
+    }
+
+    pub fn eval_with_negalpha(&self, b: &Board) -> (u8, i32, i32) {
+        let res = mate_check_horizontal(b);
+        if let Some((flag, action)) = res {
+            if flag {
+                return (action, MAX, 0);
+            }
+        }
+        let (action, v, count) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.main_eval);
+
+        return (action, v, count);
+    }
+}
+impl GetAction for MateNegAlpha {
+    fn get_action(&self, b: &Board) -> u8 {
+        use proconio::input;
+        let res = mate_check_horizontal(b);
+        if let Some((flag, action)) = res {
+            if flag {
+                println!("mate")
+            }
+            println!("->[{action}]");
+            // return action;
+        } else {
+            let (action, v, count) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.main_eval);
+            println!("action:{action}, val:{v}, count:{count}");
+        }
+        input! {
+            action: u8
+        }
+        return action;
     }
 }
 
