@@ -4,8 +4,8 @@ use crate::board::{self, count_1row, count_2row, count_3row, mate_check_horizont
 
 use super::board::{Board, GetAction};
 use super::ml::{Graph, Tensor};
-use ndarray::{s, CowArray};
-use ort::{Environment, GraphOptimizationLevel, Session, SessionBuilder};
+// use ndarray::{s, CowArray};
+// use ort::{Environment, GraphOptimizationLevel, Session, SessionBuilder};
 use rand::Rng;
 use std::time::Instant;
 
@@ -1109,48 +1109,48 @@ impl GetAction for MateNegAlpha {
     }
 }
 
-pub struct OnnxEvaluator {
-    session: Session,
-}
+// pub struct OnnxEvaluator {
+//     session: Session,
+// }
 
-impl OnnxEvaluator {
-    pub fn new(file_path: &str) -> Self {
-        let environment = Environment::builder().build().unwrap().into_arc();
-        let session = SessionBuilder::new(&environment)
-            .unwrap()
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .unwrap()
-            .with_intra_threads(4)
-            .unwrap()
-            .with_model_from_file(file_path)
-            .unwrap();
-        return OnnxEvaluator { session: session };
-    }
+// impl OnnxEvaluator {
+//     pub fn new(file_path: &str) -> Self {
+//         let environment = Environment::builder().build().unwrap().into_arc();
+//         let session = SessionBuilder::new(&environment)
+//             .unwrap()
+//             .with_optimization_level(GraphOptimizationLevel::Level3)
+//             .unwrap()
+//             .with_intra_threads(4)
+//             .unwrap()
+//             .with_model_from_file(file_path)
+//             .unwrap();
+//         return OnnxEvaluator { session: session };
+//     }
 
-    pub fn inference(&self, b: &Board) -> f32 {
-        let input_vec = u2vec(b2u128(b));
-        let inputs = ndarray::Array::from_vec(input_vec);
-        let inputs = CowArray::from(inputs.slice(s![..]).into_dyn());
-        let inputs = vec![ort::Value::from_array(self.session.allocator(), &inputs).unwrap()];
+//     pub fn inference(&self, b: &Board) -> f32 {
+//         let input_vec = u2vec(b2u128(b));
+//         let inputs = ndarray::Array::from_vec(input_vec);
+//         let inputs = CowArray::from(inputs.slice(s![..]).into_dyn());
+//         let inputs = vec![ort::Value::from_array(self.session.allocator(), &inputs).unwrap()];
 
-        let output = self.session.run(inputs).unwrap();
-        let output = output[0].try_extract::<f32>().unwrap();
-        let output = output.view();
+//         let output = self.session.run(inputs).unwrap();
+//         let output = output[0].try_extract::<f32>().unwrap();
+//         let output = output.view();
 
-        return output[0];
-    }
-}
+//         return output[0];
+//     }
+// }
 
-impl EvaluatorF for OnnxEvaluator {
-    fn eval_func(&self, b: &Board) -> f32 {
-        return self.inference(b);
-    }
-}
+// impl EvaluatorF for OnnxEvaluator {
+//     fn eval_func(&self, b: &Board) -> f32 {
+//         return self.inference(b);
+//     }
+// }
 
-impl Analyzer for OnnxEvaluator {
-    fn analyze_eval(&self, b: &Board) -> f32 {
-        return self.eval_func(b);
-    }
-}
+// impl Analyzer for OnnxEvaluator {
+//     fn analyze_eval(&self, b: &Board) -> f32 {
+//         return self.eval_func(b);
+//     }
+// }
 
-impl EvalAndAnalyze for OnnxEvaluator {}
+// impl EvalAndAnalyze for OnnxEvaluator {}

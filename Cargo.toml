@@ -2,7 +2,7 @@
 name = "qubic_engine"
 license = "MIT"
 author = ["epaperamic@gmail.com"]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "qubic engine"
 repository = "https://github.com/aokyut/qubic_engine"
@@ -19,5 +19,3 @@ rand_distr = "0.4.3"
 serde = { version = "= 1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 sqlite = "0.36.1"
-ndarray = "0.15.6"
-ort = "1.16"
