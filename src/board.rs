@@ -51,7 +51,7 @@ impl Player {
 pub struct Board {
     pub black: u64,
     pub white: u64,
-    player: Player,
+    pub player: Player,
 }
 
 impl Board {
@@ -62,6 +62,15 @@ impl Board {
             player: Player::Black,
         };
     }
+
+    pub fn from(black: u64, white: u64, player: Player) -> Self {
+        return Board {
+            black: black,
+            white: white,
+            player: player,
+        };
+    }
+
     pub fn next(&self, action_id: u8) -> Self {
         let board = self.black | self.white;
         let action_bitboard: u64 =
@@ -473,7 +482,7 @@ pub const fn get_1row_mask(s: u64, b: u64) -> u64 {
     0
 }
 
-pub const fn get_reach_mask(a: u64, d: u64) -> u64 {
+pub fn get_reach_mask(a: u64, d: u64) -> u64 {
     let stone = a | d;
     let blank = !(stone) & ((stone << 16) | 0xffff);
     let x = _get_reach_mask(
@@ -527,9 +536,9 @@ pub const fn get_reach_mask(a: u64, d: u64) -> u64 {
         (a >> 30) & 0x0000_0000_cccc_cccc,
         (a >> 15) & 0x0000_eeee_eeee_eeee,
         blank,
-        (a >> 15) & 0x7777_7777_7777_0000,
-        (a >> 30) & 0x3333_3333_0000_0000,
-        (a >> 45) & 0x1111_0000_0000_0000,
+        (a << 15) & 0x7777_7777_7777_0000,
+        (a << 30) & 0x3333_3333_0000_0000,
+        (a << 45) & 0x1111_0000_0000_0000,
     );
     let yz = _get_reach_mask(
         (a >> 60) & 0xf,
@@ -606,6 +615,10 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
     for action in board.valid_actions() {
         let def_board = board.next(action);
         let (att, def) = def_board.get_att_def();
+        let def_reach_mask = get_reach_mask(att, def);
+        if def_reach_mask != 0 {
+            continue;
+        }
         let reach_mask = get_reach_mask(def, att);
         if reach_mask == 0 {
             continue;
@@ -619,6 +632,12 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
         }
         let mut next_board = def_board.next(def_action as u8);
         let (att, def) = next_board.get_att_def();
+        let att_reach_mask = get_reach_mask(att, def);
+
+        if att_reach_mask != 0 {
+            return (true, vec![(action, next_board)]);
+        }
+
         let mut reach_mask = get_reach_mask(def, att);
         if reach_mask != 0 {
             loop {
@@ -708,6 +727,7 @@ pub fn mate_check_horizontal(board: &Board) -> Option<(bool, u8)> {
     use std::collections::VecDeque;
     // 既に四があるかチェック
     let four = search_four(board);
+
     if let Some(action) = four {
         return Some((true, action));
     }
@@ -1341,7 +1361,7 @@ pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bo
             .progress_chars("#>-"));
 
     for i in 0..n {
-        thread::sleep(Duration::from_millis(200));
+        // thread::sleep(Duration::from_millis(200));
         let (s1, s2) = play_actor(a1, a2, render);
         // println!("[{}/{}]black: {}, {}", i, n, s1, s2);
         score1 += s1;

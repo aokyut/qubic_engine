@@ -24,7 +24,7 @@ fn main() {
     let m5 = NegAlpha::new(Box::new(CoEvaluator::best()), 5);
     // let m6 = NegAlpha::new(Box::new(CoEvaluator::best()), 6);
     let m7 = NegAlpha::new(Box::new(CoEvaluator::best()), 7);
-    let mm3 = MateNegAlpha::new(Box::new(CoEvaluator::best()), 7);
+    let mm3 = MateNegAlpha::new(Box::new(CoEvaluator::best()), 5);
     let mm3 = Agent::Struct(String::from("mm3"), Box::new(mm3));
     let m2 = Agent::Struct(String::from("m2"), Box::new(m2));
     let m3 = Agent::Struct(String::from("m3"), Box::new(m3));
@@ -32,10 +32,10 @@ fn main() {
 
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
 
-    // let mut m = NNUE::default();
-    // m.set_depth(3);
-    // m.load(format!("coe5_8_5_5_fr12_d092"));
-    // m.set_inference();
+    let mut m = NNUE::default();
+    m.set_depth(3);
+    m.load(format!("mcoe3_8_5_5_ir48_4_d092"));
+    m.set_inference();
     // let mut m_ = NNUE::default();
     // m_.set_depth(4);
     // m_.load(format!("coe3_8_5_5_fr12_d092"));
@@ -48,26 +48,28 @@ fn main() {
     //     name: String
     // }
     // test_is_win();
-    // create_db(None, "mcoe3_insertRandom48_4_decay092", 3);
+    create_db(None, "mcoe3_insertRandom48_4_decay092", 3);
 
     // let test = Agent::Minimax(3);
     // let agent = Agent::Minimax(5);
-    play_actor(&mm3, &mm3, true);
+
+    // println!("{mask}");
+    // play_actor(&m, &m3, true);
 
     // explore_best_model();
 
     // let start = Instant::now();
     // let hoge = get_position_eval_agent_alpha(3, -2, 3, -16, 0, -4, -12, 17, -13, 20, 1, 0, 22);
-    // let result = eval_actor(&m, &m3, 10, false);
+    // let result = eval_actor(&m5, &mm3, 100, false);
     // let (a, b, c) = compare(&m2, &mm3);
     // println!("{result:#?}");
 
     // train_with_db(
     //     false,
     //     true,
-    //     String::from("coe5_8_5_5_fr12_d092"),
-    //     String::from("coe5_fromRandom12_decay092"),
-    //     String::from("coe5_fromRandom12_decay092_test"),
+    //     String::from("mcoe3_8_5_5_ir48_4_d092"),
+    //     String::from("mcoe3_insertRandom48_4_decay092"),
+    //     String::from("mcoe3_insertRandom48_4_decay092_test"),
     // );
 
     // qubic_engine::ai::pattern::train_with_db(

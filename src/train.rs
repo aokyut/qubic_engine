@@ -15,7 +15,7 @@ const RANDOM_MOVE_MAX: usize = 48;
 const RANDOM_MOVE_WIDTH: usize = 4;
 const DATASET_SIZE: usize = 1 << 14;
 const REPLAY_DELETE: usize = 1 << 13;
-const BATCH_SIZE: usize = 1 << 2;
+const BATCH_SIZE: usize = 1 << 4;
 const BATCH_NUM: usize = 1 << 10;
 pub const LAMBDA: f32 = 0.0;
 const DECAY_ALPHA: f32 = 0.92;
@@ -55,8 +55,9 @@ pub fn create_db(load_model: Option<NNUE>, db_name: &str, depth: usize) {
 
     loop {
         println!(
-            "count:{base}+{count}, {}count/sec",
-            count / (1 + start.elapsed().as_secs())
+            "count:{base}+{count}, {}count/sec, {}count/hour",
+            count / (1 + start.elapsed().as_secs()),
+            3600 * count / (1 + start.elapsed().as_secs())
         );
         let random_offset: usize = rng.gen::<usize>() % RANDOM_MOVE_MAX;
         let random_step: usize = rng.gen::<usize>() % RANDOM_MOVE_WIDTH;

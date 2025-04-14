@@ -10,6 +10,7 @@ use rand::Rng;
 use std::time::Instant;
 
 pub const MAX: i32 = 1600;
+pub const RENDER: bool = false;
 
 pub fn negmax<F>(b: &Board, depth: u8, eval_func: &F) -> (u8, i32, i32)
 where
@@ -216,7 +217,9 @@ impl GetAction for NegAlpha {
     fn get_action(&self, b: &Board) -> u8 {
         let (action, v, count) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.evaluator);
         // pprint_board(b);
-        // println!("action:{action}, val:{v}, count:{count}");
+        if RENDER {
+            println!("action:{action}, val:{v}, count:{count}");
+        }
         return action;
     }
 }
@@ -922,13 +925,17 @@ impl GetAction for NNUE {
         let hoge: Box<dyn Evaluator> = Box::new(CoEvaluator::best());
         let (action_, val_, count) = negalpha(b, 3, -MAX - 1, MAX + 1, &hoge);
         let time = end.as_nanos();
-        // println!(
-        //     "[NNUE]action:{action}-{action_}, val:{val}, val_:{val_}, count:{count}, time:{}",
-        //     time,
-        // );
+        if RENDER {
+            println!(
+                "[NNUE]action:{action}-{action_}, val:{val}, val_:{val_}, count:{count}, time:{}",
+                time,
+            );
+        }
         let res = mate_check_horizontal(b);
         if let Some((flag, action)) = res {
-            // println!("{flag}");
+            if RENDER {
+                println!("{flag}");
+            }
             return action;
         }
         return action;
@@ -1094,18 +1101,19 @@ impl GetAction for MateNegAlpha {
         let res = mate_check_horizontal(b);
         if let Some((flag, action)) = res {
             if flag {
-                println!("mate")
+                // println!("mate")
             }
-            println!("->[{action}]");
-            // return action;
+            // println!("->[{action}]");
+            return action;
         } else {
             let (action, v, count) = negalpha(b, self.depth, -MAX - 1, MAX + 1, &self.main_eval);
-            println!("action:{action}, val:{v}, count:{count}");
+            // println!("action:{action}, val:{v}, count:{count}");
+            return action;
         }
-        input! {
-            action: u8
-        }
-        return action;
+        // input! {
+        //     action: u8
+        // }
+        // return action;
     }
 }
 
