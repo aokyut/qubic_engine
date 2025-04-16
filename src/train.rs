@@ -11,8 +11,8 @@ use std::{thread, time};
 const EPOCH: usize = 100;
 const DEPTH: u8 = 3;
 const RANDOM_MOVE: usize = 7;
-const RANDOM_MOVE_MAX: usize = 48;
-const RANDOM_MOVE_WIDTH: usize = 4;
+const RANDOM_MOVE_MAX: usize = 1;
+const RANDOM_MOVE_WIDTH: usize = 48;
 const DATASET_SIZE: usize = 1 << 14;
 const REPLAY_DELETE: usize = 1 << 13;
 const BATCH_SIZE: usize = 1 << 4;
@@ -90,7 +90,7 @@ fn play_with_eval(
     let mut turn = 0;
     let evaluator = super::ai::CoEvaluator::best();
     let neg = super::ai::NegAlpha::new(Box::new(evaluator), depth as u8);
-
+    let play_agent = super::board::Agent::Mcts(50, 500);
     loop {
         // pprint_board(&b);
         let action;
@@ -98,7 +98,9 @@ fn play_with_eval(
         let valf: f32;
         let count: i32;
         if random_offset <= turn && (random_offset + random_step) >= turn {
-            action = get_random(&b);
+            // action = get_random(&b);
+            action = play_agent.get_action(&b);
+            thread::sleep(Duration::from_micros(1500));
         } else {
             match model {
                 Some(nnue) => {
@@ -116,13 +118,13 @@ fn play_with_eval(
                     t_val: valf,
                 });
             }
-            thread::sleep(Duration::from_micros(750));
+            thread::sleep(Duration::from_micros(1500));
             // action = mcts_action(&b, 500, 50);
         }
 
         let b_ = b.next(action);
         let end = mate_check_horizontal(&b);
-        if let Some((flag, action)) = end {
+        if let Some((flag, _)) = end {
             if flag {
                 reward = 1;
                 break;
@@ -448,6 +450,7 @@ pub fn train(load: bool, save: bool, name: String, depth: usize) {
 
 pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval_db_name: String) {
     let mut model = NNUE::default();
+    model.g.optimizer = Some(Box::new(optim::MomentumSGD::new(0.01, 0.9)));
 
     let test_actor1 = Agent::Minimax(3);
     let test_actor2 = Agent::Mcts(50, 500);
@@ -488,7 +491,7 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
         // db.set_lambda(LAMBDA);
 
         let batch_num = ts.len() / BATCH_SIZE;
-        let n = 80 * 10000;
+        let n = BATCH_SIZE * 10000;
         let batch_num = n / BATCH_SIZE;
 
         let pb = ProgressBar::new(batch_num as u64);

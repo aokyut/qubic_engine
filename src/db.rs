@@ -65,11 +65,11 @@ impl BoardDB {
     }
 
     pub fn begine(&self) {
-        self.conn.execute("begine");
+        let _ = self.conn.execute("begine");
     }
 
     pub fn end(&self) {
-        self.conn.execute("end");
+        let _ = self.conn.execute("end");
     }
 
     pub fn add(&self, att: u64, def: u64, flag: i32, val: f32) {
@@ -81,6 +81,38 @@ impl BoardDB {
         );
 
         self.conn.execute(query).unwrap();
+    }
+
+    pub fn concat(&self, other: BoardDB) {
+        let query = format!(
+            "
+                select att, def, flag, val from board_record",
+        );
+
+        // let mut ts = Vec::new();
+        let mut count = 0;
+
+        self.begine();
+        println!("merge BoardDB");
+        other
+            .conn
+            .iterate(query, |pairs| {
+                if count % 1000 == 0 {
+                    println!("{count}");
+                }
+                count += 1;
+                let row = pairs.get(0..4).unwrap();
+                let att: i64 = row[0].1.unwrap().parse().unwrap();
+                let att = att as u64;
+                let def: i64 = row[1].1.unwrap().parse().unwrap();
+                let def = def as u64;
+                let flag: i32 = row[2].1.unwrap().parse().unwrap();
+                let val: f32 = row[3].1.unwrap().parse().unwrap();
+                self.add(att, def, flag, val);
+                true
+            })
+            .unwrap();
+        self.end();
     }
 
     pub fn get(&self, size: usize) -> Vec<(u64, u64, i32, f32)> {

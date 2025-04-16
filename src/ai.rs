@@ -631,7 +631,7 @@ impl NNUE {
         use super::ml::{funcs::*, optim::*, params::*};
 
         let w1_size = 256;
-        let middle_size = 16;
+        let middle_size = 32;
 
         let mut g = Graph::new();
         g.optimizer = Some(Box::new(MomentumSGD::new(0.01, 0.9)));

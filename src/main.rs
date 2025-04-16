@@ -1,6 +1,7 @@
 use proconio::input;
 use qubic_engine::ai::{MateNegAlpha, PositionEvaluator};
-use qubic_engine::board::get_random;
+use qubic_engine::board::{get_random, Board, GetAction};
+use qubic_engine::db::BoardDB;
 use qubic_engine::train::{create_db, train_with_db};
 use qubic_engine::{
     ai::{CoEvaluator, NegAlpha, NNUE},
@@ -32,13 +33,13 @@ fn main() {
 
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
 
-    let mut m = NNUE::default();
-    m.set_depth(3);
-    m.load(format!("mcoe3_8_5_5_ir48_4_d092"));
-    m.set_inference();
+    // let mut m = NNUE::default();
+    // m.set_depth(3);
+    // m.load(format!("mmc_coe3_8_5_5_ir48_4_d092"));
+    // m.set_inference();
     // let mut m_ = NNUE::default();
     // m_.set_depth(4);
-    // m_.load(format!("coe3_8_5_5_fr12_d092"));
+    // m_.load(format!("mmc_coe3_8_5_5_ir48_4_d092"));
     // m_.set_inference();
 
     // train::train(false, true, format!("test_graph"), 3);
@@ -48,29 +49,34 @@ fn main() {
     //     name: String
     // }
     // test_is_win();
-    create_db(None, "mcoe3_insertRandom48_4_decay092", 3);
+    // mcts_statistics();
+    // create_db(None, "mcoe3_genMcts_insertRandom1_48_decay092_test", 3);
 
     // let test = Agent::Minimax(3);
     // let agent = Agent::Minimax(5);
 
     // println!("{mask}");
-    // play_actor(&m, &m3, true);
+    // play_actor(&m_, &m, true);
+
+    // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
+    // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
+    // db.concat(db_);
 
     // explore_best_model();
 
     // let start = Instant::now();
     // let hoge = get_position_eval_agent_alpha(3, -2, 3, -16, 0, -4, -12, 17, -13, 20, 1, 0, 22);
-    // let result = eval_actor(&m5, &mm3, 100, false);
+    // let result = eval_actor(&m, &Agent::Minimax(4), 100, false);
     // let (a, b, c) = compare(&m2, &mm3);
     // println!("{result:#?}");
 
-    // train_with_db(
-    //     false,
-    //     true,
-    //     String::from("mcoe3_8_5_5_ir48_4_d092"),
-    //     String::from("mcoe3_insertRandom48_4_decay092"),
-    //     String::from("mcoe3_insertRandom48_4_decay092_test"),
-    // );
+    train_with_db(
+        true,
+        true,
+        String::from("mmc_coe3_8_5_5_ir48_4_d092"),
+        String::from("mcoe3_genMcts_insertRandom1_48_decay092"),
+        String::from("mcoe3_genMcts_insertRandom1_48_decay092_test"),
+    );
 
     // qubic_engine::ai::pattern::train_with_db(
     //     false,
@@ -80,6 +86,30 @@ fn main() {
     //     String::from("coe3_fromRandom12_decay092_test"),
     //     100,
     // );
+}
+
+fn mcts_statistics() {
+    let mut table = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let b = Board::new();
+    let b = b.next(0);
+    let b = b.next(15);
+    let b = b.next(3);
+    let agent = Agent::Mcts(500, 50);
+
+    for i in 0..10000 {
+        let action = agent.get_action(&b);
+        table[action as usize] += 1;
+    }
+
+    let mut sort_table = Vec::new();
+    for i in 0..16 {
+        sort_table.push((i, table[i]));
+    }
+    sort_table.sort_by(|a, b| a.1.cmp(&b.1).reverse());
+
+    for i in 0..16 {
+        println!("action:{:>2}-{}", sort_table[i].0, sort_table[i].1,);
+    }
 }
 
 fn random_i(max: i32) -> i32 {
