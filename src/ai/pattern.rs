@@ -381,7 +381,7 @@ impl TrainablePatternEvaluator {
 }
 
 impl EvaluatorF for PatternEvaluator {
-    fn eval_func(&self, b: &Board) -> f32 {
+    fn eval_func_f32(&self, b: &Board) -> f32 {
         let val = self.get_value(b);
         if val < 0.001 {
             return 0.001;
@@ -409,7 +409,7 @@ impl Analyzer for PatternEvaluator {
 impl EvalAndAnalyze for PatternEvaluator {}
 
 impl EvaluatorF for TrainablePatternEvaluator {
-    fn eval_func(&self, b: &Board) -> f32 {
+    fn eval_func_f32(&self, b: &Board) -> f32 {
         let val = self.get_value(b);
         if val < 0.001 {
             return 0.001;
@@ -482,7 +482,7 @@ pub fn train_with_db(
         for _ in 0..1 {
             for t in ts.iter() {
                 let b = &u128_to_b(random_rot(t.board, rng.gen()));
-                let actual = trainable_pe.eval_func(b);
+                let actual = trainable_pe.eval_func_f32(b);
                 let expected;
                 if t.result == 0 {
                     expected = 0.5;
@@ -524,7 +524,7 @@ pub fn train_with_db(
         }
         let mut eval_loss = 0.0;
         for t in eval_ts.iter() {
-            let actual = trainable_pe.eval_func(&u128_to_b(t.board));
+            let actual = trainable_pe.eval_func_f32(&u128_to_b(t.board));
             let expected;
             if t.result == 0 {
                 expected = 0.5;

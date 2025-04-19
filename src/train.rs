@@ -5,6 +5,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
+use std::f32::EPSILON;
 use std::time::Duration;
 use std::{thread, time};
 
@@ -20,8 +21,8 @@ const BATCH_NUM: usize = 1 << 10;
 pub const LAMBDA: f32 = 0.0;
 const DECAY_ALPHA: f32 = 0.92;
 const EVAL_NUM: usize = 25;
-const LOG_LOSS_N: usize = 5000;
-const SMOOTHING: f32 = 0.9975;
+const LOG_LOSS_N: usize = 10000;
+const SMOOTHING: f32 = 0.999;
 
 #[derive(Debug, Clone)]
 pub struct Transition {
@@ -54,15 +55,19 @@ pub fn create_db(load_model: Option<NNUE>, db_name: &str, depth: usize) {
     board_db.begine();
 
     loop {
-        println!(
-            "count:{base}+{count}, {}count/sec, {}count/hour",
-            count / (1 + start.elapsed().as_secs()),
-            3600 * count / (1 + start.elapsed().as_secs())
-        );
         let random_offset: usize = rng.gen::<usize>() % RANDOM_MOVE_MAX;
         let random_step: usize = rng.gen::<usize>() % RANDOM_MOVE_WIDTH;
         let ts = play_with_eval(depth, random_offset, random_step, &load_model);
         count += ts.len() as u64;
+        if ts.len() == 0 {
+            continue;
+        }
+        println!(
+            "count:{base}+{count}({}), {}count/sec, {}count/hour",
+            ts.len(),
+            count / (1 + start.elapsed().as_secs()),
+            3600 * count / (1 + start.elapsed().as_secs())
+        );
         step += 1;
         for t in ts {
             let att = t.board as u64;
@@ -91,6 +96,7 @@ fn play_with_eval(
     let evaluator = super::ai::CoEvaluator::best();
     let neg = super::ai::NegAlpha::new(Box::new(evaluator), depth as u8);
     let play_agent = super::board::Agent::Mcts(50, 500);
+
     loop {
         // pprint_board(&b);
         let action;
@@ -98,9 +104,9 @@ fn play_with_eval(
         let valf: f32;
         let count: i32;
         if random_offset <= turn && (random_offset + random_step) >= turn {
-            // action = get_random(&b);
-            action = play_agent.get_action(&b);
-            thread::sleep(Duration::from_micros(1500));
+            action = get_random(&b);
+            // action = play_agent.get_action(&b);
+            // thread::sleep(Duration::from_micros(3000));
         } else {
             match model {
                 Some(nnue) => {
@@ -118,7 +124,7 @@ fn play_with_eval(
                     t_val: valf,
                 });
             }
-            thread::sleep(Duration::from_micros(1500));
+            thread::sleep(Duration::from_micros(2500));
             // action = mcts_action(&b, 500, 50);
         }
 
@@ -154,7 +160,8 @@ fn play_with_eval(
             win_rate = 0.0;
         }
         transitions[size - i - 1].t_val =
-            decay * win_rate + (1.0 - decay) * transitions[size - i - 1].t_val;
+            // decay * win_rate + (1.0 - decay) * transitions[size - i - 1].t_val;
+            decay * win_rate + (1.0 - decay) * 0.5;
         reward *= -1;
         decay *= DECAY_ALPHA;
     }
@@ -360,6 +367,8 @@ pub fn train(load: bool, save: bool, name: String, depth: usize) {
 
     model.set_depth(depth);
     let mut dataset = Vec::new();
+    let mut i = 0;
+    let mut smoothed_loss = None;
 
     for epoch in 0..EPOCH {
         model.eval();
@@ -369,9 +378,9 @@ pub fn train(load: bool, save: bool, name: String, depth: usize) {
         let (e11, e12) = eval_model(&model, &test_actor1);
         let (e21, e22) = eval_model(&model, &test_actor2);
         let (e31, e32) = eval_model(&model, &neg);
-        println!("[minimax(3)]:({}, {})", e11, e12);
-        println!("[mcts(50, 500)]:({}, {})", e21, e22);
-        println!("[neg(3)]:({}, {})", e31, e32);
+        println!("[{epoch}, minimax(3)]:({}, {})", e11, e12);
+        println!("[{epoch}, mcts(50, 500)]:({}, {})", e21, e22);
+        println!("[{epoch}, neg(3)]:({}, {})", e31, e32);
         // }
 
         // play_with_analyze(&model);
@@ -409,10 +418,8 @@ pub fn train(load: bool, save: bool, name: String, depth: usize) {
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
             .unwrap()
             .progress_chars("#>-"));
-
-        let mut i = 0;
-        let mut smoothed_loss = None;
         for (board, result) in it {
+            i += 1;
             model.g.reset();
             let loss = model.g.forward(vec![board, result]);
             model.g.backward();
@@ -439,13 +446,26 @@ pub fn train(load: bool, save: bool, name: String, depth: usize) {
                 pb.println(format!("[smoothed_loss]:{}", smoothed_loss.unwrap()));
                 // println!("[smoothed_loss]:{}", smoothed_loss.unwrap());
             }
-            i += 1;
         }
 
         if save {
             model.save(name.clone());
         }
     }
+}
+
+pub fn bce_loss(x: f32, t: f32) -> (f32, f32) {
+    let loss = -t * (x + 0.000001).ln() - (1.0 - t) * (1.000001 - x).ln()
+        + t * (t + 0.000001).ln()
+        + (1.0 - t) * (1.000001 - t).ln();
+    let dloss = (x - t) / (x * (1.0 - x) + 0.000001);
+    return (loss, -dloss);
+}
+
+pub fn mse_loss(x: f32, t: f32) -> (f32, f32) {
+    let error = x - t;
+    let loss = error * error;
+    return (loss, -2.0 * error);
 }
 
 pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval_db_name: String) {
@@ -469,6 +489,7 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
     let ts = db.get_batch();
     let eval_ts = eval_db.get_batch()[..1024].to_vec();
     let mut data = Vec::new();
+    let mut smoothing_loss = None;
 
     for epoch in 0..EPOCH {
         let mut step = 0;
@@ -491,7 +512,7 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
         // db.set_lambda(LAMBDA);
 
         let batch_num = ts.len() / BATCH_SIZE;
-        let n = BATCH_SIZE * 10000;
+        let n = BATCH_SIZE * 50000;
         let batch_num = n / BATCH_SIZE;
 
         let pb = ProgressBar::new(batch_num as u64);
@@ -500,7 +521,6 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
             .unwrap()
             .progress_chars("#>-"));
 
-        let mut smoothing_loss = None;
         data = ts.choose_multiple(&mut rng, n).cloned().collect();
         let mut it = BatchIterator::new(data, BATCH_SIZE, batch_num, LAMBDA);
         it.reset();
@@ -539,6 +559,115 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
                     // model.g.optimize();
                     thread::sleep(Duration::from_millis(50));
                     losses.push(loss.get_item().unwrap());
+                }
+                let size = losses.len();
+                pb.println(format!(
+                    "[eval_loss]:{}",
+                    losses.iter().sum::<f32>() / size as f32
+                ));
+                println!(
+                    "[loss]:{} \n[eval_loss]:{}",
+                    smoothing_loss.unwrap(),
+                    losses.iter().sum::<f32>() / size as f32
+                );
+            }
+            step += 1;
+        }
+
+        if save {
+            model.save(name.clone());
+        }
+    }
+}
+
+pub fn train_model_with_db(
+    mut model: impl Trainable + EvaluatorF + Clone + 'static,
+    load: bool,
+    save: bool,
+    name: String,
+    db_name: String,
+    eval_db_name: String,
+) {
+    let test_actor1 = Agent::Minimax(3);
+    let test_actor2 = Agent::Mcts(50, 500);
+    let evaluator = super::ai::CoEvaluator::best();
+    let neg = super::ai::NegAlpha::new(Box::new(evaluator), 3);
+    let mut rng = thread_rng();
+
+    if load {
+        model.load(name.clone());
+    } else if save {
+        model.save(name.clone());
+    }
+
+    let mut db: BoardDB = BoardDB::new(&db_name, 0);
+    let eval_db = BoardDB::new(&eval_db_name, 0);
+    let ts = db.get_all();
+    let eval_ts = eval_db.get_all()[..1024].to_vec();
+
+    for epoch in 0..EPOCH {
+        let mut step = 0;
+
+        // play_with_analyze(&model);
+        model.train();
+        db.set_batch_num();
+        // db.set_lambda(LAMBDA);
+        if true {
+            let agent = NegAlphaF::new(Box::new(model.clone()), 3);
+            let agent = MateWrapperActor::new(Box::new(agent));
+            let (e11, e12) = eval_actor(&agent, &test_actor1, EVAL_NUM, false);
+            let (e21, e22) = eval_actor(&agent, &test_actor2, EVAL_NUM, false);
+            let (e31, e32) = eval_actor(&agent, &neg, EVAL_NUM, false);
+            println!("[minimax(3)]:({}, {})", e11, e12);
+            println!("[mcts(50, 500)]:({}, {})", e21, e22);
+            println!("[neg(3)]:({}, {})", e31, e32);
+        }
+
+        let batch_num = ts.len() / BATCH_SIZE;
+        let n = BATCH_SIZE * 1000000;
+        let batch_num = n / BATCH_SIZE;
+
+        let pb = ProgressBar::new(batch_num as u64);
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-"));
+
+        let mut smoothing_loss = None;
+        let data: Vec<Transition> = ts.choose_multiple(&mut rng, n).cloned().collect();
+
+        for t in data.iter() {
+            let b = &u128_to_b(random_rot(t.board, rng.gen()));
+            let val = model.get_val(b);
+            // thread::sleep(Duration::from_millis(50));
+            let (loss, delta) = bce_loss(val, t.t_val);
+            match smoothing_loss {
+                None => smoothing_loss = Some(loss),
+                Some(loss_) => smoothing_loss = Some(SMOOTHING * loss_ + (1.0 - SMOOTHING) * loss),
+            }
+            model.update(b, delta);
+
+            pb.inc(1);
+            pb.set_message(format!(
+                "[loss]:{} \n[smoothed]:{}",
+                loss,
+                smoothing_loss.unwrap(),
+            ));
+            if step % LOG_LOSS_N == 0 {
+                pb.println(format!("[loss]:{}", smoothing_loss.unwrap()));
+
+                let mut losses = Vec::new();
+
+                let eval_it =
+                    BatchIterator::new(ts.clone(), BATCH_SIZE, eval_ts.len() / BATCH_SIZE, LAMBDA);
+
+                for t in eval_ts.iter() {
+                    let b = &u128_to_b(t.board);
+                    let val = model.get_val(b);
+                    // thread::sleep(Duration::from_millis(50));
+
+                    let (loss, _) = bce_loss(val, t.t_val);
+                    losses.push(loss);
                 }
                 let size = losses.len();
                 pb.println(format!(

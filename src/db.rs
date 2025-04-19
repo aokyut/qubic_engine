@@ -183,6 +183,34 @@ impl BoardDB {
             .unwrap();
         return ts;
     }
+
+    pub fn get_all(&self) -> Vec<Transition> {
+        let query = format!(
+            "
+                select att, def, flag, val from board_record",
+        );
+
+        let mut ts = Vec::new();
+
+        self.conn
+            .iterate(query, |pairs| {
+                let row = pairs.get(0..4).unwrap();
+                let att: i64 = row[0].1.unwrap().parse().unwrap();
+                let att = att as u64;
+                let def: i64 = row[1].1.unwrap().parse().unwrap();
+                let def = def as u64;
+                let flag: i32 = row[2].1.unwrap().parse().unwrap();
+                let val: f32 = row[3].1.unwrap().parse().unwrap();
+                ts.push(Transition {
+                    board: (att as u128) | ((def as u128) << 64),
+                    result: flag,
+                    t_val: val,
+                });
+                true
+            })
+            .unwrap();
+        return ts;
+    }
 }
 
 pub fn random_rot(b: u128, id: usize) -> u128 {

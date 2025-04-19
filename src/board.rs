@@ -312,7 +312,16 @@ pub fn _is_win_board(bit: u64) -> bool {
         > 0
 }
 
-pub fn count_2row_(a1: u64, a2: u64, a3: u64, a4: u64, b1: u64, b2: u64, b3: u64, b4: u64) -> u64 {
+pub const fn count_2row_(
+    a1: u64,
+    a2: u64,
+    a3: u64,
+    a4: u64,
+    b1: u64,
+    b2: u64,
+    b3: u64,
+    b4: u64,
+) -> u64 {
     return a1 & a2 & b3 & b4
         | a1 & b2 & a3 & b4
         | a1 & b2 & b3 & a4
@@ -346,7 +355,7 @@ pub fn count_2row(s: u64, b: u64) -> u32 {
     let yz_ = (count_2row_(s, s >> 12, s >> 24, s >> 36, b, b >> 12, b >> 24, b >> 36) & 0xf000)
         .count_ones();
     let xyz1 = count_2row_(s, s >> 21, s >> 42, s >> 63, b, b >> 21, b >> 42, b >> 63);
-    let xyz2 = count_2row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 51) & 0x0008;
+    let xyz2 = count_2row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 57) & 0x0008;
     let xyz3 = count_2row_(s, s >> 13, s >> 26, s >> 39, b, b >> 13, b >> 26, b >> 39) & 0x1000;
     let xyz4 = count_2row_(s, s >> 11, s >> 22, s >> 33, b, b >> 11, b >> 22, b >> 33) & 0x8000;
 
@@ -395,7 +404,7 @@ pub fn count_1row(s: u64, b: u64) -> u32 {
     let yz_ = (count_1row_(s, s >> 12, s >> 24, s >> 36, b, b >> 12, b >> 24, b >> 36) & 0xf000)
         .count_ones();
     let xyz1 = count_1row_(s, s >> 21, s >> 42, s >> 63, b, b >> 21, b >> 42, b >> 63);
-    let xyz2 = count_1row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 51) & 0x0008;
+    let xyz2 = count_1row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 57) & 0x0008;
     let xyz3 = count_1row_(s, s >> 13, s >> 26, s >> 39, b, b >> 13, b >> 26, b >> 39) & 0x1000;
     let xyz4 = count_1row_(s, s >> 11, s >> 22, s >> 33, b, b >> 11, b >> 22, b >> 33) & 0x8000;
 
@@ -430,7 +439,7 @@ pub fn count_3row(s: u64, b: u64) -> u32 {
     let yz_ = (count_1row_(s, s >> 12, s >> 24, s >> 36, b, b >> 12, b >> 24, b >> 36) & 0xf000)
         .count_ones();
     let xyz1 = count_1row_(s, s >> 21, s >> 42, s >> 63, b, b >> 21, b >> 42, b >> 63);
-    let xyz2 = count_1row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 51) & 0x0008;
+    let xyz2 = count_1row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 57) & 0x0008;
     let xyz3 = count_1row_(s, s >> 13, s >> 26, s >> 39, b, b >> 13, b >> 26, b >> 39) & 0x1000;
     let xyz4 = count_1row_(s, s >> 11, s >> 22, s >> 33, b, b >> 11, b >> 22, b >> 33) & 0x8000;
 
@@ -480,6 +489,53 @@ pub const fn get_1row_mask(s: u64, b: u64) -> u64 {
     );
     let (b48, b49, b57, b60, b63) = (b >> 48, b >> 49, b >> 57, b >> 60, b >> 63);
     0
+}
+
+pub fn get_reach_mask_alpha(a: u64, d: u64) -> u64 {
+    let b = a;
+    let stone = a | d;
+    let s = !stone;
+    let blank = s & ((stone << 16) | 0xffff);
+
+    let x = (count_1row_(s, s >> 1, s >> 2, s >> 3, b, b >> 1, b >> 2, b >> 3)
+        & 0x1111_1111_1111_1111)
+        * 0xf
+        & blank;
+    let y = (count_1row_(s, s >> 4, s >> 8, s >> 12, b, b >> 4, b >> 8, b >> 12)
+        & 0x000f_000f_000f_000f);
+    let y = (y * 0x1111) & blank;
+    let z = count_1row_(s, s >> 16, s >> 32, s >> 48, b, b >> 16, b >> 32, b >> 48);
+    let z = (z * 0x0001_0001_0001_0001) & blank;
+    let xy = (count_1row_(s, s >> 5, s >> 10, s >> 15, b, b >> 5, b >> 10, b >> 15)
+        & 0x0001_0001_0001_0001);
+    let xy = (xy * 0x8421) & blank;
+    let xy_ =
+        (count_1row_(s, s >> 3, s >> 6, s >> 9, b, b >> 3, b >> 6, b >> 9) & 0x0008_0008_0008_0008);
+    let xy_ = (xy_ * 0x249) & blank;
+    let xz = (count_1row_(s, s >> 17, s >> 34, s >> 51, b, b >> 17, b >> 34, b >> 51)
+        & 0x0000_0000_0000_1111);
+    let xz = (xz * 0x0008_0004_0002_0001) & blank;
+    let xz_ = (count_1row_(s, s >> 15, s >> 30, s >> 45, b, b >> 15, b >> 30, b >> 45) & 0x8888);
+    let xz_ = (xz_ * 0x0000_2000_4000_8001) & blank;
+    let yz = (count_1row_(s, s >> 20, s >> 40, s >> 60, b, b >> 20, b >> 40, b >> 60)
+        & 0x0000_0000_0000_000f);
+    let yz = (yz * 0x1000_0100_0010_0001) & blank;
+    let yz_ = (count_1row_(s, s >> 12, s >> 24, s >> 36, b, b >> 12, b >> 24, b >> 36) & 0xf000);
+    let yz_ = (yz_ * 0x0000_0010_0100_1001) & blank;
+
+    let xyz1 = count_1row_(s, s >> 21, s >> 42, s >> 63, b, b >> 21, b >> 42, b >> 63);
+    let xyz1 = (xyz1 * 0x8000_0400_0020_0001) & blank;
+    let xyz2 = count_1row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 57) & 0x0008;
+    let xyz2 = (xyz2 * 0x0200_0040_0008_0001) & blank;
+    let xyz3 = count_1row_(s, s >> 13, s >> 26, s >> 39, b, b >> 13, b >> 26, b >> 39) & 0x1000;
+    let xyz3 = (xyz3 * 0x0000_0080_0400_2001) & blank;
+    let xyz4 = count_1row_(s, s >> 11, s >> 22, s >> 33, b, b >> 11, b >> 22, b >> 33) & 0x8000;
+    let xyz4 = (xyz4 * 0x0000_0002_0040_0801) & blank;
+
+    // println!("flag");
+    // pprint_u64(xyz4);
+
+    return x | y | z | xy | xy_ | yz | yz_ | xz | xz_ | xyz1 | xyz2 | xyz3 | xyz4;
 }
 
 pub fn get_reach_mask(a: u64, d: u64) -> u64 {

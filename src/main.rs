@@ -1,6 +1,9 @@
 use proconio::input;
-use qubic_engine::ai::{MateNegAlpha, PositionEvaluator};
-use qubic_engine::board::{get_random, Board, GetAction};
+use qubic_engine::ai::{
+    LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PositionEvaluator,
+    TrainableLineEvaluator,
+};
+use qubic_engine::board::{count_2row_, get_random, Board, GetAction};
 use qubic_engine::db::BoardDB;
 use qubic_engine::train::{create_db, train_with_db};
 use qubic_engine::{
@@ -21,6 +24,7 @@ fn main() {
     // let a1 = Agent::Mcts(50, 5000);
     let m2 = NegAlpha::new(Box::new(CoEvaluator::best()), 2);
     let m3 = NegAlpha::new(Box::new(CoEvaluator::best()), 3);
+    let m3_f32 = NegAlphaF::new(Box::new(CoEvaluator::best()), 3);
     let m4 = NegAlpha::new(Box::new(CoEvaluator::best()), 4);
     let m5 = NegAlpha::new(Box::new(CoEvaluator::best()), 5);
     // let m6 = NegAlpha::new(Box::new(CoEvaluator::best()), 6);
@@ -30,33 +34,17 @@ fn main() {
     let m2 = Agent::Struct(String::from("m2"), Box::new(m2));
     let m3 = Agent::Struct(String::from("m3"), Box::new(m3));
     let m5 = Agent::Struct(String::from("m5"), Box::new(m5));
-
+    let mut l = LineEvaluator::new();
+    l.load("wR_gR_ir1_48.leval".to_string());
+    let l3 = wrapping_line_eval(l.clone(), 3);
+    let l4 = wrapping_line_eval(l.clone(), 4);
+    let l5 = wrapping_line_eval(l.clone(), 5);
+    let l6 = wrapping_line_eval(l.clone(), 6);
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
 
-    // let mut m = NNUE::default();
-    // m.set_depth(3);
-    // m.load(format!("mmc_coe3_8_5_5_ir48_4_d092"));
-    // m.set_inference();
-    // let mut m_ = NNUE::default();
-    // m_.set_depth(4);
-    // m_.load(format!("mmc_coe3_8_5_5_ir48_4_d092"));
-    // m_.set_inference();
+    // make_db();
 
-    // train::train(false, true, format!("test_graph"), 3);
-
-    // println!("input db_name");
-    // input! {
-    //     name: String
-    // }
-    // test_is_win();
-    // mcts_statistics();
-    // create_db(None, "mcoe3_genMcts_insertRandom1_48_decay092_test", 3);
-
-    // let test = Agent::Minimax(3);
-    // let agent = Agent::Minimax(5);
-
-    // println!("{mask}");
-    // play_actor(&m_, &m, true);
+    // play_actor(&l5, &m5, true);
 
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -66,26 +54,75 @@ fn main() {
 
     // let start = Instant::now();
     // let hoge = get_position_eval_agent_alpha(3, -2, 3, -16, 0, -4, -12, 17, -13, 20, 1, 0, 22);
-    // let result = eval_actor(&m, &Agent::Minimax(4), 100, false);
+    // let result = eval_actor(&m3, &l3, 100, false);
     // let (a, b, c) = compare(&m2, &mm3);
     // println!("{result:#?}");
 
-    train_with_db(
-        true,
-        true,
-        String::from("mmc_coe3_8_5_5_ir48_4_d092"),
-        String::from("mcoe3_genMcts_insertRandom1_48_decay092"),
-        String::from("mcoe3_genMcts_insertRandom1_48_decay092_test"),
-    );
+    // exp_count_2row_();
+    // println!("{}", 3 * 3 & 1)
+    // let att = 2314852547162056300;
+    // let def = 360328721413243153;
+    // let b = Board::from(att, def, Player::Black);
+    // pprint_board(&b);
+    // println!("");
+    // let a = qubic_engine::board::get_reach_mask_alpha(att, def);
+    // let b = qubic_engine::board::get_reach_mask(att, def);
+    // pprint_u64(a);
+    // println!("");
+    // pprint_u64(b);
 
-    // qubic_engine::ai::pattern::train_with_db(
-    //     false,
-    //     false,
-    //     String::from("test"),
-    //     String::from("coe3_fromRandom12_decay092"),
-    //     String::from("coe3_fromRandom12_decay092_test"),
-    //     100,
-    // );
+    train_with_db(
+        false,
+        true,
+        String::from("wr_coe3_8_5_5_ir48_4_d092"),
+        String::from("winRate_coe5_genRandom_insertRandom1_48"),
+        String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
+    );
+    // train_line_eval();
+}
+
+fn wrapping_line_eval(l: LineEvaluator, depth: u8) -> MateWrapperActor {
+    let agent = NegAlphaF::new(Box::new(l), depth);
+    let agent = MateWrapperActor::new(Box::new(agent));
+    return agent;
+}
+
+fn make_db() {
+    create_db(None, "winRate_coe5_genRandom_insertRandom1_48_test", 5);
+}
+
+fn train_line_eval() {
+    let mut model = LineEvaluator::new();
+    let mut model = TrainableLineEvaluator::from(model, 0.001);
+    qubic_engine::train::train_model_with_db(
+        model,
+        false,
+        true,
+        String::from("wR5_gR_ir1_48.leval"),
+        String::from("winRate_coe5_genRandom_insertRandom1_48"),
+        String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
+    );
+}
+
+fn exp_count_2row_() {
+    let mut b_time = 0;
+    let mut a_time = 0;
+    for i in 0..100000 {
+        let mut b = Board::new();
+        for j in 0..30 {
+            b = b.next(Agent::Random.get_action(&b));
+        }
+        let (att, def) = b.get_att_def();
+        let start = Instant::now();
+        let mask_a = qubic_engine::board::get_reach_mask_alpha(att, def);
+        a_time += start.elapsed().as_nanos();
+        let start = Instant::now();
+        let mask_b = qubic_engine::board::get_reach_mask(att, def);
+        b_time += start.elapsed().as_nanos();
+        assert_eq!(mask_a, mask_b, "[{i}]att:{att}, def:{def}");
+    }
+
+    println!("{a_time}, {b_time}");
 }
 
 fn mcts_statistics() {
