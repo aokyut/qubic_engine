@@ -126,7 +126,9 @@ fn play_with_eval(
                     t_val: valf,
                 });
             }
-            thread::sleep(Duration::from_micros(2500));
+            if cfg!(feature = "slow") {
+                thread::sleep(Duration::from_micros(2500));
+            }
             // action = mcts_action(&b, 500, 50);
         }
 
@@ -559,7 +561,9 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
                     let loss = model.g.forward(vec![board, result]);
                     model.g.backward();
                     // model.g.optimize();
-                    thread::sleep(Duration::from_millis(50));
+                    if cfg!(feature = "slow") {
+                        thread::sleep(Duration::from_millis(50));
+                    }
                     losses.push(loss.get_item().unwrap());
                 }
                 let size = losses.len();
@@ -641,7 +645,10 @@ pub fn train_model_with_db(
         for t in data.iter() {
             let b = &u128_to_b(random_rot(t.board, rng.gen()));
             let val = model.get_val(b);
-            // thread::sleep(Duration::from_millis(50));
+
+            if cfg!(feature = "slow") {
+                thread::sleep(Duration::from_millis(50));
+            }
             let (loss, delta) = bce_loss(val, t.t_val);
             match smoothing_loss {
                 None => smoothing_loss = Some(loss),
