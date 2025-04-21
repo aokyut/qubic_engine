@@ -3,7 +3,7 @@ use qubic_engine::ai::{
     LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PositionEvaluator,
     TrainableLineEvaluator,
 };
-use qubic_engine::board::{count_2row_, get_random, Board, GetAction};
+use qubic_engine::board::{count_2row_, get_random, mate_check_horizontal, Board, GetAction};
 use qubic_engine::db::BoardDB;
 use qubic_engine::train::{create_db, train_with_db};
 use qubic_engine::{
@@ -27,7 +27,7 @@ fn main() {
     let m3_f32 = NegAlphaF::new(Box::new(CoEvaluator::best()), 3);
     let m4 = NegAlpha::new(Box::new(CoEvaluator::best()), 4);
     let m5 = NegAlpha::new(Box::new(CoEvaluator::best()), 5);
-    // let m6 = NegAlpha::new(Box::new(CoEvaluator::best()), 6);
+    let m6 = NegAlpha::new(Box::new(CoEvaluator::best()), 6);
     let m7 = NegAlpha::new(Box::new(CoEvaluator::best()), 7);
     let mm3 = MateNegAlpha::new(Box::new(CoEvaluator::best()), 5);
     let mm3 = Agent::Struct(String::from("mm3"), Box::new(mm3));
@@ -35,16 +35,27 @@ fn main() {
     let m3 = Agent::Struct(String::from("m3"), Box::new(m3));
     let m5 = Agent::Struct(String::from("m5"), Box::new(m5));
     let mut l = LineEvaluator::new();
-    l.load("wR_gR_ir1_48.leval".to_string());
+    l.load("wR5_gR_ir1_48.leval".to_string());
     let l3 = wrapping_line_eval(l.clone(), 3);
     let l4 = wrapping_line_eval(l.clone(), 4);
     let l5 = wrapping_line_eval(l.clone(), 5);
+    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 3);
+    l5_.hashmap = true;
+    let l5_ = MateWrapperActor::new(Box::new(l5_));
     let l6 = wrapping_line_eval(l.clone(), 6);
+    let l7 = wrapping_line_eval(l.clone(), 7);
+    let l8 = wrapping_line_eval(l.clone(), 8);
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
 
-    // make_db();
+    // let att = 9361298940875284;
+    // let def = 4758053146183082217;
+    // let b = Board::from(att, def, Player::Black);
+    // pprint_board(&b);
+    // let _ = l5_.eval_with_negalpha(&b);
 
-    // play_actor(&l5, &m5, true);
+    make_db();
+
+    // play_actor(&l7, &m3, true);
 
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -53,10 +64,11 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    // let hoge = get_position_eval_agent_alpha(3, -2, 3, -16, 0, -4, -12, 17, -13, 20, 1, 0, 22);
-    // let result = eval_actor(&m3, &l3, 100, false);
-    // let (a, b, c) = compare(&m2, &mm3);
+    // let result = eval_actor(&l3, &m3, 100, false);
+    // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
+    // return;
+    // let (a, b, c) = compare(&m2, &mm3);
 
     // exp_count_2row_();
     // println!("{}", 3 * 3 & 1)
@@ -71,14 +83,111 @@ fn main() {
     // println!("");
     // pprint_u64(b);
 
-    train_with_db(
-        false,
-        true,
-        String::from("wr_coe3_8_5_5_ir48_4_d092"),
-        String::from("winRate_coe5_genRandom_insertRandom1_48"),
-        String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
-    );
+    // train_with_db(
+    //     false,
+    //     true,
+    //     String::from("wr_coe3_8_5_5_ir48_4_d092"),
+    //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
+    //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
+    // );
     // train_line_eval();
+    // mpc_for_coe(5, 5);
+}
+
+fn mpc_for_coe(long_depth: u8, short_depth: u8) {
+    let mut b = Board::new();
+    let mut l = LineEvaluator::new();
+    l.load("wR5_gR_ir1_48.leval".to_string());
+    let long = NegAlphaF::new(Box::new(l.clone()), long_depth);
+    let short = NegAlphaF::new(Box::new(l.clone()), short_depth);
+
+    let mut all_count = 0.0;
+    let mut all_err_sum = 0.0;
+    let mut all_sq_sum = 0.0;
+
+    let mut counts: Vec<f32> = vec![0.0; 64];
+    let mut err_sum: Vec<f32> = vec![0.0; 64];
+    let mut err_sq_sum: Vec<f32> = vec![0.0; 64];
+    let mut search_time: Vec<u128> = vec![0; 64];
+    let mut search_time_a: Vec<u128> = vec![0; 64];
+    let mut step = 0;
+    let mut is_black = true;
+
+    loop {
+        let res = mate_check_horizontal(&b);
+        if b.is_win() || b.is_draw() {
+            b = Board::new();
+            is_black = is_black ^ true;
+        }
+        if let Some((flag, action)) = res {
+            b = Board::new();
+            is_black = is_black ^ true;
+        }
+
+        let action;
+        let start = Instant::now();
+        let (action_, val, _) = short.eval_with_negalpha_hash(&b);
+        let t2 = start.elapsed().as_nanos();
+
+        let start = Instant::now();
+        let (action_, val_, _) = long.eval_with_negalpha(&b);
+        let t = start.elapsed().as_nanos();
+
+        let stones = b.get_att_def();
+        let idx = (stones.0.count_ones() + stones.1.count_ones()) as usize;
+        counts[idx] += 1.0;
+        err_sum[idx] += val_ - val;
+        err_sq_sum[idx] += (val_ - val).powi(2);
+        search_time[idx] += t;
+        search_time_a[idx] += t2;
+
+        action = Agent::Random.get_action(&b);
+
+        // let action = m3.get_action(&b);
+        b = b.next(action);
+        step += 1;
+        if step % 10 == 0 {
+            for i in 0..64 {
+                if counts[i] == 0.0 {
+                    continue;
+                }
+                let mean = err_sum[i] / counts[i];
+                let dev = (err_sq_sum[i] / counts[i]) - mean.powi(2);
+                println!(
+                    "[{i}] mean:{}, dev:{}, std:{}, count:{}, time:{}, rate:{}%",
+                    err_sum[i] / counts[i],
+                    dev,
+                    dev.sqrt(),
+                    counts[i],
+                    search_time[i] as f32 / counts[i],
+                    100.0 * search_time_a[i] as f32 / search_time[i] as f32
+                );
+            }
+            let mean: f32 = err_sum.iter().sum::<f32>() / counts.iter().sum::<f32>();
+            let dev: f32 =
+                (err_sq_sum.iter().sum::<f32>() / counts.iter().sum::<f32>()) - mean.powi(2);
+            println!(
+                "[all] mean:{mean}, dev:{dev}, std:{}, count:{}, time:{}, rate:{}%",
+                dev.sqrt(),
+                counts.iter().sum::<f32>(),
+                search_time.iter().sum::<u128>() as f32 / counts.iter().sum::<f32>(),
+                100.0 * search_time_a.iter().sum::<u128>() as f32
+                    / search_time.iter().sum::<u128>() as f32,
+            );
+            let num = counts[17..].iter().sum::<f32>();
+            if num == 0.0 {
+                continue;
+            }
+            let mean: f32 = err_sum[17..].iter().sum::<f32>() / num;
+            let dev: f32 = (err_sq_sum[17..].iter().sum::<f32>() / num) - mean.powi(2);
+            println!(
+                "[16:] mean:{mean}, dev:{dev}, std:{}, count:{}, time:{}",
+                dev.sqrt(),
+                num,
+                search_time[17..].iter().sum::<u128>() as f32 / num
+            )
+        }
+    }
 }
 
 fn wrapping_line_eval(l: LineEvaluator, depth: u8) -> MateWrapperActor {
@@ -88,7 +197,11 @@ fn wrapping_line_eval(l: LineEvaluator, depth: u8) -> MateWrapperActor {
 }
 
 fn make_db() {
-    create_db(None, "winRate_coe5_genRandom_insertRandom1_48_test", 5);
+    let mut l = LineEvaluator::new();
+    l.load("wR5_gR_ir1_48.leval".to_string());
+    let le = NegAlphaF::new(Box::new(l.clone()), 7);
+
+    create_db(Some(le), "le7_genRandom_insertRandom1_4_48", 5);
 }
 
 fn train_line_eval() {

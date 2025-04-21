@@ -72,6 +72,9 @@ impl Board {
     }
 
     pub fn next(&self, action_id: u8) -> Self {
+        if cfg!(feature = "render") {
+            assert!(action_id < 16);
+        }
         let board = self.black | self.white;
         let action_bitboard: u64 =
             (0x0001000100010001u64 << action_id) & ((!board << 16) ^ (!board));
@@ -247,7 +250,10 @@ impl Board {
     }
 
     pub fn to_u128(&self) -> u128 {
-        return (self.black as u128) + ((self.white as u128) << 64);
+        match self.player {
+            Player::Black => (self.black as u128) + ((self.white as u128) << 64),
+            Player::White => (self.white as u128) + ((self.black as u128) << 64),
+        }
     }
 
     pub fn hash(&self) -> u128 {

@@ -14,6 +14,7 @@ const DEPTH: u8 = 3;
 const RANDOM_MOVE: usize = 7;
 const RANDOM_MOVE_MAX: usize = 1;
 const RANDOM_MOVE_WIDTH: usize = 48;
+const RANDOM_MOVE_MIN: usize = 4;
 const DATASET_SIZE: usize = 1 << 14;
 const REPLAY_DELETE: usize = 1 << 13;
 const BATCH_SIZE: usize = 1 << 4;
@@ -41,7 +42,7 @@ impl Transition {
     }
 }
 
-pub fn create_db(load_model: Option<NNUE>, db_name: &str, depth: usize) {
+pub fn create_db(load_model: Option<impl EvalAndActF>, db_name: &str, depth: usize) {
     use super::db;
     let board_db = db::BoardDB::new(db_name, 1);
     let base = board_db.get_count();
@@ -56,7 +57,8 @@ pub fn create_db(load_model: Option<NNUE>, db_name: &str, depth: usize) {
 
     loop {
         let random_offset: usize = rng.gen::<usize>() % RANDOM_MOVE_MAX;
-        let random_step: usize = rng.gen::<usize>() % RANDOM_MOVE_WIDTH;
+        let random_step: usize =
+            RANDOM_MOVE_MIN + (rng.gen::<usize>() % (RANDOM_MOVE_WIDTH - RANDOM_MOVE_MIN));
         let ts = play_with_eval(depth, random_offset, random_step, &load_model);
         count += ts.len() as u64;
         if ts.len() == 0 {
@@ -86,7 +88,7 @@ fn play_with_eval(
     depth: usize,
     random_offset: usize,
     random_step: usize,
-    model: &Option<NNUE>,
+    model: &Option<impl EvalAndActF>,
 ) -> Vec<Transition> {
     let mut b = Board::new();
     let mut transitions = Vec::new();
@@ -109,8 +111,8 @@ fn play_with_eval(
             // thread::sleep(Duration::from_micros(3000));
         } else {
             match model {
-                Some(nnue) => {
-                    (action, valf, count) = nnue.eval_with_negalpha(&b);
+                Some(evaluator) => {
+                    (action, valf) = evaluator.eval_and_act(&b);
                 }
                 None => {
                     (action, val, count) = neg.eval_with_negalpha(&b);
@@ -148,7 +150,7 @@ fn play_with_eval(
     }
 
     let size = transitions.len();
-    let mut decay = 1.0;
+    let mut decay = LAMBDA;
     for i in 0..size {
         transitions[size - i - 1].result = reward;
         let win_rate;
@@ -160,8 +162,8 @@ fn play_with_eval(
             win_rate = 0.0;
         }
         transitions[size - i - 1].t_val =
-            // decay * win_rate + (1.0 - decay) * transitions[size - i - 1].t_val;
-            decay * win_rate + (1.0 - decay) * 0.5;
+            decay * win_rate + (1.0 - decay) * transitions[size - i - 1].t_val;
+        // decay * win_rate + (1.0 - decay) * 0.5;
         reward *= -1;
         decay *= DECAY_ALPHA;
     }
@@ -566,7 +568,7 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
                     losses.iter().sum::<f32>() / size as f32
                 ));
                 println!(
-                    "[loss]:{} \n[eval_loss]:{}",
+                    "[step:{step}][loss]:{} \n[eval_loss]:{}",
                     smoothing_loss.unwrap(),
                     losses.iter().sum::<f32>() / size as f32
                 );

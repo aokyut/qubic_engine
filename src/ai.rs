@@ -1,3 +1,4 @@
+pub mod mpc;
 pub mod pattern;
 
 use crate::board::{
@@ -13,10 +14,13 @@ use anyhow::{Ok, Result};
 use rand::Rng;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::f32;
 use std::time::Instant;
 
 pub const MAX: i32 = 1600;
+const F32_INVERSE_LAMBDA: f32 = 0.999;
+const F32_INVERSE_BIAS: f32 = 0.9995;
 
 pub fn negmax<F>(b: &Board, depth: u8, eval_func: &F) -> (u8, i32, i32)
 where
@@ -222,6 +226,292 @@ pub fn negalphaf(
     );
 }
 
+#[derive(Clone, Copy)]
+pub enum Fail {
+    High(f32),
+    Low(f32),
+    Ex(f32),
+}
+
+impl Fail {
+    fn inverse(&self) -> Self {
+        use Fail::*;
+        match self {
+            High(beta) => Low(F32_INVERSE_BIAS - F32_INVERSE_LAMBDA * beta),
+            Low(alpha) => High(F32_INVERSE_BIAS - F32_INVERSE_LAMBDA * alpha),
+            Ex(val) => Ex(F32_INVERSE_BIAS - F32_INVERSE_LAMBDA * val),
+        }
+    }
+
+    fn is_fail(&self) -> bool {
+        use Fail::*;
+        match self {
+            Ex(_) => false,
+            _ => true,
+        }
+    }
+
+    fn is_equal(&self, x: f32) -> bool {
+        match self {
+            Fail::Ex(val) => *val == x,
+            _ => false,
+        }
+    }
+
+    fn f32_minus(&self, x: f32) -> Self {
+        use Fail::*;
+
+        match self {
+            Ex(val) => Ex(x - val),
+            High(val) => Low(x - val),
+            Low(val) => High(x - val),
+        }
+    }
+
+    fn get_val(&self) -> f32 {
+        use Fail::*;
+
+        match self {
+            Ex(val) => *val,
+            High(val) => *val,
+            Low(val) => *val,
+        }
+    }
+
+    fn is_fail_low(&self) -> bool {
+        match self {
+            Fail::Low(_) => true,
+            _ => false,
+        }
+    }
+
+    fn is_fail_high(&self) -> bool {
+        match self {
+            Fail::High(_) => true,
+            _ => false,
+        }
+    }
+
+    fn get_exval(&self) -> Option<f32> {
+        match self {
+            Fail::Ex(x) => Some(*x),
+            _ => None,
+        }
+    }
+
+    fn to_string(&self) -> String {
+        use Fail::*;
+        match self {
+            High(x) => format!("High({x})"),
+            Low(x) => format!("Low({x})"),
+            Ex(x) => format!("Ex({x})"),
+        }
+    }
+}
+
+pub fn negalphaf_hash(
+    b: &Board,
+    depth: u8,
+    alpha: f32,
+    beta: f32,
+    hashmap: &mut HashMap<u128, Fail>,
+    e: &Box<dyn EvaluatorF>,
+) -> (u8, Fail, i32) {
+    use Fail::*;
+
+    let mut count = 0;
+    let actions = b.valid_actions();
+    let mut max_val = -2.0;
+    let mut max_actions = Vec::new();
+    let mut alpha = alpha;
+
+    if depth <= 1 {
+        for action in actions.iter() {
+            let next_board = &b.next(*action);
+            let hash = next_board.hash();
+            // let hash = b2u128(next_board);
+            let map_val = hashmap.get(&hash);
+            let val;
+            match map_val {
+                Some(&old_val) => {
+                    if old_val.is_equal(0.0) {
+                        return (*action, Ex(1.0), count);
+                    }
+                    val = 1.0 - old_val.get_val();
+                }
+                None => {
+                    if next_board.is_win() {
+                        hashmap.insert(hash, Ex(0.0));
+                        return (*action, Ex(1.0), count);
+                    } else if next_board.is_draw() {
+                        hashmap.insert(hash, Ex(0.5));
+                        return (*action, Ex(0.5), count);
+                    }
+                    let next_val = e.eval_func_f32(next_board);
+                    val = 1.0 - next_val;
+                    hashmap.insert(hash, Ex(next_val));
+                }
+            }
+            if max_val < val {
+                max_val = val;
+                max_actions = vec![*action];
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (*action, High(max_val), count);
+                    }
+                }
+            } else if max_val == val {
+                max_actions.push(*action);
+            }
+        }
+    } else {
+        let mut action_nb_vals: Vec<(u8, Board, f32, u128, Option<Fail>)> = Vec::new();
+
+        for action in actions.into_iter() {
+            let next_board = b.next(action);
+            let hash = next_board.hash();
+            // let hash = b2u128(&next_board);
+            let map_val = hashmap.get(&hash);
+
+            match map_val {
+                Some(&old_val) => {
+                    if old_val.is_equal(0.0) {
+                        return (action, Ex(1.0), count);
+                    }
+                    action_nb_vals.push((
+                        action,
+                        next_board,
+                        old_val.f32_minus(1.0).get_val(),
+                        hash,
+                        Some(old_val.inverse()),
+                    ));
+                }
+                None => {
+                    if next_board.is_win() {
+                        hashmap.insert(hash, Ex(0.0));
+                        return (action, Ex(1.0), count);
+                    } else if next_board.is_draw() {
+                        hashmap.insert(hash, Ex(0.5));
+                        return (action, Ex(0.5), count);
+                    }
+                    let val = 1.0 - e.eval_func_f32(&next_board);
+                    action_nb_vals.push((action, next_board, val, hash, None));
+                }
+            }
+        }
+
+        action_nb_vals.sort_by(|a, b| {
+            // a.2.cmp(&b.2).reverse();
+            b.2.partial_cmp(&a.2).unwrap()
+        });
+
+        for (action, next_board, old_val, hash, hit) in action_nb_vals {
+            let val;
+            // println!("[depth:{depth}], action:{action}, alpha:{alpha}, beta:{beta}",);
+            if let Some(fail_val) = hit {
+                // if depth > 2 {
+                //     println!("[{depth}]hit, {}", fail_val.to_string());
+                // }
+                match fail_val {
+                    High(x) => {
+                        if beta < x {
+                            return (action, High(x), count);
+                        } else {
+                            let new_alpha = x.max(alpha);
+                            let (_, _val, _count) = negalphaf_hash(
+                                &next_board,
+                                depth - 1,
+                                1.0 - beta,
+                                1.0 - new_alpha,
+                                hashmap,
+                                e,
+                            );
+                            count += _count;
+                            hashmap.insert(hash, _val);
+                            let _val = _val.inverse();
+                            if _val.is_fail_high() {
+                                return (action, High(beta), count);
+                            }
+                            val = _val.get_val();
+                        }
+                    }
+                    Low(x) => {
+                        if alpha > x {
+                            continue;
+                        } else {
+                            let new_beta = x.min(beta);
+                            // fial_low(alpha) or fail_ex(val) < new_beta
+                            let (_, _val, _count) = negalphaf_hash(
+                                &next_board,
+                                depth - 1,
+                                1.0 - new_beta,
+                                1.0 - alpha,
+                                hashmap,
+                                e,
+                            );
+                            hashmap.insert(hash, _val);
+                            let _val = _val.inverse();
+                            if _val.is_fail_low() {
+                                continue;
+                            }
+                            val = _val.get_val();
+                        }
+                    }
+                    Ex(x) => {
+                        val = F32_INVERSE_BIAS - F32_INVERSE_BIAS * x;
+                    }
+                }
+            } else {
+                let (_, _val, _count) =
+                    negalphaf_hash(&next_board, depth - 1, 1.0 - beta, 1.0 - alpha, hashmap, e);
+                hashmap.insert(hash, _val);
+                count += 1 + _count;
+                let _val = _val.inverse();
+                // for i in 0..(6 - depth) {
+                //     print!(" ");
+                // }
+                // println!(
+                //     "[depth:{depth}], action:{action}, val:{}, alpha:{alpha}, beta:{beta}",
+                //     _val.to_string()
+                // );
+
+                match _val {
+                    High(x) => return (action, High(x), count),
+                    Low(_) => continue,
+                    Ex(x) => {
+                        val = x;
+                    }
+                }
+            }
+            if max_val < val {
+                max_val = val;
+                max_actions = vec![action];
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (action, High(max_val), count);
+                    }
+                }
+            } else if max_val == val {
+                max_actions.push(action);
+            }
+        }
+    }
+    let mut rng = rand::thread_rng();
+    if max_actions.len() == 0 {
+        return (201, Low(alpha), count);
+    }
+
+    return (
+        max_actions[rng.gen::<usize>() % max_actions.len()],
+        Ex(max_val),
+        count,
+    );
+}
+
 pub struct NegAlpha {
     evaluator: Box<dyn Evaluator>,
     depth: u8,
@@ -255,10 +545,14 @@ impl GetAction for NegAlpha {
 }
 
 pub trait EvalAndAnalyze: EvaluatorF + Analyzer {}
+pub trait EvalAndActF {
+    fn eval_and_act(&self, b: &Board) -> (u8, f32);
+}
 
 pub struct NegAlphaF {
     evaluator: Box<dyn EvaluatorF>,
     depth: u8,
+    pub hashmap: bool,
 }
 
 impl NegAlphaF {
@@ -266,25 +560,51 @@ impl NegAlphaF {
         return NegAlphaF {
             evaluator: e,
             depth: depth,
+            hashmap: false,
         };
     }
-    pub fn eval_with_negalpha(&self, b: &Board) -> (u8, f32, i32) {
-        let actions = b.valid_actions();
 
+    pub fn eval_with_negalpha_hash(&self, b: &Board) -> (u8, f32, i32) {
+        let mut hashmap = HashMap::new();
+        let (action2, val2, count2) =
+            negalphaf_hash(b, self.depth, -2.0, 2.0, &mut hashmap, &self.evaluator);
+
+        return (action2, val2.get_exval().unwrap(), count2);
+    }
+
+    pub fn eval_with_negalpha(&self, b: &Board) -> (u8, f32, i32) {
         // for &action in actions.iter() {
         //     let next_b = b.next(action);
         //     let (_, val, _) = negalphaf(&next_b, self.depth - 1, -2.0, 2.0, &self.evaluator);
         //     let val = 1.0 - val;
         //     println!("[{}]:{}", action, val);
         // }
-        let start = Instant::now();
-        let (action, val, count) = negalphaf(b, self.depth, -2.0, 2.0, &self.evaluator);
-        let t = start.elapsed().as_nanos();
+        let (att, def) = b.get_att_def();
+        let stone = (att | def).count_ones() as usize;
         if cfg!(feature = "render") {
-            println!("action:{action}, val:{val}, count:{count}/{t}");
+            println!("att:{att}, def:{def}");
+            let start = Instant::now();
+            let (action, val, count) = negalphaf(b, self.depth, -2.0, 2.0, &self.evaluator);
+            let t = start.elapsed().as_nanos();
+            let mut hashmap = HashMap::new();
+            let start = Instant::now();
+            let (action2, val2, count2) =
+                negalphaf_hash(b, self.depth, -2.0, 2.0, &mut hashmap, &self.evaluator);
+            let t2 = start.elapsed().as_nanos();
+            println!(
+                "action:{action}-{action2}, val:{val}-{}, count:{count}/{t}-{count2}/{t2}, rate:{}%",
+                val2.get_exval().unwrap(),
+                t2 * 100 / t
+            );
+            return (action2, val2.get_exval().unwrap(), count2);
         }
 
-        return negalphaf(b, self.depth, -2.0, 2.0, &self.evaluator);
+        if self.hashmap {
+            return self.eval_with_negalpha_hash(b);
+        }
+
+        let (a, b, c) = negalphaf(b, self.depth, -2.0, 2.0, &self.evaluator);
+        return (a, b, c);
     }
 }
 
@@ -292,6 +612,13 @@ impl GetAction for NegAlphaF {
     fn get_action(&self, b: &Board) -> u8 {
         let (action, _, _) = self.eval_with_negalpha(b);
         return action;
+    }
+}
+
+impl EvalAndActF for NegAlphaF {
+    fn eval_and_act(&self, b: &Board) -> (u8, f32) {
+        let (action, val, _) = self.eval_with_negalpha(b);
+        return (action, val);
     }
 }
 
@@ -730,25 +1057,6 @@ impl NNUE {
         return (att as u128) | ((def as u128) << 64);
     }
 
-    fn b2u128_4(b: &Board) -> (u128, u128, u128, u128) {
-        let (att, def) = b.get_att_def();
-        let (a1, a2, a3) = LineEvaluator::analyze_board(att, def);
-        let (d1, d2, d3) = LineEvaluator::analyze_board(def, att);
-        let a1 = acum_or(a1);
-        let a2 = acum_or(a2);
-        let a3 = acum_or(a3);
-        let d1 = acum_or(d1);
-        let d2 = acum_or(d2);
-        let d3 = acum_or(d3);
-
-        return (
-            (att as u128) | ((def as u128) << 64),
-            (a1 as u128) | ((d1 as u128) << 64),
-            (a2 as u128) | ((d2 as u128) << 64),
-            (a3 as u128) | ((d3 as u128) << 64),
-        );
-    }
-
     pub fn set_inference(&mut self) {
         self.set_before_w1();
         for i in 0..128 {
@@ -1124,6 +1432,32 @@ pub struct LineEvaluator {
     pub w_ground_2_line: [f32; 64],
     pub w_float_1_line: [f32; 96],
     pub w_ground_1_line: [f32; 96],
+    pub w_dif_float_3_line: [f32; 64],
+    pub w_dif_ground_3_line: [f32; 64],
+    pub w_dif_float_2_line: [f32; 128],
+    pub w_dif_ground_2_line: [f32; 128],
+    pub w_dif_float_1_line: [f32; 192],
+    pub w_dif_ground_1_line: [f32; 192],
+    pub w_pos_3_line: [f32; 64],
+    pub w_pos_2_line: [f32; 64],
+    pub w_pos_1_line: [f32; 64],
+    pub w_dpos_3_line: [f32; 64],
+    pub w_dpos_2_line: [f32; 64],
+    pub w_dpos_1_line: [f32; 64],
+    pub w_bf_3_line: [f32; 64],
+    pub w_bf_2_line: [f32; 64],
+    pub w_bf_1_line: [f32; 64],
+    pub w_bg_3_line: [f32; 64],
+    pub w_bg_2_line: [f32; 64],
+    pub w_bg_1_line: [f32; 64],
+    pub w_dbf_3_line: [f32; 64],
+    pub w_dbf_2_line: [f32; 64],
+    pub w_dbf_1_line: [f32; 64],
+    pub w_dbg_3_line: [f32; 64],
+    pub w_dbg_2_line: [f32; 64],
+    pub w_dbg_1_line: [f32; 64],
+    pub w_pos: [f32; 64],
+    pub w_dpos: [f32; 64],
     pub bias: f32,
 }
 
@@ -1201,28 +1535,76 @@ impl LineEvaluator {
             w_ground_2_line: [0.0; 64],
             w_float_1_line: [0.0; 96],
             w_ground_1_line: [0.0; 96],
+            w_dif_float_3_line: [0.0; 64],
+            w_dif_ground_3_line: [0.0; 64],
+            w_dif_float_2_line: [0.0; 128],
+            w_dif_ground_2_line: [0.0; 128],
+            w_dif_float_1_line: [0.0; 192],
+            w_dif_ground_1_line: [0.0; 192],
+            w_pos_3_line: [0.0; 64],
+            w_pos_2_line: [0.0; 64],
+            w_pos_1_line: [0.0; 64],
+            w_dpos_3_line: [0.0; 64],
+            w_dpos_2_line: [0.0; 64],
+            w_dpos_1_line: [0.0; 64],
+            w_bf_3_line: [0.0; 64],
+            w_bg_3_line: [0.0; 64],
+            w_bf_2_line: [0.0; 64],
+            w_bg_2_line: [0.0; 64],
+            w_bf_1_line: [0.0; 64],
+            w_bg_1_line: [0.0; 64],
+            w_dbf_3_line: [0.0; 64],
+            w_dbg_3_line: [0.0; 64],
+            w_dbf_2_line: [0.0; 64],
+            w_dbg_2_line: [0.0; 64],
+            w_dbf_1_line: [0.0; 64],
+            w_dbg_1_line: [0.0; 64],
+            w_pos: [0.0; 64],
+            w_dpos: [0.0; 64],
             bias: 0.0,
         };
     }
-    pub fn from(
-        wf1: [f32; 96],
-        wf2: [f32; 64],
-        wf3: [f32; 32],
-        wg1: [f32; 96],
-        wg2: [f32; 64],
-        wg3: [f32; 32],
-        bias: f32,
-    ) -> Self {
-        return LineEvaluator {
-            w_float_3_line: wf3,
-            w_ground_3_line: wg3,
-            w_float_2_line: wf2,
-            w_ground_2_line: wg2,
-            w_float_1_line: wf1,
-            w_ground_1_line: wg1,
-            bias: bias,
-        };
-    }
+    // pub fn from(
+    //     wf1: [f32; 96],
+    //     wf2: [f32; 64],
+    //     wf3: [f32; 32],
+    //     wg1: [f32; 96],
+    //     wg2: [f32; 64],
+    //     wg3: [f32; 32],
+    //     wp1: [f32; 64],
+    //     wp2: [f32; 64],
+    //     wp3: [f32; 64],
+    //     wb1: [f32; 64],
+    //     wb2: [f32; 64],
+    //     wb3: [f32; 64],
+
+    //     bias: f32,
+    // ) -> Self {
+    //     return LineEvaluator {
+    //         w_float_3_line: wf3,
+    //         w_ground_3_line: wg3,
+    //         w_float_2_line: wf2,
+    //         w_ground_2_line: wg2,
+    //         w_float_1_line: wf1,
+    //         w_ground_1_line: wg1,
+    //         w_pos_1_line: wp1,
+    //         w_pos_2_line: wp2,
+    //         w_pos_3_line: wp3,
+    //         w_bf_1_line: wbf1,
+    //         w_bg_1_line: wbg1,
+    //         w_bf_2_line: wbf2,
+    //         w_bg_2_line: wbg2,
+    //         w_bf_3_line: wbf3,
+    //         w_bg_3_line: wbg3,
+    //         w_dbf_1_line: wdbf1,
+    //         w_dbg_1_line: wdbg1,
+    //         w_dbf_2_line: wdbf2,
+    //         w_dbg_2_line: wdbg2,
+    //         w_dbf_3_line: wdbf3,
+    //         w_dbg_3_line: wdbg3,
+    //         bias: bias,
+    //     };
+    // }
 
     fn _analyze_line(
         a1: u64,
@@ -1239,8 +1621,7 @@ impl LineEvaluator {
         return (
             ((b1 & b2 & b3 & a4 | b1 & b2 & a3 & b4 | b1 & a2 & b3 & b4 | a1 & b2 & b3 & b4)
                 & mask)
-                * magic
-                & b1,
+                * magic,
             ((a1 & a2 & b3 & b4
                 | a1 & b2 & a3 & b4
                 | a1 & b2 & b3 & a4
@@ -1248,15 +1629,23 @@ impl LineEvaluator {
                 | b1 & a2 & b3 & a4
                 | b1 & b2 & a3 & a4)
                 & mask)
-                * magic
-                & b1,
+                * magic,
             ((a1 & a2 & a3 & b4 | a1 & a2 & b3 & a4 | a1 & b2 & a3 & a4 | b1 & a2 & a3 & a4)
                 & mask)
-                * magic
-                & b1,
+                * magic,
         );
     }
-    pub fn analyze_board(a: u64, d: u64) -> (LineMaskBundle, LineMaskBundle, LineMaskBundle) {
+    pub fn analyze_board(
+        a: u64,
+        d: u64,
+    ) -> (
+        LineMaskBundle,
+        LineMaskBundle,
+        LineMaskBundle,
+        LineMaskBundle,
+        LineMaskBundle,
+        LineMaskBundle,
+    ) {
         let stone = a | d;
         let b = !stone;
         let (
@@ -1411,6 +1800,8 @@ impl LineEvaluator {
         );
         let (x1, x2, x3) =
             LineEvaluator::_analyze_line(a, a1, a2, a3, b, b1, b2, b3, 0x1111_1111_1111_1111, 0xf);
+        let (x1, x2, x3, px1, px2, px3) = (x1 & b, x2 & b, x3 & b, x1 & a, x2 & a, x3 & a);
+
         let (y1, y2, y3) = LineEvaluator::_analyze_line(
             a,
             a4,
@@ -1423,6 +1814,8 @@ impl LineEvaluator {
             0x000f_000f_000f_000f,
             0x1111,
         );
+        let (y1, y2, y3, py1, py2, py3) = (y1 & b, y2 & b, y3 & b, y1 & a, y2 & a, y3 & a);
+
         let (z1, z2, z3) = LineEvaluator::_analyze_line(
             a,
             a16,
@@ -1556,12 +1949,51 @@ impl LineEvaluator {
             0x0000_0002_0040_0801,
         );
 
-        let line1 =
-            x1 | y1 | z1 | xy1 | xy1_ | yz1 | yz1_ | xz1 | xz1_ | xyz11 | xyz21 | xyz31 | xyz41;
-        let line2 =
-            x2 | y2 | z2 | xy2 | xy2_ | yz2 | yz2_ | xz2 | xz2_ | xyz12 | xyz22 | xyz32 | xyz42;
-        let line3 =
-            x3 | y3 | z3 | xy3 | xy3_ | yz3 | yz3_ | xz3 | xz3_ | xyz13 | xyz23 | xyz33 | xyz43;
+        let (z1, z2, z3, pz1, pz2, pz3) = (z1 & b, z2 & b, z3 & b, z1 & a, z2 & a, z3 & a);
+        let (xy1, xy2, xy3, pxy1, pxy2, pxy3) =
+            (xy1 & b, xy2 & b, xy3 & b, xy1 & a, xy2 & a, xy3 & a);
+        let (xy1_, xy2_, xy3_, pxy1_, pxy2_, pxy3_) =
+            (xy1_ & b, xy2_ & b, xy3_ & b, xy1_ & a, xy2_ & a, xy3_ & a);
+        let (yz1, yz2, yz3, pyz1, pyz2, pyz3) =
+            (yz1 & b, yz2 & b, yz3 & b, yz1 & a, yz2 & a, yz3 & a);
+        let (yz1_, yz2_, yz3_, pyz1_, pyz2_, pyz3_) =
+            (yz1_ & b, yz2_ & b, yz3_ & b, yz1_ & a, yz2_ & a, yz3_ & a);
+        let (xz1, xz2, xz3, pxz1, pxz2, pxz3) =
+            (xz1 & b, xz2 & b, xz3 & b, xz1 & a, xz2 & a, xz3 & a);
+        let (xz1_, xz2_, xz3_, pxz1_, pxz2_, pxz3_) =
+            (xz1_ & b, xz2_ & b, xz3_ & b, xz1_ & a, xz2_ & a, xz3_ & a);
+        let (xyz11, xyz12, xyz13, pxyz11, pxyz12, pxyz13) = (
+            xyz11 & b,
+            xyz12 & b,
+            xyz13 & b,
+            xyz11 & a,
+            xyz12 & a,
+            xyz13 & a,
+        );
+        let (xyz21, xyz22, xyz23, pxyz21, pxyz22, pxyz23) = (
+            xyz21 & b,
+            xyz22 & b,
+            xyz23 & b,
+            xyz21 & a,
+            xyz22 & a,
+            xyz23 & a,
+        );
+        let (xyz31, xyz32, xyz33, pxyz31, pxyz32, pxyz33) = (
+            xyz31 & b,
+            xyz32 & b,
+            xyz33 & b,
+            xyz31 & a,
+            xyz32 & a,
+            xyz33 & a,
+        );
+        let (xyz41, xyz42, xyz43, pxyz41, pxyz42, pxyz43) = (
+            xyz41 & b,
+            xyz42 & b,
+            xyz43 & b,
+            xyz41 & a,
+            xyz42 & a,
+            xyz43 & a,
+        );
 
         return (
             (
@@ -1572,6 +2004,18 @@ impl LineEvaluator {
             ),
             (
                 x3, y3, z3, xy3, xy3_, yz3, yz3_, xz3, xz3_, xyz13, xyz23, xyz33, xyz43,
+            ),
+            (
+                px1, py1, pz1, pxy1, pxy1_, pyz1, pyz1_, pxz1, pxz1_, pxyz11, pxyz21, pxyz31,
+                pxyz41,
+            ),
+            (
+                px2, py2, pz2, pxy2, pxy2_, pyz2, pyz2_, pxz2, pxz2_, pxyz12, pxyz22, pxyz32,
+                pxyz42,
+            ),
+            (
+                px3, py3, pz3, pxy3, pxy3_, pyz3, pyz3_, pxz3, pxz3_, pxyz13, pxyz23, pxyz33,
+                pxyz43,
             ),
         );
     }
@@ -1592,10 +2036,30 @@ impl LineEvaluator {
         usize,
         usize,
         usize,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
+        u64,
     ) {
         let (att, def) = b.get_att_def();
-        let (a1, a2, a3) = LineEvaluator::analyze_board(att, def);
-        let (d1, d2, d3) = LineEvaluator::analyze_board(def, att);
+        let (a1, a2, a3, pa1, pa2, pa3) = LineEvaluator::analyze_board(att, def);
+        let (d1, d2, d3, pd1, pd2, pd3) = LineEvaluator::analyze_board(def, att);
         let stone = att | def;
         let ground = !stone & (stone << 16 | 0xffff);
         let float = !stone ^ ground;
@@ -1612,16 +2076,38 @@ impl LineEvaluator {
         let d3_float = acum_mask_bundle(apply_mask_bundle(d3, float)) as usize;
         let d3_ground = acum_mask_bundle(apply_mask_bundle(d3, ground)) as usize;
 
+        let af1_mask = acum_or(a1) & float;
+        let ag1_mask = acum_or(a1) & ground;
+        let af2_mask = acum_or(a2) & float;
+        let ag2_mask = acum_or(a2) & ground;
+        let af3_mask = acum_or(a3) & float;
+        let ag3_mask = acum_or(a3) & ground;
+        let df1_mask = acum_or(d1) & float;
+        let dg1_mask = acum_or(d1) & ground;
+        let df2_mask = acum_or(d2) & float;
+        let dg2_mask = acum_or(d2) & ground;
+        let df3_mask = acum_or(d3) & float;
+        let dg3_mask = acum_or(d3) & ground;
+
+        let pa1_mask = acum_or(pa1);
+        let pa2_mask = acum_or(pa2);
+        let pa3_mask = acum_or(pa3);
+        let pd1_mask = acum_or(pd1);
+        let pd2_mask = acum_or(pd2);
+        let pd3_mask = acum_or(pd3);
+
         return (
             a1_float, a2_float, a3_float, a1_ground, a2_ground, a3_ground, d1_float, d2_float,
-            d3_float, d1_ground, d2_ground, d3_ground,
+            d3_float, d1_ground, d2_ground, d3_ground, af1_mask, af2_mask, af3_mask, ag1_mask,
+            ag2_mask, ag3_mask, df1_mask, df2_mask, df3_mask, dg1_mask, dg2_mask, dg3_mask,
+            pa1_mask, pa2_mask, pa3_mask, pd1_mask, pd2_mask, pd3_mask, att, def,
         );
     }
 
     pub fn evaluate_board(&self, b: &Board) -> f32 {
         let (att, def) = b.get_att_def();
-        let (a1, a2, a3) = LineEvaluator::analyze_board(att, def);
-        let (d1, d2, d3) = LineEvaluator::analyze_board(def, att);
+        let (a1, a2, a3, pa1, pa2, pa3) = LineEvaluator::analyze_board(att, def);
+        let (d1, d2, d3, pd1, pd2, pd3) = LineEvaluator::analyze_board(def, att);
         let stone = att | def;
         let ground = !stone & (stone << 16 | 0xffff);
         let float = !stone ^ ground;
@@ -1638,18 +2124,100 @@ impl LineEvaluator {
         let d3_float = acum_mask_bundle(apply_mask_bundle(d3, float)) as usize;
         let d3_ground = acum_mask_bundle(apply_mask_bundle(d3, ground)) as usize;
 
-        let val = self.w_float_1_line[a1_float]
+        let af1_mask = acum_or(a1) & float;
+        let ag1_mask = acum_or(a1) & ground;
+        let af2_mask = acum_or(a2) & float;
+        let ag2_mask = acum_or(a2) & ground;
+        let af3_mask = acum_or(a3) & float;
+        let ag3_mask = acum_or(a3) & ground;
+        let df1_mask = acum_or(d1) & float;
+        let dg1_mask = acum_or(d1) & ground;
+        let df2_mask = acum_or(d2) & float;
+        let dg2_mask = acum_or(d2) & ground;
+        let df3_mask = acum_or(d3) & float;
+        let dg3_mask = acum_or(d3) & ground;
+
+        let pa1_mask = acum_or(pa1);
+        let pa2_mask = acum_or(pa2);
+        let pa3_mask = acum_or(pa3);
+        let pd1_mask = acum_or(pd1);
+        let pd2_mask = acum_or(pd2);
+        let pd3_mask = acum_or(pd3);
+
+        let mut val = 0.0;
+
+        for i in 0..64 {
+            let bit = 1 << i;
+            if af1_mask & bit != 0 {
+                val += self.w_bf_1_line[i];
+            }
+            if af2_mask & bit != 0 {
+                val += self.w_bf_2_line[i];
+            }
+            if af3_mask & bit != 0 {
+                val += self.w_bf_3_line[i];
+            }
+            if df1_mask & bit != 0 {
+                val += self.w_dbf_1_line[i];
+            }
+            if df2_mask & bit != 0 {
+                val += self.w_dbf_2_line[i];
+            }
+            if df3_mask & bit != 0 {
+                val += self.w_dbf_3_line[i];
+            }
+            if ag1_mask & bit != 0 {
+                val += self.w_bg_1_line[i];
+            }
+            if ag2_mask & bit != 0 {
+                val += self.w_bg_2_line[i];
+            }
+            if ag3_mask & bit != 0 {
+                val += self.w_bg_3_line[i];
+            }
+            if dg1_mask & bit != 0 {
+                val += self.w_dbg_1_line[i];
+            }
+            if dg2_mask & bit != 0 {
+                val += self.w_dbg_2_line[i];
+            }
+            if dg3_mask & bit != 0 {
+                val += self.w_dbg_3_line[i];
+            }
+            if pa1_mask & bit != 0 {
+                val += self.w_pos_1_line[i];
+            } else if pd1_mask & bit != 0 {
+                val += self.w_dpos_1_line[i];
+            }
+            if pa2_mask & bit != 0 {
+                val += self.w_pos_2_line[i];
+            } else if pd2_mask & bit != 0 {
+                val += self.w_dpos_2_line[i];
+            }
+            if pa3_mask & bit != 0 {
+                val += self.w_pos_3_line[i];
+            } else if pd3_mask & bit != 0 {
+                val += self.w_dpos_3_line[i];
+            }
+            if att & bit != 0 {
+                val += self.w_pos[i];
+            } else if def & bit != 0 {
+                val += self.w_dpos[i];
+            }
+        }
+
+        val += self.w_float_1_line[a1_float]
             + self.w_float_2_line[a2_float]
             + self.w_float_3_line[a3_float]
             + self.w_ground_1_line[a1_ground]
             + self.w_ground_2_line[a2_ground]
             + self.w_ground_3_line[a3_ground]
-            - (self.w_float_1_line[d1_float]
-                + self.w_float_2_line[d2_float]
-                + self.w_float_3_line[d3_float]
-                + self.w_ground_1_line[d1_ground]
-                + self.w_ground_2_line[d2_ground]
-                + self.w_ground_3_line[d3_ground])
+            + (self.w_dif_float_1_line[96 - d1_float + a1_float]
+                + self.w_dif_float_2_line[64 - d2_float + a2_float]
+                + self.w_dif_float_3_line[32 - d3_float + a3_float]
+                + self.w_dif_ground_1_line[96 + a1_ground - d1_ground]
+                + self.w_dif_ground_2_line[64 + a2_ground - d2_ground]
+                + self.w_dif_ground_3_line[32 + a3_ground - d3_ground])
             + self.bias;
         return 1.0 / (1.0 + (-val).exp());
     }
@@ -1659,36 +2227,204 @@ impl LineEvaluator {
         use std::io::{BufRead, BufReader};
         let mut line = BufReader::new(File::open(file)?).lines();
 
+        let _ = line.next();
         for i in 0..96 {
             let l = line.next().unwrap()?;
             let num: f32 = l.parse().unwrap();
             self.w_float_1_line[i] = num;
         }
+        let _ = line.next();
         for i in 0..96 {
             let l = line.next().unwrap()?;
             let num: f32 = l.parse().unwrap();
             self.w_ground_1_line[i] = num;
         }
+        let _ = line.next();
         for i in 0..64 {
             let l = line.next().unwrap()?;
             let num: f32 = l.parse().unwrap();
             self.w_float_2_line[i] = num;
         }
+        let _ = line.next();
         for i in 0..64 {
             let l = line.next().unwrap()?;
             let num: f32 = l.parse().unwrap();
             self.w_ground_2_line[i] = num;
         }
+        let _ = line.next();
         for i in 0..32 {
             let l = line.next().unwrap()?;
             let num: f32 = l.parse().unwrap();
             self.w_float_3_line[i] = num;
         }
+        let _ = line.next();
         for i in 0..32 {
             let l = line.next().unwrap()?;
             let num: f32 = l.parse().unwrap();
             self.w_ground_3_line[i] = num;
         }
+
+        let _ = line.next();
+        for i in 0..192 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dif_float_1_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..192 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dif_ground_1_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..128 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dif_float_2_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..128 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dif_ground_2_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dif_float_3_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dif_ground_3_line[i] = num;
+        }
+
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_pos_1_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_pos_2_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_pos_3_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dpos_1_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dpos_2_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dpos_3_line[i] = num;
+        }
+
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_bf_1_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_bf_2_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_bf_3_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_bg_1_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_bg_2_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_bg_3_line[i] = num;
+        }
+
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dbf_1_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dbf_2_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dbf_3_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dbg_1_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dbg_2_line[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dbg_3_line[i] = num;
+        }
+
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_pos[i] = num;
+        }
+        let _ = line.next();
+        for i in 0..64 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_dpos[i] = num;
+        }
+
         let l = line.next().unwrap()?;
         let bias = l.parse().unwrap();
         self.bias = bias;
@@ -1704,24 +2440,140 @@ impl LineEvaluator {
         };
         let mut file = File::create(file)?;
 
+        writeln!(file, "w_float_1_line");
         for i in 0..96 {
             writeln!(file, "{}", self.w_float_1_line[i]);
         }
+        writeln!(file, "w_ground_1_line");
         for i in 0..96 {
             writeln!(file, "{}", self.w_ground_1_line[i]);
         }
+        writeln!(file, "w_float_2_line");
         for i in 0..64 {
             writeln!(file, "{}", self.w_float_2_line[i]);
         }
+        writeln!(file, "w_ground_2_line");
         for i in 0..64 {
             writeln!(file, "{}", self.w_ground_2_line[i]);
         }
+        writeln!(file, "w_float_3_line");
         for i in 0..32 {
             writeln!(file, "{}", self.w_float_3_line[i]);
         }
+        writeln!(file, "w_ground_3_line");
         for i in 0..32 {
             writeln!(file, "{}", self.w_ground_3_line[i]);
         }
+
+        writeln!(file, "w_dif_float_1_line");
+        for i in 0..192 {
+            writeln!(file, "{}", self.w_dif_float_1_line[i]);
+        }
+        writeln!(file, "w_dif_ground_1_line");
+        for i in 0..192 {
+            writeln!(file, "{}", self.w_dif_ground_1_line[i]);
+        }
+        writeln!(file, "w_dif_float_2_line");
+        for i in 0..128 {
+            writeln!(file, "{}", self.w_dif_float_2_line[i]);
+        }
+        writeln!(file, "w_dif_ground_2_line");
+        for i in 0..128 {
+            writeln!(file, "{}", self.w_dif_ground_2_line[i]);
+        }
+        writeln!(file, "w_dif_float_3_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dif_float_3_line[i]);
+        }
+        writeln!(file, "w_dif_ground_3_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dif_ground_3_line[i]);
+        }
+
+        writeln!(file, "w_pos_1_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_pos_1_line[i]);
+        }
+        writeln!(file, "w_pos_2_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_pos_2_line[i]);
+        }
+        writeln!(file, "w_pos_3_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_pos_3_line[i]);
+        }
+        writeln!(file, "w_dpos_1_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dpos_1_line[i]);
+        }
+        writeln!(file, "w_dpos_2_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dpos_2_line[i]);
+        }
+        writeln!(file, "w_dpos_3_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dpos_3_line[i]);
+        }
+
+        writeln!(file, "w_bf_1_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_bf_1_line[i]);
+        }
+        writeln!(file, "w_bf_2_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_bf_2_line[i]);
+        }
+        writeln!(file, "w_bf_3_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_bf_3_line[i]);
+        }
+        writeln!(file, "w_bg_1_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_bg_1_line[i]);
+        }
+        writeln!(file, "w_bg_2_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_bg_2_line[i]);
+        }
+        writeln!(file, "w_bg_3_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_bg_3_line[i]);
+        }
+
+        writeln!(file, "w_dbf_1_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dbf_1_line[i]);
+        }
+        writeln!(file, "w_dbf_2_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dbf_2_line[i]);
+        }
+        writeln!(file, "w_dbf_3_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dbf_3_line[i]);
+        }
+        writeln!(file, "w_dbg_1_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dbg_1_line[i]);
+        }
+        writeln!(file, "w_dbg_2_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dbg_2_line[i]);
+        }
+        writeln!(file, "w_dbg_3_line");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dbg_3_line[i]);
+        }
+
+        writeln!(file, "w_pos");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_pos[i]);
+        }
+        writeln!(file, "w_dpos");
+        for i in 0..64 {
+            writeln!(file, "{}", self.w_dpos[i]);
+        }
+
         writeln!(file, "{}", self.bias);
 
         file.flush()?;
@@ -1774,24 +2626,117 @@ impl TrainableLineEvaluator {
 
 impl Trainable for TrainableLineEvaluator {
     fn update(&mut self, b: &Board, delta: f32) {
-        let (a1, a2, a3, a1_, a2_, a3_, d1, d2, d3, d1_, d2_, d3_) = self.main.get_counts(b);
+        let (
+            a1,
+            a2,
+            a3,
+            a1_,
+            a2_,
+            a3_,
+            d1,
+            d2,
+            d3,
+            d1_,
+            d2_,
+            d3_,
+            af1_mask,
+            af2_mask,
+            af3_mask,
+            ag1_mask,
+            ag2_mask,
+            ag3_mask,
+            df1_mask,
+            df2_mask,
+            df3_mask,
+            dg1_mask,
+            dg2_mask,
+            dg3_mask,
+            pa1_mask,
+            pa2_mask,
+            pa3_mask,
+            pd1_mask,
+            pd2_mask,
+            pd3_mask,
+            att,
+            def,
+        ) = self.main.get_counts(b);
         // とりあえずsgd
         let val = self.main.evaluate_board(b);
         let dv = val * (1.0 - val);
         let delta = self.lr * delta * dv;
         self.main.w_float_1_line[a1] += delta;
-        self.main.w_float_1_line[d1] -= delta;
+        self.main.w_dif_float_1_line[96 + a1 - d1] += delta;
         self.main.w_float_2_line[a2] += delta;
-        self.main.w_float_2_line[d2] -= delta;
+        self.main.w_dif_float_2_line[64 + a2 - d2] += delta;
         self.main.w_float_3_line[a3] += delta;
-        self.main.w_float_3_line[d3] -= delta;
+        self.main.w_dif_float_3_line[32 + a3 - d3] += delta;
         self.main.w_ground_1_line[a1_] += delta;
-        self.main.w_ground_1_line[d1_] -= delta;
+        self.main.w_dif_ground_1_line[96 + a1_ - d1_] += delta;
         self.main.w_ground_2_line[a2_] += delta;
-        self.main.w_ground_2_line[d2_] -= delta;
+        self.main.w_dif_ground_2_line[64 + a2_ - d2_] += delta;
         self.main.w_ground_3_line[a3_] += delta;
-        self.main.w_ground_3_line[d3_] -= delta;
+        self.main.w_dif_ground_3_line[32 + a3_ - d3_] += delta;
         self.main.bias += delta;
+
+        for i in 0..64 {
+            let bit = 1 << i;
+            if af1_mask & bit != 0 {
+                self.main.w_bf_1_line[i] += delta;
+            }
+            if af2_mask & bit != 0 {
+                self.main.w_bf_2_line[i] += delta;
+            }
+            if af3_mask & bit != 0 {
+                self.main.w_bf_3_line[i] += delta;
+            }
+            if df1_mask & bit != 0 {
+                self.main.w_dbf_1_line[i] += delta;
+            }
+            if df2_mask & bit != 0 {
+                self.main.w_dbf_2_line[i] += delta;
+            }
+            if df3_mask & bit != 0 {
+                self.main.w_dbf_3_line[i] += delta;
+            }
+            if ag1_mask & bit != 0 {
+                self.main.w_bg_1_line[i] += delta;
+            }
+            if ag2_mask & bit != 0 {
+                self.main.w_bg_2_line[i] += delta;
+            }
+            if ag3_mask & bit != 0 {
+                self.main.w_bg_3_line[i] += delta;
+            }
+            if dg1_mask & bit != 0 {
+                self.main.w_dbg_1_line[i] += delta;
+            }
+            if dg2_mask & bit != 0 {
+                self.main.w_dbg_2_line[i] += delta;
+            }
+            if dg3_mask & bit != 0 {
+                self.main.w_dbg_3_line[i] += delta;
+            }
+            if pa1_mask & bit != 0 {
+                self.main.w_pos_1_line[i] += delta;
+            } else if pd1_mask & bit != 0 {
+                self.main.w_dpos_1_line[i] += delta;
+            }
+            if pa2_mask & bit != 0 {
+                self.main.w_pos_2_line[i] += delta;
+            } else if pd2_mask & bit != 0 {
+                self.main.w_dpos_2_line[i] += delta;
+            }
+            if pa3_mask & bit != 0 {
+                self.main.w_pos_3_line[i] += delta;
+            } else if pd3_mask & bit != 0 {
+                self.main.w_dpos_3_line[i] += delta;
+            }
+            if att & bit != 0 {
+                self.main.w_pos[i] += delta;
+            } else if def & bit != 0 {
+                self.main.w_dpos[i] += delta;
+            }
+        }
     }
 
     fn get_val(&self, b: &Board) -> f32 {
@@ -1879,8 +2824,12 @@ impl GetAction for MateWrapperActor {
         use proconio::input;
         let res = mate_check_horizontal(b);
         if let Some((flag, action)) = res {
-            if flag {
-                // println!("mate")
+            if cfg!(feature = "render") {
+                if flag {
+                    println!("mate -> {action}");
+                } else {
+                    println!("not mate -> {action}");
+                }
             }
             // println!("->[{action}]");
             return action;
