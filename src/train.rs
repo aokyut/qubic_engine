@@ -9,7 +9,7 @@ use std::f32::EPSILON;
 use std::time::Duration;
 use std::{thread, time};
 
-const EPOCH: usize = 100;
+const EPOCH: usize = 10000;
 const DEPTH: u8 = 3;
 const RANDOM_MOVE: usize = 7;
 const RANDOM_MOVE_MAX: usize = 1;
@@ -17,13 +17,13 @@ const RANDOM_MOVE_WIDTH: usize = 48;
 const RANDOM_MOVE_MIN: usize = 4;
 const DATASET_SIZE: usize = 1 << 14;
 const REPLAY_DELETE: usize = 1 << 13;
-const BATCH_SIZE: usize = 1 << 4;
+const BATCH_SIZE: usize = 1 << 0;
 const BATCH_NUM: usize = 1 << 10;
 pub const LAMBDA: f32 = 0.0;
 const DECAY_ALPHA: f32 = 0.92;
 const EVAL_NUM: usize = 25;
-const LOG_LOSS_N: usize = 10000;
-const SMOOTHING: f32 = 0.999;
+const LOG_LOSS_N: usize = 100000;
+const SMOOTHING: f32 = 0.9999;
 
 #[derive(Debug, Clone)]
 pub struct Transition {
@@ -96,8 +96,24 @@ fn play_with_eval(
 
     let mut turn = 0;
     let evaluator = super::ai::CoEvaluator::best();
+
     let neg = super::ai::NegAlpha::new(Box::new(evaluator), depth as u8);
     let play_agent = super::board::Agent::Mcts(50, 500);
+
+    let mut rng = rand::thread_rng();
+    let id: usize = rng.gen::<usize>() % 4;
+
+    let evaluator = super::ai::CoEvaluator::best();
+    let actor;
+    if id == 0 {
+        actor = super::ai::NegAlpha::new(Box::new(evaluator), 3);
+    } else if id == 1 {
+        actor = super::ai::NegAlpha::new(Box::new(evaluator), 4);
+    } else if id == 2 {
+        actor = super::ai::NegAlpha::new(Box::new(evaluator), 5);
+    } else {
+        actor = super::ai::NegAlpha::new(Box::new(evaluator), 3);
+    }
 
     loop {
         // pprint_board(&b);
@@ -112,7 +128,12 @@ fn play_with_eval(
         } else {
             match model {
                 Some(evaluator) => {
-                    (action, valf) = evaluator.eval_and_act(&b);
+                    if id == 3 {
+                        (action, valf) = evaluator.eval_and_act(&b);
+                    } else {
+                        (_, valf) = evaluator.eval_and_act(&b);
+                        action = actor.get_action(&b);
+                    }
                 }
                 None => {
                     (action, val, count) = neg.eval_with_negalpha(&b);
@@ -505,9 +526,9 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
             let (e11, e12) = eval_model(&model, &test_actor1);
             let (e21, e22) = eval_model(&model, &test_actor2);
             let (e31, e32) = eval_actor(&model, &neg, EVAL_NUM, false);
-            println!("[minimax(3)]:({}, {})", e11, e12);
-            println!("[mcts(50, 500)]:({}, {})", e21, e22);
-            println!("[neg(3)]:({}, {})", e31, e32);
+            println!("[{epoch}][minimax(3)]:({}, {})", e11, e12);
+            println!("[{epoch}][mcts(50, 500)]:({}, {})", e21, e22);
+            println!("[{epoch}][neg(3)]:({}, {})", e31, e32);
         }
 
         // play_with_analyze(&model);
@@ -572,7 +593,7 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
                     losses.iter().sum::<f32>() / size as f32
                 ));
                 println!(
-                    "[step:{step}][loss]:{} \n[eval_loss]:{}",
+                    "[epoch:{epoch}][step:{step}][loss]:{} \n[eval_loss]:{}",
                     smoothing_loss.unwrap(),
                     losses.iter().sum::<f32>() / size as f32
                 );
@@ -591,6 +612,7 @@ pub fn train_model_with_db(
     load: bool,
     save: bool,
     name: String,
+    load_name: String,
     db_name: String,
     eval_db_name: String,
 ) {
@@ -601,7 +623,7 @@ pub fn train_model_with_db(
     let mut rng = thread_rng();
 
     if load {
-        model.load(name.clone());
+        model.load(load_name.clone());
     } else if save {
         model.save(name.clone());
     }
@@ -618,7 +640,7 @@ pub fn train_model_with_db(
         model.train();
         db.set_batch_num();
         // db.set_lambda(LAMBDA);
-        if true {
+        if epoch > 0 {
             let agent = NegAlphaF::new(Box::new(model.clone()), 3);
             let agent = MateWrapperActor::new(Box::new(agent));
             let (e11, e12) = eval_actor(&agent, &test_actor1, EVAL_NUM, false);
@@ -647,7 +669,7 @@ pub fn train_model_with_db(
             let val = model.get_val(b);
 
             if cfg!(feature = "slow") {
-                thread::sleep(Duration::from_millis(50));
+                thread::sleep(Duration::from_micros(200));
             }
             let (loss, delta) = bce_loss(val, t.t_val);
             match smoothing_loss {
@@ -673,7 +695,6 @@ pub fn train_model_with_db(
                 for t in eval_ts.iter() {
                     let b = &u128_to_b(t.board);
                     let val = model.get_val(b);
-                    // thread::sleep(Duration::from_millis(50));
 
                     let (loss, _) = bce_loss(val, t.t_val);
                     losses.push(loss);
@@ -688,6 +709,7 @@ pub fn train_model_with_db(
         }
 
         if save {
+            model.train();
             model.save(name.clone());
         }
     }

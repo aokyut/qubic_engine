@@ -39,12 +39,13 @@ fn main() {
     let l3 = wrapping_line_eval(l.clone(), 3);
     let l4 = wrapping_line_eval(l.clone(), 4);
     let l5 = wrapping_line_eval(l.clone(), 5);
+    l.load("wR5_gR_ir1_48_t.leval".to_string());
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 3);
-    l5_.hashmap = true;
+    l5_.hashmap = false;
     let l5_ = MateWrapperActor::new(Box::new(l5_));
-    let l6 = wrapping_line_eval(l.clone(), 6);
-    let l7 = wrapping_line_eval(l.clone(), 7);
-    let l8 = wrapping_line_eval(l.clone(), 8);
+    // let l6 = wrapping_line_eval(l.clone(), 6);
+    // let l7 = wrapping_line_eval(l.clone(), 7);
+    // let l8 = wrapping_line_eval(l.clone(), 8);
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
 
     // let att = 9361298940875284;
@@ -55,7 +56,7 @@ fn main() {
 
     make_db();
 
-    // play_actor(&l7, &m3, true);
+    // play_actor(&l5_, &l3, true);
 
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -64,7 +65,7 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    // let result = eval_actor(&l3, &m3, 100, false);
+    // let result = eval_actor(&l5_, &l3, 100, false);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
     // return;
@@ -110,6 +111,7 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
     let mut err_sq_sum: Vec<f32> = vec![0.0; 64];
     let mut search_time: Vec<u128> = vec![0; 64];
     let mut search_time_a: Vec<u128> = vec![0; 64];
+    let mut accuracy: Vec<f32> = vec![0.0; 64];
     let mut step = 0;
     let mut is_black = true;
 
@@ -126,11 +128,11 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
 
         let action;
         let start = Instant::now();
-        let (action_, val, _) = short.eval_with_negalpha_hash(&b);
+        let (action1, val, _) = short.eval_with_negalpha_hash(&b);
         let t2 = start.elapsed().as_nanos();
 
         let start = Instant::now();
-        let (action_, val_, _) = long.eval_with_negalpha(&b);
+        let (action2, val_, _) = long.eval_with_negalpha(&b);
         let t = start.elapsed().as_nanos();
 
         let stones = b.get_att_def();
@@ -140,6 +142,9 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
         err_sq_sum[idx] += (val_ - val).powi(2);
         search_time[idx] += t;
         search_time_a[idx] += t2;
+        if action1 == action2 || val == val_ {
+            accuracy[idx] += 1.0;
+        }
 
         action = Agent::Random.get_action(&b);
 
@@ -154,12 +159,13 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
                 let mean = err_sum[i] / counts[i];
                 let dev = (err_sq_sum[i] / counts[i]) - mean.powi(2);
                 println!(
-                    "[{i}] mean:{}, dev:{}, std:{}, count:{}, time:{}, rate:{}%",
+                    "[{i}] mean:{}, dev:{}, std:{}, count:{}, time:{}, accuracy:{}%, rate:{}%",
                     err_sum[i] / counts[i],
                     dev,
                     dev.sqrt(),
                     counts[i],
                     search_time[i] as f32 / counts[i],
+                    100.0 * accuracy[i] as f32 / counts[i],
                     100.0 * search_time_a[i] as f32 / search_time[i] as f32
                 );
             }
@@ -167,10 +173,11 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
             let dev: f32 =
                 (err_sq_sum.iter().sum::<f32>() / counts.iter().sum::<f32>()) - mean.powi(2);
             println!(
-                "[all] mean:{mean}, dev:{dev}, std:{}, count:{}, time:{}, rate:{}%",
+                "[all] mean:{mean}, dev:{dev}, std:{}, count:{}, time:{}, accuracy:{}%, rate:{}%",
                 dev.sqrt(),
                 counts.iter().sum::<f32>(),
                 search_time.iter().sum::<u128>() as f32 / counts.iter().sum::<f32>(),
+                100.0 * accuracy.iter().sum::<f32>() / counts.iter().sum::<f32>(),
                 100.0 * search_time_a.iter().sum::<u128>() as f32
                     / search_time.iter().sum::<u128>() as f32,
             );
@@ -199,19 +206,22 @@ fn wrapping_line_eval(l: LineEvaluator, depth: u8) -> MateWrapperActor {
 fn make_db() {
     let mut l = LineEvaluator::new();
     l.load("wR5_gR_ir1_48.leval".to_string());
-    let le = NegAlphaF::new(Box::new(l.clone()), 7);
+    let le = NegAlphaF::new(Box::new(l.clone()), 5);
 
-    create_db(Some(le), "le7_genRandom_insertRandom1_4_48", 5);
+    create_db(Some(le), "le5_genCoe345_insertRandom1_4_48", 5);
 }
 
 fn train_line_eval() {
     let mut model = LineEvaluator::new();
     let mut model = TrainableLineEvaluator::from(model, 0.001);
+    model.set_param(0b1_0_00_000000_000000_111111_000000_000000);
+
     qubic_engine::train::train_model_with_db(
         model,
-        false,
         true,
-        String::from("wR5_gR_ir1_48.leval"),
+        true,
+        String::from("wR5_gR_ir1_48_pos.leval"),
+        String::from("wR5_gR_ir1_48_pos.leval"),
         String::from("winRate_coe5_genRandom_insertRandom1_48"),
         String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     );

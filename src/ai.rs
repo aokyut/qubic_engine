@@ -328,8 +328,8 @@ pub fn negalphaf_hash(
     if depth <= 1 {
         for action in actions.iter() {
             let next_board = &b.next(*action);
-            let hash = next_board.hash();
-            // let hash = b2u128(next_board);
+            // let hash = next_board.hash();
+            let hash = b2u128(next_board);
             let map_val = hashmap.get(&hash);
             let val;
             match map_val {
@@ -371,8 +371,8 @@ pub fn negalphaf_hash(
 
         for action in actions.into_iter() {
             let next_board = b.next(action);
-            let hash = next_board.hash();
-            // let hash = b2u128(&next_board);
+            // let hash = next_board.hash();
+            let hash = b2u128(&next_board);
             let map_val = hashmap.get(&hash);
 
             match map_val {
@@ -596,7 +596,6 @@ impl NegAlphaF {
                 val2.get_exval().unwrap(),
                 t2 * 100 / t
             );
-            return (action2, val2.get_exval().unwrap(), count2);
         }
 
         if self.hashmap {
@@ -1458,6 +1457,7 @@ pub struct LineEvaluator {
     pub w_dbg_1_line: [f32; 64],
     pub w_pos: [f32; 64],
     pub w_dpos: [f32; 64],
+    pub w_trap_3_num: [f32; 13],
     pub bias: f32,
 }
 
@@ -1561,6 +1561,7 @@ impl LineEvaluator {
             w_dbg_1_line: [0.0; 64],
             w_pos: [0.0; 64],
             w_dpos: [0.0; 64],
+            w_trap_3_num: [0.0; 13],
             bias: 0.0,
         };
     }
@@ -2054,6 +2055,7 @@ impl LineEvaluator {
         u64,
         u64,
         u64,
+        usize,
         u64,
         u64,
     ) {
@@ -2088,6 +2090,8 @@ impl LineEvaluator {
         let dg2_mask = acum_or(d2) & ground;
         let df3_mask = acum_or(d3) & float;
         let dg3_mask = acum_or(d3) & ground;
+        let trap_3_num = (((acum_or(d3) | acum_or(a3)) & 0x0000_ffff_0000_0000).count_ones()
+            + (stone.count_ones() % 2)) as usize;
 
         let pa1_mask = acum_or(pa1);
         let pa2_mask = acum_or(pa2);
@@ -2100,7 +2104,7 @@ impl LineEvaluator {
             a1_float, a2_float, a3_float, a1_ground, a2_ground, a3_ground, d1_float, d2_float,
             d3_float, d1_ground, d2_ground, d3_ground, af1_mask, af2_mask, af3_mask, ag1_mask,
             ag2_mask, ag3_mask, df1_mask, df2_mask, df3_mask, dg1_mask, dg2_mask, dg3_mask,
-            pa1_mask, pa2_mask, pa3_mask, pd1_mask, pd2_mask, pd3_mask, att, def,
+            pa1_mask, pa2_mask, pa3_mask, pd1_mask, pd2_mask, pd3_mask, trap_3_num, att, def,
         );
     }
 
@@ -2143,6 +2147,9 @@ impl LineEvaluator {
         let pd1_mask = acum_or(pd1);
         let pd2_mask = acum_or(pd2);
         let pd3_mask = acum_or(pd3);
+
+        let trap_3_num = (((acum_or(d3) | acum_or(a3)) & 0x0000_ffff_0000_0000).count_ones()
+            + (stone.count_ones() % 2)) as usize;
 
         let mut val = 0.0;
 
@@ -2218,8 +2225,330 @@ impl LineEvaluator {
                 + self.w_dif_ground_1_line[96 + a1_ground - d1_ground]
                 + self.w_dif_ground_2_line[64 + a2_ground - d2_ground]
                 + self.w_dif_ground_3_line[32 + a3_ground - d3_ground])
+            + self.w_trap_3_num[trap_3_num]
             + self.bias;
         return 1.0 / (1.0 + (-val).exp());
+    }
+
+    pub fn move_average(&mut self) {
+        let base = self.w_float_1_line[0];
+        self.bias += base;
+        for i in self.w_float_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_float_2_line[0];
+        self.bias += base;
+        for i in self.w_float_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_float_3_line[0];
+        self.bias += base;
+        for i in self.w_float_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dif_float_1_line[96];
+        self.bias += base;
+        for i in self.w_dif_float_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dif_float_2_line[64];
+        self.bias += base;
+        for i in self.w_dif_float_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dif_float_3_line[32];
+        self.bias += base;
+        for i in self.w_dif_float_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+
+        let base = self.w_ground_1_line[0];
+        self.bias += base;
+        for i in self.w_ground_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_ground_2_line[0];
+        self.bias += base;
+        for i in self.w_ground_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_ground_3_line[0];
+        self.bias += base;
+        for i in self.w_ground_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dif_ground_1_line[96];
+        self.bias += base;
+        for i in self.w_dif_ground_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dif_ground_2_line[64];
+        self.bias += base;
+        for i in self.w_dif_ground_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dif_ground_3_line[32];
+        self.bias += base;
+        for i in self.w_dif_ground_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+
+        let base = self.w_pos_1_line[0];
+        self.bias += base;
+        for i in self.w_pos_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_pos_2_line[0];
+        self.bias += base;
+        for i in self.w_pos_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_pos_3_line[0];
+        self.bias += base;
+        for i in self.w_pos_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dpos_1_line[0];
+        self.bias += base;
+        for i in self.w_dpos_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dpos_2_line[0];
+        self.bias += base;
+        for i in self.w_dpos_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dpos_3_line[0];
+        self.bias += base;
+        for i in self.w_dpos_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+
+        let base = self.w_bf_1_line[0];
+        self.bias += base;
+        for i in self.w_bf_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_bf_2_line[0];
+        self.bias += base;
+        for i in self.w_bf_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_bf_3_line[0];
+        self.bias += base;
+        for i in self.w_bf_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dbf_1_line[0];
+        self.bias += base;
+        for i in self.w_dbf_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dbf_2_line[0];
+        self.bias += base;
+        for i in self.w_dbf_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dbf_3_line[0];
+        self.bias += base;
+        for i in self.w_dbf_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+
+        let base = self.w_bg_1_line[0];
+        self.bias += base;
+        for i in self.w_bg_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_bg_2_line[0];
+        self.bias += base;
+        for i in self.w_bg_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_bg_3_line[0];
+        self.bias += base;
+        for i in self.w_bg_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dbg_1_line[0];
+        self.bias += base;
+        for i in self.w_dbg_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dbg_2_line[0];
+        self.bias += base;
+        for i in self.w_dbg_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dbg_3_line[0];
+        self.bias += base;
+        for i in self.w_dbg_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+
+        let base = self.w_bf_1_line[0];
+        self.bias += base;
+        for i in self.w_bf_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_bf_2_line[0];
+        self.bias += base;
+        for i in self.w_bf_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_bf_3_line[0];
+        self.bias += base;
+        for i in self.w_bf_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_bg_1_line[0];
+        self.bias += base;
+        for i in self.w_bg_1_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_bg_2_line[0];
+        self.bias += base;
+        for i in self.w_bg_2_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_bg_3_line[0];
+        self.bias += base;
+        for i in self.w_bg_3_line.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+
+        let base = self.w_pos[0];
+        self.bias += base;
+        for i in self.w_pos.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_dpos[0];
+        self.bias += base;
+        for i in self.w_dpos.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
+        let base = self.w_trap_3_num[0];
+        self.bias += base;
+        for i in self.w_trap_3_num.iter_mut() {
+            if *i == 0.0 {
+                continue;
+            }
+            *i -= base;
+        }
     }
 
     pub fn load(&mut self, file: String) -> Result<()> {
@@ -2425,6 +2754,13 @@ impl LineEvaluator {
             self.w_dpos[i] = num;
         }
 
+        let _ = line.next();
+        for i in 0..13 {
+            let l = line.next().unwrap()?;
+            let num: f32 = l.parse().unwrap();
+            self.w_trap_3_num[i] = num;
+        }
+
         let l = line.next().unwrap()?;
         let bias = l.parse().unwrap();
         self.bias = bias;
@@ -2574,6 +2910,11 @@ impl LineEvaluator {
             writeln!(file, "{}", self.w_dpos[i]);
         }
 
+        writeln!(file, "w_trap_3_num");
+        for i in 0..13 {
+            writeln!(file, "{}", self.w_trap_3_num[i]);
+        }
+
         writeln!(file, "{}", self.bias);
 
         file.flush()?;
@@ -2597,11 +2938,135 @@ pub trait Trainable {
 }
 
 #[derive(Clone)]
+pub struct LELearningParam {
+    pub wfl1: bool,
+    pub wfl2: bool,
+    pub wfl3: bool,
+    pub wgl1: bool,
+    pub wgl2: bool,
+    pub wgl3: bool,
+    pub wdfl1: bool,
+    pub wdfl2: bool,
+    pub wdfl3: bool,
+    pub wdgl1: bool,
+    pub wdgl2: bool,
+    pub wdgl3: bool,
+    pub wpl1: bool,
+    pub wpl2: bool,
+    pub wpl3: bool,
+    pub wdpl1: bool,
+    pub wdpl2: bool,
+    pub wdpl3: bool,
+    pub wbfl1: bool,
+    pub wbfl2: bool,
+    pub wbfl3: bool,
+    pub wbgl1: bool,
+    pub wbgl2: bool,
+    pub wbgl3: bool,
+    pub wdbfl1: bool,
+    pub wdbfl2: bool,
+    pub wdbfl3: bool,
+    pub wdbgl1: bool,
+    pub wdbgl2: bool,
+    pub wdbgl3: bool,
+    pub wp: bool,
+    pub wdp: bool,
+    pub wtn3: bool,
+    pub bias: bool,
+}
+
+impl LELearningParam {
+    pub fn new() -> Self {
+        LELearningParam {
+            wfl1: true,
+            wfl2: true,
+            wfl3: true,
+            wgl1: true,
+            wgl2: true,
+            wgl3: true,
+            wdfl1: true,
+            wdfl2: true,
+            wdfl3: true,
+            wdgl1: true,
+            wdgl2: true,
+            wdgl3: true,
+            wpl1: true,
+            wpl2: true,
+            wpl3: true,
+            wdpl1: true,
+            wdpl2: true,
+            wdpl3: true,
+            wbfl1: true,
+            wbfl2: true,
+            wbfl3: true,
+            wbgl1: true,
+            wbgl2: true,
+            wbgl3: true,
+            wdbfl1: true,
+            wdbfl2: true,
+            wdbfl3: true,
+            wdbgl1: true,
+            wdbgl2: true,
+            wdbgl3: true,
+            wp: true,
+            wdp: true,
+            wtn3: true,
+            bias: true,
+        }
+    }
+    pub fn from(hash: u64) -> Self {
+        LELearningParam {
+            wfl1: (hash >> 0) & 1 == 1,
+            wfl2: (hash >> 1) & 1 == 1,
+            wfl3: (hash >> 2) & 1 == 1,
+            wgl1: (hash >> 3) & 1 == 1,
+            wgl2: (hash >> 4) & 1 == 1,
+            wgl3: (hash >> 5) & 1 == 1,
+
+            wdfl1: (hash >> 6) & 1 == 1,
+            wdfl2: (hash >> 7) & 1 == 1,
+            wdfl3: (hash >> 8) & 1 == 1,
+            wdgl1: (hash >> 9) & 1 == 1,
+            wdgl2: (hash >> 10) & 1 == 1,
+            wdgl3: (hash >> 11) & 1 == 1,
+
+            wpl1: (hash >> 12) & 1 == 1,
+            wpl2: (hash >> 13) & 1 == 1,
+            wpl3: (hash >> 14) & 1 == 1,
+            wdpl1: (hash >> 15) & 1 == 1,
+            wdpl2: (hash >> 16) & 1 == 1,
+            wdpl3: (hash >> 17) & 1 == 1,
+
+            wbfl1: (hash >> 18) & 1 == 1,
+            wbfl2: (hash >> 19) & 1 == 1,
+            wbfl3: (hash >> 20) & 1 == 1,
+            wbgl1: (hash >> 21) & 1 == 1,
+            wbgl2: (hash >> 22) & 1 == 1,
+            wbgl3: (hash >> 23) & 1 == 1,
+
+            wdbfl1: (hash >> 24) & 1 == 1,
+            wdbfl2: (hash >> 25) & 1 == 1,
+            wdbfl3: (hash >> 26) & 1 == 1,
+            wdbgl1: (hash >> 27) & 1 == 1,
+            wdbgl2: (hash >> 28) & 1 == 1,
+            wdbgl3: (hash >> 29) & 1 == 1,
+
+            wp: (hash >> 30) & 1 == 1,
+            wdp: (hash >> 31) & 1 == 1,
+
+            wtn3: (hash >> 32) & 1 == 1,
+            bias: (hash >> 33) & 1 == 1,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct TrainableLineEvaluator {
     main: LineEvaluator,
     v: LineEvaluator,
     m: LineEvaluator,
     lr: f32,
+    pub param: LELearningParam,
 }
 
 impl TrainableLineEvaluator {
@@ -2611,6 +3076,7 @@ impl TrainableLineEvaluator {
             v: LineEvaluator::new(),
             m: LineEvaluator::new(),
             lr: lr,
+            param: LELearningParam::new(),
         }
     }
 
@@ -2620,7 +3086,12 @@ impl TrainableLineEvaluator {
             v: LineEvaluator::new(),
             m: LineEvaluator::new(),
             lr: lr,
+            param: LELearningParam::new(),
         }
+    }
+
+    pub fn set_param(&mut self, hash: u64) {
+        self.param = LELearningParam::from(hash);
     }
 }
 
@@ -2657,6 +3128,7 @@ impl Trainable for TrainableLineEvaluator {
             pd1_mask,
             pd2_mask,
             pd3_mask,
+            trap_3_num,
             att,
             def,
         ) = self.main.get_counts(b);
@@ -2664,76 +3136,105 @@ impl Trainable for TrainableLineEvaluator {
         let val = self.main.evaluate_board(b);
         let dv = val * (1.0 - val);
         let delta = self.lr * delta * dv;
-        self.main.w_float_1_line[a1] += delta;
-        self.main.w_dif_float_1_line[96 + a1 - d1] += delta;
-        self.main.w_float_2_line[a2] += delta;
-        self.main.w_dif_float_2_line[64 + a2 - d2] += delta;
-        self.main.w_float_3_line[a3] += delta;
-        self.main.w_dif_float_3_line[32 + a3 - d3] += delta;
-        self.main.w_ground_1_line[a1_] += delta;
-        self.main.w_dif_ground_1_line[96 + a1_ - d1_] += delta;
-        self.main.w_ground_2_line[a2_] += delta;
-        self.main.w_dif_ground_2_line[64 + a2_ - d2_] += delta;
-        self.main.w_ground_3_line[a3_] += delta;
-        self.main.w_dif_ground_3_line[32 + a3_ - d3_] += delta;
-        self.main.bias += delta;
+        if self.param.wfl1 {
+            self.main.w_float_1_line[a1] += delta;
+        }
+        if self.param.wfl2 {
+            self.main.w_float_2_line[a2] += delta;
+        }
+        if self.param.wfl3 {
+            self.main.w_float_3_line[a3] += delta;
+        }
+        if self.param.wgl1 {
+            self.main.w_ground_1_line[a1_] += delta;
+        }
+        if self.param.wgl2 {
+            self.main.w_ground_2_line[a2_] += delta;
+        }
+        if self.param.wgl3 {
+            self.main.w_ground_3_line[a3_] += delta;
+        }
+        if self.param.wdfl1 {
+            self.main.w_dif_float_1_line[96 + a1 - d1] += delta;
+        }
+        if self.param.wdfl2 {
+            self.main.w_dif_float_2_line[64 + a2 - d2] += delta;
+        }
+        if self.param.wdfl3 {
+            self.main.w_dif_float_3_line[32 + a3 - d3] += delta;
+        }
+        if self.param.wdgl1 {
+            self.main.w_dif_ground_1_line[96 + a1_ - d1_] += delta;
+        }
+        if self.param.wdgl2 {
+            self.main.w_dif_ground_2_line[64 + a2_ - d2_] += delta;
+        }
+        if self.param.wdgl3 {
+            self.main.w_dif_ground_3_line[32 + a3_ - d3_] += delta;
+        }
+        if self.param.wtn3 {
+            self.main.w_trap_3_num[trap_3_num] += delta;
+        }
+        if self.param.bias {
+            self.main.bias += delta;
+        }
 
         for i in 0..64 {
             let bit = 1 << i;
-            if af1_mask & bit != 0 {
+            if af1_mask & bit != 0 && self.param.wbfl1 {
                 self.main.w_bf_1_line[i] += delta;
             }
-            if af2_mask & bit != 0 {
+            if af2_mask & bit != 0 && self.param.wbfl2 {
                 self.main.w_bf_2_line[i] += delta;
             }
-            if af3_mask & bit != 0 {
+            if af3_mask & bit != 0 && self.param.wbfl3 {
                 self.main.w_bf_3_line[i] += delta;
             }
-            if df1_mask & bit != 0 {
+            if df1_mask & bit != 0 && self.param.wdbfl1 {
                 self.main.w_dbf_1_line[i] += delta;
             }
-            if df2_mask & bit != 0 {
+            if df2_mask & bit != 0 && self.param.wdbfl2 {
                 self.main.w_dbf_2_line[i] += delta;
             }
-            if df3_mask & bit != 0 {
+            if df3_mask & bit != 0 && self.param.wdbfl3 {
                 self.main.w_dbf_3_line[i] += delta;
             }
-            if ag1_mask & bit != 0 {
+            if ag1_mask & bit != 0 && self.param.wbgl1 {
                 self.main.w_bg_1_line[i] += delta;
             }
-            if ag2_mask & bit != 0 {
+            if ag2_mask & bit != 0 && self.param.wbgl2 {
                 self.main.w_bg_2_line[i] += delta;
             }
-            if ag3_mask & bit != 0 {
+            if ag3_mask & bit != 0 && self.param.wbgl3 {
                 self.main.w_bg_3_line[i] += delta;
             }
-            if dg1_mask & bit != 0 {
+            if dg1_mask & bit != 0 && self.param.wdbgl1 {
                 self.main.w_dbg_1_line[i] += delta;
             }
-            if dg2_mask & bit != 0 {
+            if dg2_mask & bit != 0 && self.param.wdbgl2 {
                 self.main.w_dbg_2_line[i] += delta;
             }
-            if dg3_mask & bit != 0 {
+            if dg3_mask & bit != 0 && self.param.wdbgl3 {
                 self.main.w_dbg_3_line[i] += delta;
             }
-            if pa1_mask & bit != 0 {
+            if pa1_mask & bit != 0 && self.param.wpl1 {
                 self.main.w_pos_1_line[i] += delta;
-            } else if pd1_mask & bit != 0 {
+            } else if pd1_mask & bit != 0 && self.param.wdpl1 {
                 self.main.w_dpos_1_line[i] += delta;
             }
-            if pa2_mask & bit != 0 {
+            if pa2_mask & bit != 0 && self.param.wpl2 {
                 self.main.w_pos_2_line[i] += delta;
-            } else if pd2_mask & bit != 0 {
+            } else if pd2_mask & bit != 0 && self.param.wdpl2 {
                 self.main.w_dpos_2_line[i] += delta;
             }
-            if pa3_mask & bit != 0 {
+            if pa3_mask & bit != 0 && self.param.wpl3 {
                 self.main.w_pos_3_line[i] += delta;
-            } else if pd3_mask & bit != 0 {
+            } else if pd3_mask & bit != 0 && self.param.wdpl3 {
                 self.main.w_dpos_3_line[i] += delta;
             }
-            if att & bit != 0 {
+            if att & bit != 0 && self.param.wp {
                 self.main.w_pos[i] += delta;
-            } else if def & bit != 0 {
+            } else if def & bit != 0 && self.param.wdp {
                 self.main.w_dpos[i] += delta;
             }
         }
@@ -2751,6 +3252,7 @@ impl Trainable for TrainableLineEvaluator {
     }
     fn eval(&mut self) {}
     fn train(&mut self) {
+        self.main.move_average();
         return;
         print!("wf1:[");
         for f in self.main.w_float_1_line.iter() {
