@@ -1,9 +1,12 @@
 use proconio::input;
+use qubic_engine::ai::line::{SimplLineEvaluator, TrainableSLE};
 use qubic_engine::ai::{
     LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PositionEvaluator,
     TrainableLineEvaluator,
 };
-use qubic_engine::board::{count_2row_, get_random, mate_check_horizontal, Board, GetAction};
+use qubic_engine::board::{
+    count_2row_, get_random, mate_check_horizontal, pprint_board, pprint_u64, Board, GetAction,
+};
 use qubic_engine::db::BoardDB;
 use qubic_engine::train::{create_db, train_with_db};
 use qubic_engine::{
@@ -13,6 +16,7 @@ use qubic_engine::{
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
+use std::collections::HashSet;
 use std::ops::Neg;
 use std::os::unix::thread;
 use std::time::{Duration, Instant};
@@ -39,8 +43,7 @@ fn main() {
     let l3 = wrapping_line_eval(l.clone(), 3);
     let l4 = wrapping_line_eval(l.clone(), 4);
     let l5 = wrapping_line_eval(l.clone(), 5);
-    l.load("wR5_gR_ir1_48_t.leval".to_string());
-    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 3);
+    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     l5_.hashmap = false;
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     // let l6 = wrapping_line_eval(l.clone(), 6);
@@ -65,7 +68,7 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    // let result = eval_actor(&l5_, &l3, 100, false);
+    // let result = eval_actor(&l5_, &m5, 100, false);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
     // return;
@@ -91,14 +94,18 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
-    // train_line_eval();
+    train_line_eval();
     // mpc_for_coe(5, 5);
+    // beam_search();
 }
 
 fn mpc_for_coe(long_depth: u8, short_depth: u8) {
     let mut b = Board::new();
-    let mut l = LineEvaluator::new();
-    l.load("wR5_gR_ir1_48.leval".to_string());
+    // let mut l = LineEvaluator::new();
+    // l.load("wR5_gR_ir1_48.leval".to_string());
+    let mut l = SimplLineEvaluator::new();
+    let _ = l.load("simple.json".to_string());
+
     let long = NegAlphaF::new(Box::new(l.clone()), long_depth);
     let short = NegAlphaF::new(Box::new(l.clone()), short_depth);
 
@@ -204,24 +211,39 @@ fn wrapping_line_eval(l: LineEvaluator, depth: u8) -> MateWrapperActor {
 }
 
 fn make_db() {
-    let mut l = LineEvaluator::new();
-    l.load("wR5_gR_ir1_48.leval".to_string());
+    let mut l = SimplLineEvaluator::new();
+    l.load("simple.json".to_string());
     let le = NegAlphaF::new(Box::new(l.clone()), 5);
 
-    create_db(Some(le), "le5_genCoe345_insertRandom1_4_48", 5);
+    create_db(Some(le), "sle5_genCoe345_insertRandom1_4_48", 5);
 }
 
 fn train_line_eval() {
-    let mut model = LineEvaluator::new();
-    let mut model = TrainableLineEvaluator::from(model, 0.001);
-    model.set_param(0b1_0_00_000000_000000_111111_000000_000000);
+    // let mut model = LineEvaluator::new();
+    // let mut model = TrainableLineEvaluator::from(model, 0.001);
+    // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
+    let mut model = SimplLineEvaluator::new();
+    let _ = model.load("simple.json".to_string());
+
+    // let n = 32;
+    // for i in 0..n {
+    //     for j in 0..32 {
+    //         print!("{:>5.2},", model.wfl3[i * n + j]);
+    //         // print!("{:>5},", model.wgl3[i * n + j] != 0.0);
+    //     }
+    //     println!("");
+    // }
+    // return;
+
+    let mut model = TrainableSLE::from(model, 0.01);
+    // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
 
     qubic_engine::train::train_model_with_db(
         model,
+        false,
         true,
-        true,
-        String::from("wR5_gR_ir1_48_pos.leval"),
-        String::from("wR5_gR_ir1_48_pos.leval"),
+        String::from("simple.json"),
+        String::from("simple.json"),
         String::from("winRate_coe5_genRandom_insertRandom1_48"),
         String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     );
@@ -428,4 +450,93 @@ fn compare(a1: &Agent, a2: &Agent) -> (i32, f32, f32) {
         );
         return (0, r1, r2);
     }
+}
+
+fn get_v(b: &Board) -> u32 {
+    use qubic_engine::ai::{acum_mask_bundle, apply_mask_bundle, LineEvaluator};
+    let (a, _, _, _, _, _) = LineEvaluator::analyze_board(b.black, b.white);
+    let stone = (b.black | b.white);
+    let float = !((stone << 16) | 0xffff);
+    let float = 0xffff_ffff_ffff_0000;
+    let ground = ((stone << 16) | 0xffff) ^ stone;
+
+    let a = apply_mask_bundle(a, float);
+
+    return acum_mask_bundle(a);
+}
+
+fn beam_search() {
+    use qubic_engine::ai::{acum_mask_bundle, apply_mask_bundle, LineEvaluator};
+    let root = Board::from(9373139274136299585, 0, qubic_engine::board::Player::Black);
+    let width = 1000;
+    let mut stack = Vec::new();
+    let mut max_val = 0;
+    let mut max_board = root.clone();
+
+    stack.push((root, max_val));
+    let mut count = 0;
+    loop {
+        count += 1;
+        let mut new_stack = Vec::new();
+        let mut hashmap = HashSet::new();
+        if stack.len() == 0 {
+            break;
+        }
+
+        println!("phase: {count}");
+        for (b, n) in stack {
+            pprint_board(&b);
+            println!("val:{n}");
+            for action in 0..64 {
+                let stone = b.black | b.white;
+                if (stone >> action) & 1 == 1 {
+                    continue;
+                }
+                // let next_b = b.next(action);
+                let next_b = Board::from(
+                    b.black,
+                    b.white | (1 << action),
+                    qubic_engine::board::Player::Black,
+                );
+
+                if next_b.is_win() {
+                    continue;
+                }
+                if next_b.is_draw() {
+                    continue;
+                }
+                let hash = next_b.hash();
+                let res = hashmap.get(&hash);
+                if res.is_some() {
+                    continue;
+                }
+
+                let val = get_v(&next_b);
+                new_stack.push((next_b.clone(), val));
+                hashmap.insert(hash);
+
+                if val > max_val && next_b.white.count_ones() >= next_b.black.count_ones() - 1 {
+                    max_val = val;
+                    max_board = next_b;
+                }
+            }
+        }
+
+        println!("{}", new_stack.len());
+
+        if new_stack.len() <= width {
+            stack = new_stack;
+            continue;
+        }
+
+        new_stack.sort_by(|a, b| b.1.cmp(&a.1));
+        stack = new_stack.drain(0..width).collect();
+    }
+
+    println!("max fl1:{max_val}");
+    pprint_board(&max_board);
+    pprint_u64(max_board.black);
+    println!("black:{}", max_board.black);
+    pprint_u64(max_board.white);
+    println!("white:{}", max_board.white);
 }

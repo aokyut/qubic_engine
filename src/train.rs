@@ -624,8 +624,6 @@ pub fn train_model_with_db(
 
     if load {
         model.load(load_name.clone());
-    } else if save {
-        model.save(name.clone());
     }
 
     let mut db: BoardDB = BoardDB::new(&db_name, 0);

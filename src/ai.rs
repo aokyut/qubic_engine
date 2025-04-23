@@ -1,3 +1,4 @@
+pub mod line;
 pub mod mpc;
 pub mod pattern;
 
@@ -1477,7 +1478,7 @@ type LineMaskBundle = (
     u64,
 );
 
-fn acum_or(bundle: LineMaskBundle) -> u64 {
+pub fn acum_or(bundle: LineMaskBundle) -> u64 {
     return bundle.0
         | bundle.1
         | bundle.2
@@ -1493,7 +1494,7 @@ fn acum_or(bundle: LineMaskBundle) -> u64 {
         | bundle.12;
 }
 
-fn acum_mask_bundle(bundle: LineMaskBundle) -> u32 {
+pub fn acum_mask_bundle(bundle: LineMaskBundle) -> u32 {
     return bundle.0.count_ones()
         + bundle.1.count_ones()
         + bundle.2.count_ones()
@@ -1508,7 +1509,7 @@ fn acum_mask_bundle(bundle: LineMaskBundle) -> u32 {
         + bundle.11.count_ones()
         + bundle.12.count_ones();
 }
-fn apply_mask_bundle(bundle: LineMaskBundle, mask: u64) -> LineMaskBundle {
+pub fn apply_mask_bundle(bundle: LineMaskBundle, mask: u64) -> LineMaskBundle {
     return (
         bundle.0 & mask,
         bundle.1 & mask,
@@ -1607,7 +1608,7 @@ impl LineEvaluator {
     //     };
     // }
 
-    fn _analyze_line(
+    pub fn _analyze_line(
         a1: u64,
         a2: u64,
         a3: u64,
