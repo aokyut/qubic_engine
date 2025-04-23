@@ -310,6 +310,12 @@ impl Fail {
     }
 }
 
+fn print_blank(n: u8) {
+    for i in 0..n {
+        print!(" ");
+    }
+}
+
 pub fn negalphaf_hash(
     b: &Board,
     depth: u8,
@@ -325,6 +331,10 @@ pub fn negalphaf_hash(
     let mut max_val = -2.0;
     let mut max_actions = Vec::new();
     let mut alpha = alpha;
+
+    // pprint_board(b);
+    // print_blank(5 - depth);
+    // println!("[depth:{depth}]alpha:{alpha}, beta:{beta}");
 
     if depth <= 1 {
         for action in actions.iter() {
@@ -392,9 +402,13 @@ pub fn negalphaf_hash(
                 None => {
                     if next_board.is_win() {
                         hashmap.insert(hash, Ex(0.0));
+                        // print_blank(5 - depth);
+                        // println!("[depth:{depth}]action:{action}, win");
                         return (action, Ex(1.0), count);
                     } else if next_board.is_draw() {
                         hashmap.insert(hash, Ex(0.5));
+                        // print_blank(5 - depth);
+                        // println!("[depth:{depth}]action:{action}, draw");
                         return (action, Ex(0.5), count);
                     }
                     let val = 1.0 - e.eval_func_f32(&next_board);
@@ -461,7 +475,8 @@ pub fn negalphaf_hash(
                         }
                     }
                     Ex(x) => {
-                        val = F32_INVERSE_BIAS - F32_INVERSE_BIAS * x;
+                        // val = F32_INVERSE_BIAS - F32_INVERSE_BIAS * x;
+                        val = x;
                     }
                 }
             } else {

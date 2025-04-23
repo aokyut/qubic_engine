@@ -43,23 +43,22 @@ fn main() {
     let l3 = wrapping_line_eval(l.clone(), 3);
     let l4 = wrapping_line_eval(l.clone(), 4);
     let l5 = wrapping_line_eval(l.clone(), 5);
-    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
-    l5_.hashmap = false;
-    let l5_ = MateWrapperActor::new(Box::new(l5_));
+    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 3);
+    l5_.hashmap = true;
+    // let l5_ = MateWrapperActor::new(Box::new(l5_));
     // let l6 = wrapping_line_eval(l.clone(), 6);
     // let l7 = wrapping_line_eval(l.clone(), 7);
     // let l8 = wrapping_line_eval(l.clone(), 8);
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
-
-    // let att = 9361298940875284;
-    // let def = 4758053146183082217;
+    // let att = 2365516305922164084;
+    // let def = 299529447803809931;
     // let b = Board::from(att, def, Player::Black);
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha(&b);
 
-    make_db();
+    // make_db();
 
-    // play_actor(&l5_, &l3, true);
+    // play_actor(&l5_, &m5, true);
 
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -68,7 +67,7 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    // let result = eval_actor(&l5_, &m5, 100, false);
+    let result = eval_actor(&l5_, &l3, 100, false);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
     // return;
@@ -94,17 +93,17 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
-    train_line_eval();
+    // train_line_eval();
     // mpc_for_coe(5, 5);
     // beam_search();
 }
 
 fn mpc_for_coe(long_depth: u8, short_depth: u8) {
     let mut b = Board::new();
-    // let mut l = LineEvaluator::new();
-    // l.load("wR5_gR_ir1_48.leval".to_string());
-    let mut l = SimplLineEvaluator::new();
-    let _ = l.load("simple.json".to_string());
+    let mut l = LineEvaluator::new();
+    l.load("wR5_gR_ir1_48.leval".to_string());
+    // let mut l = SimplLineEvaluator::new();
+    // let _ = l.load("simple.json".to_string());
 
     let long = NegAlphaF::new(Box::new(l.clone()), long_depth);
     let short = NegAlphaF::new(Box::new(l.clone()), short_depth);
