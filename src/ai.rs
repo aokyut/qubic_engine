@@ -1,6 +1,10 @@
+#![feature(alloc, heap_api)]
+#![feature(ptr_internals)]
+
 pub mod line;
 pub mod mpc;
 pub mod pattern;
+pub mod zhashmap;
 
 use crate::board::{
     self, count_1row, count_2row, count_3row, get_reach_mask, mate_check_horizontal, pprint_board,
@@ -227,7 +231,7 @@ pub fn negalphaf(
     );
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Fail {
     High(f32),
     Low(f32),
@@ -485,9 +489,235 @@ pub fn negalphaf_hash(
                 hashmap.insert(hash, _val);
                 count += 1 + _count;
                 let _val = _val.inverse();
-                // for i in 0..(6 - depth) {
-                //     print!(" ");
+
+                match _val {
+                    High(x) => return (action, High(x), count),
+                    Low(_) => continue,
+                    Ex(x) => {
+                        val = x;
+                    }
+                }
+            }
+            if max_val < val {
+                max_val = val;
+                max_actions = vec![action];
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (action, High(max_val), count);
+                    }
+                }
+            } else if max_val == val {
+                max_actions.push(action);
+            }
+        }
+    }
+    let mut rng = rand::thread_rng();
+    if max_actions.len() == 0 {
+        return (201, Low(alpha), count);
+    }
+
+    return (
+        max_actions[rng.gen::<usize>() % max_actions.len()],
+        Ex(max_val),
+        count,
+    );
+}
+
+pub fn negalphaf_hash_iter(
+    b: &Board,
+    depth: u8,
+    alpha: f32,
+    beta: f32,
+    hashmap: &mut HashMap<u128, Fail>,
+    hashmap_: &mut HashMap<u128, Fail>,
+    e: &Box<dyn EvaluatorF>,
+) -> (u8, Fail, i32) {
+    use Fail::*;
+
+    let mut count = 0;
+    let actions = b.valid_actions();
+    let mut max_val = -2.0;
+    let mut max_actions = Vec::new();
+    let mut alpha = alpha;
+
+    // pprint_board(b);
+    // print_blank(5 - depth);
+    // println!("[depth:{depth}]alpha:{alpha}, beta:{beta}");
+
+    if depth <= 1 {
+        for action in actions.iter() {
+            let next_board = &b.next(*action);
+            // let hash = next_board.hash();
+            let hash = b2u128(next_board);
+            // let map_val = hashmap.get(&hash);
+            let val;
+            if next_board.is_win() {
+                hashmap_.insert(hash, Ex(0.0));
+                return (*action, Ex(1.0), count);
+            } else if next_board.is_draw() {
+                hashmap_.insert(hash, Ex(0.5));
+                return (*action, Ex(0.5), count);
+            }
+            let next_val = e.eval_func_f32(next_board);
+            val = 1.0 - next_val;
+            hashmap_.insert(hash, Ex(next_val));
+
+            if max_val < val {
+                max_val = val;
+                max_actions = vec![*action];
+                if max_val > alpha {
+                    alpha = max_val;
+                    if alpha > beta {
+                        // println!("[{depth}]->max_val:{max_val}");
+                        return (*action, High(max_val), count);
+                    }
+                }
+            } else if max_val == val {
+                max_actions.push(*action);
+            }
+        }
+    } else {
+        let mut action_nb_vals: Vec<(u8, Board, f32, u128, Option<Fail>)> = Vec::new();
+
+        for action in actions.into_iter() {
+            let next_board = b.next(action);
+            // let hash = next_board.hash();
+            let hash = b2u128(&next_board);
+            let (map_val, new_map_val) = (hashmap.get(&hash), hashmap_.get(&hash));
+
+            match (map_val, new_map_val) {
+                (_, Some(&old_val)) => {
+                    if old_val.is_equal(0.0) {
+                        return (action, Ex(1.0), count);
+                    }
+                    action_nb_vals.push((
+                        action,
+                        next_board,
+                        old_val.f32_minus(1.0).get_val(),
+                        hash,
+                        Some(old_val.inverse()),
+                    ));
+                }
+                (Some(&old_val), _) => {
+                    if next_board.is_win() {
+                        hashmap_.insert(hash, Ex(0.0));
+                        // print_blank(5 - depth);
+                        // println!("[depth:{depth}]action:{action}, win");
+                        return (action, Ex(1.0), count);
+                    } else if next_board.is_draw() {
+                        hashmap_.insert(hash, Ex(0.5));
+                        // print_blank(5 - depth);
+                        // println!("[depth:{depth}]action:{action}, draw");
+                        return (action, Ex(0.5), count);
+                    }
+                    let val = 1.0 - e.eval_func_f32(&next_board);
+                    action_nb_vals.push((
+                        action,
+                        next_board,
+                        old_val.f32_minus(1.0).get_val(),
+                        hash,
+                        None,
+                    ));
+                }
+                _ => {
+                    if next_board.is_win() {
+                        hashmap_.insert(hash, Ex(0.0));
+                        // print_blank(5 - depth);
+                        // println!("[depth:{depth}]action:{action}, win");
+                        return (action, Ex(1.0), count);
+                    } else if next_board.is_draw() {
+                        hashmap_.insert(hash, Ex(0.5));
+                        // print_blank(5 - depth);
+                        // println!("[depth:{depth}]action:{action}, draw");
+                        return (action, Ex(0.5), count);
+                    }
+                    let val = 1.0 - e.eval_func_f32(&next_board);
+                    action_nb_vals.push((action, next_board, val, hash, None));
+                }
+            }
+        }
+
+        action_nb_vals.sort_by(|a, b| {
+            // a.2.cmp(&b.2).reverse();
+            b.2.partial_cmp(&a.2).unwrap()
+        });
+
+        for (action, next_board, old_val, hash, hit) in action_nb_vals {
+            let val;
+            // println!("[depth:{depth}], action:{action}, alpha:{alpha}, beta:{beta}",);
+            if let Some(fail_val) = hit {
+                // if depth > 2 {
+                //     println!("[{depth}]hit, {}", fail_val.to_string());
                 // }
+                match fail_val {
+                    High(x) => {
+                        if beta < x {
+                            return (action, High(x), count);
+                        } else {
+                            let new_alpha = x.max(alpha);
+                            let (_, _val, _count) = negalphaf_hash_iter(
+                                &next_board,
+                                depth - 1,
+                                1.0 - beta,
+                                1.0 - new_alpha,
+                                hashmap,
+                                hashmap_,
+                                e,
+                            );
+                            count += _count;
+                            hashmap_.insert(hash, _val);
+                            let _val = _val.inverse();
+                            if _val.is_fail_high() {
+                                return (action, High(beta), count);
+                            }
+                            val = _val.get_val();
+                        }
+                    }
+                    Low(x) => {
+                        if alpha > x {
+                            continue;
+                        } else {
+                            let new_beta = x.min(beta);
+                            // fial_low(alpha) or fail_ex(val) < new_beta
+                            let (_, _val, _count) = negalphaf_hash_iter(
+                                &next_board,
+                                depth - 1,
+                                1.0 - new_beta,
+                                1.0 - alpha,
+                                hashmap,
+                                hashmap_,
+                                e,
+                            );
+                            hashmap_.insert(hash, _val);
+                            let _val = _val.inverse();
+                            if _val.is_fail_low() {
+                                continue;
+                            }
+                            val = _val.get_val();
+                        }
+                    }
+                    Ex(x) => {
+                        // val = F32_INVERSE_BIAS - F32_INVERSE_BIAS * x;
+                        val = x;
+                    }
+                }
+            } else {
+                let (_, _val, _count) = negalphaf_hash_iter(
+                    &next_board,
+                    depth - 1,
+                    1.0 - beta,
+                    1.0 - alpha,
+                    hashmap,
+                    hashmap_,
+                    e,
+                );
+                hashmap_.insert(hash, _val);
+                count += 1 + _count;
+                let _val = _val.inverse();
+
+                // print_blank(5 - depth);
                 // println!(
                 //     "[depth:{depth}], action:{action}, val:{}, alpha:{alpha}, beta:{beta}",
                 //     _val.to_string()
@@ -501,6 +731,7 @@ pub fn negalphaf_hash(
                     }
                 }
             }
+
             if max_val < val {
                 max_val = val;
                 max_actions = vec![action];
@@ -580,10 +811,28 @@ impl NegAlphaF {
         };
     }
 
-    pub fn eval_with_negalpha_hash(&self, b: &Board) -> (u8, f32, i32) {
-        let mut hashmap = HashMap::new();
-        let (action2, val2, count2) =
-            negalphaf_hash(b, self.depth, -2.0, 2.0, &mut hashmap, &self.evaluator);
+    pub fn eval_with_negalpha_(&self, b: &Board) -> (u8, f32, i32) {
+        use zhashmap::{get_hash, negalphaf_zhash, ZHashMap};
+
+        let mut hashmap = ZHashMap::new(14 as usize);
+        let bboard = b2u128(&b);
+        let bhash = get_hash(bboard);
+
+        let (action2, val2, count2) = negalphaf_zhash(
+            None,
+            b,
+            (bboard, bhash),
+            self.depth,
+            -2.0,
+            2.0,
+            &mut hashmap,
+            &self.evaluator,
+        );
+        println!(
+            "score,{}/{}",
+            zhashmap::load_factor_score(hashmap.count, hashmap.sum, hashmap.sum_square),
+            hashmap.count
+        );
 
         return (action2, val2.get_exval().unwrap(), count2);
     }
@@ -602,24 +851,25 @@ impl NegAlphaF {
             let start = Instant::now();
             let (action, val, count) = negalphaf(b, self.depth, -2.0, 2.0, &self.evaluator);
             let t = start.elapsed().as_nanos();
-            let mut hashmap = HashMap::new();
             let start = Instant::now();
-            let (action2, val2, count2) =
-                negalphaf_hash(b, self.depth, -2.0, 2.0, &mut hashmap, &self.evaluator);
+            let (action2, val2, count2) = self.eval_with_negalpha_(b);
             let t2 = start.elapsed().as_nanos();
             println!(
                 "action:{action}-{action2}, val:{val}-{}, count:{count}/{t}-{count2}/{t2}, rate:{}%",
-                val2.get_exval().unwrap(),
+                val2,
                 t2 * 100 / t
             );
         }
 
         if self.hashmap {
-            return self.eval_with_negalpha_hash(b);
+            return self.eval_with_negalpha_(b);
         }
-
-        let (a, b, c) = negalphaf(b, self.depth, -2.0, 2.0, &self.evaluator);
-        return (a, b, c);
+        let mut hashmap = HashMap::new();
+        let (a, b, c) = negalphaf_hash(b, self.depth, -2.0, 2.0, &mut hashmap, &self.evaluator);
+        if cfg!(feature = "render") {
+            println!("hashmap_size: {}", hashmap.len());
+        }
+        return (a, b.get_exval().unwrap(), c);
     }
 }
 

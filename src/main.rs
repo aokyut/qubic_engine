@@ -1,7 +1,8 @@
 use proconio::input;
 use qubic_engine::ai::line::{SimplLineEvaluator, TrainableSLE};
+use qubic_engine::ai::zhashmap::test_zhash;
 use qubic_engine::ai::{
-    LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PositionEvaluator,
+    self, LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PositionEvaluator,
     TrainableLineEvaluator,
 };
 use qubic_engine::board::{
@@ -43,22 +44,22 @@ fn main() {
     let l3 = wrapping_line_eval(l.clone(), 3);
     let l4 = wrapping_line_eval(l.clone(), 4);
     let l5 = wrapping_line_eval(l.clone(), 5);
-    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 3);
+    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 7);
     l5_.hashmap = true;
-    // let l5_ = MateWrapperActor::new(Box::new(l5_));
-    // let l6 = wrapping_line_eval(l.clone(), 6);
-    // let l7 = wrapping_line_eval(l.clone(), 7);
-    // let l8 = wrapping_line_eval(l.clone(), 8);
+    let l5_ = MateWrapperActor::new(Box::new(l5_));
+    let l6 = wrapping_line_eval(l.clone(), 6);
+    let l7 = wrapping_line_eval(l.clone(), 7);
+    let l8 = wrapping_line_eval(l.clone(), 8);
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
-    // let att = 2365516305922164084;
-    // let def = 299529447803809931;
+    // let att = 0;
+    // let def = 0;
     // let b = Board::from(att, def, Player::Black);
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha(&b);
 
     // make_db();
 
-    // play_actor(&l5_, &m5, true);
+    // play_actor(&m5, &l8, true);
 
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -67,7 +68,7 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    let result = eval_actor(&l5_, &l3, 100, false);
+    // let result = eval_actor(&l5_, &l5, 100, false);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
     // return;
@@ -94,8 +95,9 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
     // train_line_eval();
-    // mpc_for_coe(5, 5);
+    mpc_for_coe(5, 5);
     // beam_search();
+    // test_zhash();
 }
 
 fn mpc_for_coe(long_depth: u8, short_depth: u8) {
@@ -134,7 +136,7 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
 
         let action;
         let start = Instant::now();
-        let (action1, val, _) = short.eval_with_negalpha_hash(&b);
+        let (action1, val, _) = short.eval_with_negalpha_(&b);
         let t2 = start.elapsed().as_nanos();
 
         let start = Instant::now();
@@ -157,7 +159,7 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
         // let action = m3.get_action(&b);
         b = b.next(action);
         step += 1;
-        if step % 10 == 0 {
+        if step % 1 == 0 {
             for i in 0..64 {
                 if counts[i] == 0.0 {
                     continue;
