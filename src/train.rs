@@ -620,6 +620,10 @@ pub fn train_model_with_db(
     let test_actor2 = Agent::Mcts(50, 500);
     let evaluator = super::ai::CoEvaluator::best();
     let neg = super::ai::NegAlpha::new(Box::new(evaluator), 3);
+    let mut l = super::ai::LineEvaluator::new();
+    l.load("wR5_gR_ir1_48.leval".to_string());
+    let mut l3 = NegAlphaF::new(Box::new(l.clone()), 3);
+    let le = MateWrapperActor::new(Box::new(l3));
     let mut rng = thread_rng();
 
     if load {
@@ -644,9 +648,11 @@ pub fn train_model_with_db(
             let (e11, e12) = eval_actor(&agent, &test_actor1, EVAL_NUM, false);
             let (e21, e22) = eval_actor(&agent, &test_actor2, EVAL_NUM, false);
             let (e31, e32) = eval_actor(&agent, &neg, EVAL_NUM, false);
+            let (e41, e42) = eval_actor(&agent, &le, EVAL_NUM, false);
             println!("[minimax(3)]:({}, {})", e11, e12);
             println!("[mcts(50, 500)]:({}, {})", e21, e22);
             println!("[neg(3)]:({}, {})", e31, e32);
+            println!("[le(3)]:({}, {})", e41, e42);
         }
 
         let batch_num = ts.len() / BATCH_SIZE;

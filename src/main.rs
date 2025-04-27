@@ -94,8 +94,8 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
-    // train_line_eval();
-    mpc_for_coe(5, 5);
+    train_line_eval();
+    // mpc_for_coe(5, 5);
     // beam_search();
     // test_zhash();
 }
@@ -104,8 +104,8 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
     let mut b = Board::new();
     let mut l = LineEvaluator::new();
     l.load("wR5_gR_ir1_48.leval".to_string());
-    // let mut l = SimplLineEvaluator::new();
-    // let _ = l.load("simple.json".to_string());
+    let mut l = SimplLineEvaluator::new();
+    let _ = l.load("simple.json".to_string());
 
     let long = NegAlphaF::new(Box::new(l.clone()), long_depth);
     let short = NegAlphaF::new(Box::new(l.clone()), short_depth);
@@ -236,7 +236,7 @@ fn train_line_eval() {
     // }
     // return;
 
-    let mut model = TrainableSLE::from(model, 0.01);
+    let mut model = TrainableSLE::from(model, 0.001);
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
 
     qubic_engine::train::train_model_with_db(
