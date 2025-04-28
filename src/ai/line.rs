@@ -1,6 +1,9 @@
 use crate::board::Board;
 
-use super::{acum_mask_bundle, acum_or, apply_mask_bundle, EvaluatorF, LineEvaluator, Trainable};
+use super::{
+    acum_mask_bundle, acum_or, apply_mask_bundle, EvaluatorF, LineEvaluator, LineMaskBundle,
+    Trainable,
+};
 use anyhow::{Ok, Result};
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +27,324 @@ pub struct SimplLineEvaluator {
 }
 
 impl SimplLineEvaluator {
+    pub fn analyze_board(a: u64, d: u64) -> (LineMaskBundle, LineMaskBundle, LineMaskBundle) {
+        let stone = a | d;
+        let b = !stone;
+        let (
+            a1,
+            a2,
+            a3,
+            a4,
+            a5,
+            a6,
+            a8,
+            a9,
+            a10,
+            a11,
+            a12,
+            a13,
+            a15,
+            a16,
+            a17,
+            a19,
+            a20,
+            a21,
+            a22,
+            a24,
+            a26,
+            a30,
+            a32,
+            a33,
+            a34,
+            a36,
+            a38,
+            a39,
+            a40,
+            a42,
+            a45,
+            a48,
+            a51,
+            a57,
+            a60,
+            a63,
+        ) = (
+            a >> 1,
+            a >> 2,
+            a >> 3,
+            a >> 4,
+            a >> 5,
+            a >> 6,
+            a >> 8,
+            a >> 9,
+            a >> 10,
+            a >> 11,
+            a >> 12,
+            a >> 13,
+            a >> 15,
+            a >> 16,
+            a >> 17,
+            a >> 19,
+            a >> 20,
+            a >> 21,
+            a >> 22,
+            a >> 24,
+            a >> 26,
+            a >> 30,
+            a >> 32,
+            a >> 33,
+            a >> 34,
+            a >> 36,
+            a >> 38,
+            a >> 39,
+            a >> 40,
+            a >> 42,
+            a >> 45,
+            a >> 48,
+            a >> 51,
+            a >> 57,
+            a >> 60,
+            a >> 63,
+        );
+        let (
+            b1,
+            b2,
+            b3,
+            b4,
+            b5,
+            b6,
+            b8,
+            b9,
+            b10,
+            b11,
+            b12,
+            b13,
+            b15,
+            b16,
+            b17,
+            b19,
+            b20,
+            b21,
+            b22,
+            b24,
+            b26,
+            b30,
+            b32,
+            b33,
+            b34,
+            b36,
+            b38,
+            b39,
+            b40,
+            b42,
+            b45,
+            b48,
+            b51,
+            b57,
+            b60,
+            b63,
+        ) = (
+            b >> 1,
+            b >> 2,
+            b >> 3,
+            b >> 4,
+            b >> 5,
+            b >> 6,
+            b >> 8,
+            b >> 9,
+            b >> 10,
+            b >> 11,
+            b >> 12,
+            b >> 13,
+            b >> 15,
+            b >> 16,
+            b >> 17,
+            b >> 19,
+            b >> 20,
+            b >> 21,
+            b >> 22,
+            b >> 24,
+            b >> 26,
+            b >> 30,
+            b >> 32,
+            b >> 33,
+            b >> 34,
+            b >> 36,
+            b >> 38,
+            b >> 39,
+            b >> 40,
+            b >> 42,
+            b >> 45,
+            b >> 48,
+            b >> 51,
+            b >> 57,
+            b >> 60,
+            b >> 63,
+        );
+        let (x1, x2, x3) =
+            LineEvaluator::analyze_line(a, a1, a2, a3, b, b1, b2, b3, 0x1111_1111_1111_1111, 0xf);
+        let (x1, x2, x3) = (x1 & b, x2 & b, x3 & b);
+
+        let (y1, y2, y3) = LineEvaluator::analyze_line(
+            a,
+            a4,
+            a8,
+            a12,
+            b,
+            b4,
+            b8,
+            b12,
+            0x000f_000f_000f_000f,
+            0x1111,
+        );
+        let (y1, y2, y3) = (y1 & b, y2 & b, y3 & b);
+
+        let (z1, z2, z3) = LineEvaluator::analyze_line(
+            a,
+            a16,
+            a32,
+            a48,
+            b,
+            b16,
+            b32,
+            b48,
+            0xffff,
+            0x0001_0001_0001_0001,
+        );
+        let (xy1, xy2, xy3) = LineEvaluator::analyze_line(
+            a,
+            a5,
+            a10,
+            a15,
+            b,
+            b5,
+            b10,
+            b15,
+            0x0001_0001_0001_0001,
+            0x8421,
+        );
+        let (xy1_, xy2_, xy3_) =
+            LineEvaluator::analyze_line(a, a3, a6, a9, b, b3, b6, b9, 0x0008_0008_0008_0008, 0x249);
+        let (xz1, xz2, xz3) = LineEvaluator::analyze_line(
+            a,
+            a17,
+            a34,
+            a51,
+            b,
+            b17,
+            b34,
+            b51,
+            0x1111,
+            0x0008_0004_0002_0001,
+        );
+        let (xz1_, xz2_, xz3_) = LineEvaluator::analyze_line(
+            a,
+            a15,
+            a30,
+            a45,
+            b,
+            b15,
+            b30,
+            b45,
+            0x8888,
+            0x2000_4000_8001,
+        );
+        let (yz1, yz2, yz3) = LineEvaluator::analyze_line(
+            a,
+            a20,
+            a40,
+            a60,
+            b,
+            b20,
+            b40,
+            b60,
+            0x000f,
+            0x1000_0100_0010_0001,
+        );
+        let (yz1_, yz2_, yz3_) = LineEvaluator::analyze_line(
+            a,
+            a12,
+            a24,
+            a36,
+            b,
+            b12,
+            b24,
+            b36,
+            0xf000,
+            0x0000_0010_0100_1001,
+        );
+        let (xyz11, xyz12, xyz13) = LineEvaluator::analyze_line(
+            a,
+            a21,
+            a42,
+            a63,
+            b,
+            b21,
+            b42,
+            b63,
+            0x1,
+            0x8000_0400_0020_0001,
+        );
+        let (xyz21, xyz22, xyz23) = LineEvaluator::analyze_line(
+            a,
+            a19,
+            a38,
+            a57,
+            b,
+            b19,
+            b38,
+            b57,
+            0x8,
+            0x0200_0040_0008_0001,
+        );
+        let (xyz31, xyz32, xyz33) = LineEvaluator::analyze_line(
+            a,
+            a13,
+            a26,
+            a39,
+            b,
+            b13,
+            b26,
+            b39,
+            0x1000,
+            0x0000_0080_0400_2001,
+        );
+        let (xyz41, xyz42, xyz43) = LineEvaluator::analyze_line(
+            a,
+            a11,
+            a22,
+            a33,
+            b,
+            b11,
+            b22,
+            b33,
+            0x8000,
+            0x0000_0002_0040_0801,
+        );
+
+        let (z1, z2, z3) = (z1 & b, z2 & b, z3 & b);
+        let (xy1, xy2, xy3) = (xy1 & b, xy2 & b, xy3 & b);
+        let (xy1_, xy2_, xy3_) = (xy1_ & b, xy2_ & b, xy3_ & b);
+        let (yz1, yz2, yz3) = (yz1 & b, yz2 & b, yz3 & b);
+        let (yz1_, yz2_, yz3_) = (yz1_ & b, yz2_ & b, yz3_ & b);
+        let (xz1, xz2, xz3) = (xz1 & b, xz2 & b, xz3 & b);
+        let (xz1_, xz2_, xz3_) = (xz1_ & b, xz2_ & b, xz3_ & b);
+        let (xyz11, xyz12, xyz13) = (xyz11 & b, xyz12 & b, xyz13 & b);
+        let (xyz21, xyz22, xyz23) = (xyz21 & b, xyz22 & b, xyz23 & b);
+        let (xyz31, xyz32, xyz33) = (xyz31 & b, xyz32 & b, xyz33 & b);
+        let (xyz41, xyz42, xyz43) = (xyz41 & b, xyz42 & b, xyz43 & b);
+
+        return (
+            (
+                x1, y1, z1, xy1, xy1_, yz1, yz1_, xz1, xz1_, xyz11, xyz21, xyz31, xyz41,
+            ),
+            (
+                x2, y2, z2, xy2, xy2_, yz2, yz2_, xz2, xz2_, xyz12, xyz22, xyz32, xyz42,
+            ),
+            (
+                x3, y3, z3, xy3, xy3_, yz3, yz3_, xz3, xz3_, xyz13, xyz23, xyz33, xyz43,
+            ),
+        );
+    }
     pub fn new() -> Self {
         return SimplLineEvaluator {
             wfl3: vec![0.0; WFL3_WIDTH * WFL3_WIDTH],

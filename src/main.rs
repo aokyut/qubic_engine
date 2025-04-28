@@ -94,8 +94,8 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
-    train_line_eval();
-    // mpc_for_coe(5, 5);
+    // train_line_eval();
+    mpc_for_coe(1, 9);
     // beam_search();
     // test_zhash();
 }

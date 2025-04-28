@@ -1873,7 +1873,7 @@ impl LineEvaluator {
     //     };
     // }
 
-    pub fn _analyze_line(
+    pub fn analyze_line(
         a1: u64,
         a2: u64,
         a3: u64,
@@ -2066,10 +2066,10 @@ impl LineEvaluator {
             b >> 63,
         );
         let (x1, x2, x3) =
-            LineEvaluator::_analyze_line(a, a1, a2, a3, b, b1, b2, b3, 0x1111_1111_1111_1111, 0xf);
+            LineEvaluator::analyze_line(a, a1, a2, a3, b, b1, b2, b3, 0x1111_1111_1111_1111, 0xf);
         let (x1, x2, x3, px1, px2, px3) = (x1 & b, x2 & b, x3 & b, x1 & a, x2 & a, x3 & a);
 
-        let (y1, y2, y3) = LineEvaluator::_analyze_line(
+        let (y1, y2, y3) = LineEvaluator::analyze_line(
             a,
             a4,
             a8,
@@ -2083,7 +2083,7 @@ impl LineEvaluator {
         );
         let (y1, y2, y3, py1, py2, py3) = (y1 & b, y2 & b, y3 & b, y1 & a, y2 & a, y3 & a);
 
-        let (z1, z2, z3) = LineEvaluator::_analyze_line(
+        let (z1, z2, z3) = LineEvaluator::analyze_line(
             a,
             a16,
             a32,
@@ -2095,7 +2095,7 @@ impl LineEvaluator {
             0xffff,
             0x0001_0001_0001_0001,
         );
-        let (xy1, xy2, xy3) = LineEvaluator::_analyze_line(
+        let (xy1, xy2, xy3) = LineEvaluator::analyze_line(
             a,
             a5,
             a10,
@@ -2107,19 +2107,9 @@ impl LineEvaluator {
             0x0001_0001_0001_0001,
             0x8421,
         );
-        let (xy1_, xy2_, xy3_) = LineEvaluator::_analyze_line(
-            a,
-            a3,
-            a6,
-            a9,
-            b,
-            b3,
-            b6,
-            b9,
-            0x0008_0008_0008_0008,
-            0x249,
-        );
-        let (xz1, xz2, xz3) = LineEvaluator::_analyze_line(
+        let (xy1_, xy2_, xy3_) =
+            LineEvaluator::analyze_line(a, a3, a6, a9, b, b3, b6, b9, 0x0008_0008_0008_0008, 0x249);
+        let (xz1, xz2, xz3) = LineEvaluator::analyze_line(
             a,
             a17,
             a34,
@@ -2131,7 +2121,7 @@ impl LineEvaluator {
             0x1111,
             0x0008_0004_0002_0001,
         );
-        let (xz1_, xz2_, xz3_) = LineEvaluator::_analyze_line(
+        let (xz1_, xz2_, xz3_) = LineEvaluator::analyze_line(
             a,
             a15,
             a30,
@@ -2143,7 +2133,7 @@ impl LineEvaluator {
             0x8888,
             0x2000_4000_8001,
         );
-        let (yz1, yz2, yz3) = LineEvaluator::_analyze_line(
+        let (yz1, yz2, yz3) = LineEvaluator::analyze_line(
             a,
             a20,
             a40,
@@ -2155,7 +2145,7 @@ impl LineEvaluator {
             0x000f,
             0x1000_0100_0010_0001,
         );
-        let (yz1_, yz2_, yz3_) = LineEvaluator::_analyze_line(
+        let (yz1_, yz2_, yz3_) = LineEvaluator::analyze_line(
             a,
             a12,
             a24,
@@ -2167,7 +2157,7 @@ impl LineEvaluator {
             0xf000,
             0x0000_0010_0100_1001,
         );
-        let (xyz11, xyz12, xyz13) = LineEvaluator::_analyze_line(
+        let (xyz11, xyz12, xyz13) = LineEvaluator::analyze_line(
             a,
             a21,
             a42,
@@ -2179,7 +2169,7 @@ impl LineEvaluator {
             0x1,
             0x8000_0400_0020_0001,
         );
-        let (xyz21, xyz22, xyz23) = LineEvaluator::_analyze_line(
+        let (xyz21, xyz22, xyz23) = LineEvaluator::analyze_line(
             a,
             a19,
             a38,
@@ -2191,7 +2181,7 @@ impl LineEvaluator {
             0x8,
             0x0200_0040_0008_0001,
         );
-        let (xyz31, xyz32, xyz33) = LineEvaluator::_analyze_line(
+        let (xyz31, xyz32, xyz33) = LineEvaluator::analyze_line(
             a,
             a13,
             a26,
@@ -2203,7 +2193,7 @@ impl LineEvaluator {
             0x1000,
             0x0000_0080_0400_2001,
         );
-        let (xyz41, xyz42, xyz43) = LineEvaluator::_analyze_line(
+        let (xyz41, xyz42, xyz43) = LineEvaluator::analyze_line(
             a,
             a11,
             a22,
