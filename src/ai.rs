@@ -582,6 +582,8 @@ pub fn negalphaf_hash_iter(
                 Some(&(old_val, old_gen)) => {
                     if old_val.is_equal(0.0) {
                         return (*action, Ex(1.0), count);
+                    } else if next_board.is_draw() {
+                        return (*action, Ex(0.5), count);
                     }
                     val = 1.0 - old_val.get_val();
                 }
@@ -625,6 +627,8 @@ pub fn negalphaf_hash_iter(
                 Some(&(old_val, old_gen)) => {
                     if old_val.is_equal(0.0) {
                         return (action, Ex(1.0), count);
+                    } else if next_board.is_draw() {
+                        return (action, Ex(0.5), count);
                     }
                     action_nb_vals.push((
                         action,
@@ -659,7 +663,6 @@ pub fn negalphaf_hash_iter(
 
         for (action, next_board, old_val, hash, (hit, old_gen)) in action_nb_vals {
             let val;
-            // println!("[depth:{depth}], action:{action}, alpha:{alpha}, beta:{beta}",);
             if old_gen == gen {
                 if let Some(fail_val) = hit {
                     // if depth > 2 {
@@ -761,13 +764,13 @@ pub fn negalphaf_hash_iter(
                     }
                 }
             }
+
             if max_val < val {
                 max_val = val;
                 max_actions = vec![action];
                 if max_val > alpha {
                     alpha = max_val;
                     if alpha > beta {
-                        // println!("[{depth}]->max_val:{max_val}");
                         return (action, High(max_val), count);
                     }
                 }
@@ -898,10 +901,6 @@ impl NegAlphaF {
     pub fn eval_with_negalpha_(&self, b: &Board) -> (u8, f32, i32) {
         use zhashmap::{get_hash, negalphaf_zhash, ZHashMap};
         let limit = Instant::now();
-
-        let mut hashmap = ZHashMap::new(14 as usize);
-        let bboard = b2u128(&b);
-        let bhash = get_hash(bboard);
 
         let mut hashmap = HashMap::new();
 
