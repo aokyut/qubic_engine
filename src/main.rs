@@ -46,8 +46,10 @@ fn main() {
     // let l5 = wrapping_line_eval(l.clone(), 5);
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l5_.hashmap = true;
+    l5_.timelimit = 100;
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
+
     let l7_ = MateWrapperActor::new(Box::new(l7_));
     // let l6 = wrapping_line_eval(l.clone(), 6);
     // let l7 = wrapping_line_eval(l.clone(), 7);
@@ -218,7 +220,8 @@ fn make_db() {
     l.load("simple.json".to_string());
     let mut le = NegAlphaF::new(Box::new(l.clone()), 29);
     le.hashmap = true;
-    le.timelimit = 500;
+    le.min_depth = 7;
+    le.timelimit = 100;
 
     create_db(Some(le), "sle_tl500_genCoe345_insertRandom1_4_48", 5);
 }

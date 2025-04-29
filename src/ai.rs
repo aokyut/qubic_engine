@@ -881,6 +881,7 @@ pub struct NegAlphaF {
     depth: u8,
     pub hashmap: bool,
     pub timelimit: u128,
+    pub min_depth: u8,
 }
 
 impl NegAlphaF {
@@ -890,6 +891,7 @@ impl NegAlphaF {
             depth: depth,
             hashmap: false,
             timelimit: 1000,
+            min_depth: depth / 2,
         };
     }
 
@@ -912,12 +914,21 @@ impl NegAlphaF {
             (action, val, count) =
                 negalphaf_hash_iter(b, i, -2.0, 2.0, i, &mut hashmap, &self.evaluator);
             let t = start.elapsed().as_nanos();
-            if cfg!(feature = "view") {
-                assert!(
-                    val.get_exval().is_some(),
+            if val.get_exval().is_none() {
+                println!(
                     "[depth:{i}], action:{action}, count:{}, time:{t}",
                     hashmap.len()
                 );
+                let (att, def) = b.get_att_def();
+                println!("att:{att}, def:{def}");
+                pprint_board(b);
+            }
+            assert!(
+                val.get_exval().is_some(),
+                "[depth:{i}], action:{action}, count:{}, time:{t}",
+                hashmap.len()
+            );
+            if cfg!(feature = "view") {
                 let val_ = ((1.0 / val.get_exval().unwrap()) - 1.0).ln() * -400.0;
                 println!(
                     "[depth:{i}], action:{action}, val:{:#?}({}), count:{}, time:{t}",
@@ -925,6 +936,9 @@ impl NegAlphaF {
                     val_ as i32,
                     hashmap.len()
                 );
+            }
+            if self.min_depth > i {
+                continue;
             }
             if limit.elapsed().as_millis() > self.timelimit {
                 break;
