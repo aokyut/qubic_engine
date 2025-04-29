@@ -280,6 +280,26 @@ impl ZHashMap {
         }
     }
 
+    pub fn get_hash(&self, board: u128) -> usize {
+        let mut hash = 0;
+        for i in 0..128 {
+            if (board >> i) & 1 == 1 {
+                hash ^= self.zhash_list[i];
+            }
+        }
+        return hash;
+    }
+
+    pub fn get_diff_hash(&self, diff_board: u128, base_hash: usize) -> usize {
+        //! 立体四目用の専用関数
+        //! diff_board: 二つだけビットが立ったu128
+        //! base_hash: 二手前のボードのハッシュ値
+        assert!(diff_board.count_ones() == 2);
+        let left = self.zhash_list[diff_board.trailing_zeros() as usize];
+        let right = self.zhash_list[(127 - diff_board.leading_zeros()) as usize];
+        return left ^ right ^ base_hash;
+    }
+
     fn get(&mut self, hash: usize, board: u128) -> Option<Fail> {
         // hashからマスクをとってあーだこーだする
         if cfg!(feature = "render") {
@@ -508,9 +528,9 @@ pub fn negalphaf_zhash(
             let next_hash = match parent_hash_pare {
                 Some((bitboard, hash)) => {
                     // println!("bboard:{bitboard:x}, next_bboard:{next_bitboard:x}, hash:{hash:x}, next_hash:{:x}", get_diff_hash(next_bitboard ^ bitboard, hash));
-                    get_diff_hash(next_bitboard ^ bitboard, hash)
+                    hashmap.get_diff_hash(next_bitboard ^ bitboard, hash)
                 }
-                None => get_hash(next_bitboard),
+                None => hashmap.get_hash(next_bitboard),
             };
             let map_val = hashmap.get(next_hash, next_bitboard);
             let val;
@@ -518,6 +538,9 @@ pub fn negalphaf_zhash(
                 Some(old_val) => {
                     if old_val.is_equal(0.0) {
                         return (*action, Ex(1.0), count);
+                    }
+                    if next_board.is_draw() {
+                        return (*action, Ex(0.5), count);
                     }
                     val = 1.0 - old_val.get_val();
                 }
@@ -556,8 +579,8 @@ pub fn negalphaf_zhash(
             // let hash = next_board.hash();
             let next_bitboard = b2u128(&next_board);
             let next_hash = match parent_hash_pare {
-                Some((bitboard, hash)) => get_diff_hash(bitboard ^ next_bitboard, hash),
-                None => get_hash(next_bitboard),
+                Some((bitboard, hash)) => hashmap.get_diff_hash(bitboard ^ next_bitboard, hash),
+                None => hashmap.get_hash(next_bitboard),
             };
             let map_val = hashmap.get(next_hash, next_bitboard);
 
@@ -565,6 +588,8 @@ pub fn negalphaf_zhash(
                 Some(old_val) => {
                     if old_val.is_equal(0.0) {
                         return (action, Ex(1.0), count);
+                    } else if next_board.is_draw() {
+                        return (action, Ex(0.5), count);
                     }
                     action_nb_vals.push((
                         action,

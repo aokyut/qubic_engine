@@ -47,7 +47,7 @@ fn main() {
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l5_.hashmap = true;
     l5_.timelimit = 100;
-    let l5_ = MateWrapperActor::new(Box::new(l5_));
+    // let l5_ = MateWrapperActor::new(Box::new(l5_));
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
 
     let l7_ = MateWrapperActor::new(Box::new(l7_));
@@ -55,13 +55,13 @@ fn main() {
     // let l7 = wrapping_line_eval(l.clone(), 7);
     // let l8 = wrapping_line_eval(l.clone(), 8);
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
-    // let att = 0;
-    // let def = 0;
-    // let b = Board::from(att, def, Player::Black);
+    let att = 13268249354320136724;
+    let def = 4854231148105118187;
+    let b = Board::from(att, def, Player::Black);
     // pprint_board(&b);
-    // let _ = l5_.eval_with_negalpha(&b);
+    let _ = l5_.eval_with_negalpha_(&b);
 
-    make_db();
+    // make_db();
 
     // play_actor(&l5_, &m7, true);
 
@@ -100,8 +100,79 @@ fn main() {
     // );
     // train_line_eval();
     // mpc_for_coe(7, 7);
+    profile();
     // beam_search();
     // test_zhash();
+}
+
+fn profile() {
+    let mut b = Board::new();
+    let mut l = SimplLineEvaluator::new();
+    let _ = l.load("simple.json".to_string());
+
+    let mut long = NegAlphaF::new(Box::new(l.clone()), 29);
+    long.timelimit = 500;
+    long.min_depth = 7;
+
+    let mut counts: Vec<f32> = vec![0.0; 64];
+    let mut search_time: Vec<u128> = vec![0; 64];
+    let mut step = 0;
+    let mut is_black = true;
+
+    loop {
+        let res = mate_check_horizontal(&b);
+        if b.is_win() || b.is_draw() {
+            b = Board::new();
+            is_black = is_black ^ true;
+        }
+        if let Some((flag, action)) = res {
+            b = Board::new();
+            is_black = is_black ^ true;
+        }
+
+        let action;
+
+        let start = Instant::now();
+        let (action2, val_, _) = long.eval_with_negalpha_(&b);
+        let t = start.elapsed().as_nanos();
+
+        let stones = b.get_att_def();
+        let idx = (stones.0.count_ones() + stones.1.count_ones()) as usize;
+        counts[idx] += 1.0;
+        search_time[idx] += t;
+
+        action = Agent::Random.get_action(&b);
+
+        // let action = m3.get_action(&b);
+        b = b.next(action);
+        step += 1;
+        if step % 1 == 0 {
+            for i in 0..64 {
+                if counts[i] == 0.0 {
+                    continue;
+                }
+                println!(
+                    "[{i}] count:{}, time:{}%",
+                    counts[i],
+                    search_time[i] as f32 / counts[i],
+                );
+            }
+            println!(
+                "[all] count:{}, time:{}%",
+                counts.iter().sum::<f32>(),
+                search_time.iter().sum::<u128>() as f32 / counts.iter().sum::<f32>(),
+            );
+            let num = counts[17..].iter().sum::<f32>();
+            if num == 0.0 {
+                continue;
+            }
+            println!(
+                "[16:] count:{}, time:{}",
+                num,
+                search_time[17..].iter().sum::<u128>() as f32 / num
+            )
+        }
+    }
 }
 
 fn mpc_for_coe(long_depth: u8, short_depth: u8) {
@@ -140,7 +211,7 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
 
         let action;
         let start = Instant::now();
-        let (action1, val, _) = short.eval_with_negalpha_(&b);
+        let (action1, val, _) = short.eval_with_negalpha_zhash(&b);
         let t2 = start.elapsed().as_nanos();
 
         let start = Instant::now();

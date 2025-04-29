@@ -898,8 +898,27 @@ impl NegAlphaF {
         };
     }
 
-    pub fn eval_with_negalpha_(&self, b: &Board) -> (u8, f32, i32) {
+    pub fn eval_with_negalpha_zhash(&self, b: &Board) -> (u8, f32, i32) {
         use zhashmap::{get_hash, negalphaf_zhash, ZHashMap};
+        let mut hashmap = ZHashMap::new(12);
+        let bboard = b2u128(b);
+        let bhash = hashmap.get_hash(b2u128(b));
+
+        let (action, val, count) = negalphaf_zhash(
+            None,
+            b,
+            (bboard, bhash),
+            self.depth,
+            -2.0,
+            2.0,
+            &mut hashmap,
+            &self.evaluator,
+        );
+
+        return (action, val.get_exval().unwrap(), count);
+    }
+
+    pub fn eval_with_negalpha_(&self, b: &Board) -> (u8, f32, i32) {
         let limit = Instant::now();
 
         let mut hashmap = HashMap::new();
