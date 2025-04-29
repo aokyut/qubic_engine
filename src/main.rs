@@ -39,17 +39,19 @@ fn main() {
     let m2 = Agent::Struct(String::from("m2"), Box::new(m2));
     let m3 = Agent::Struct(String::from("m3"), Box::new(m3));
     let m5 = Agent::Struct(String::from("m5"), Box::new(m5));
-    let mut l = LineEvaluator::new();
-    l.load("wR5_gR_ir1_48.leval".to_string());
-    let l3 = wrapping_line_eval(l.clone(), 3);
-    let l4 = wrapping_line_eval(l.clone(), 4);
-    let l5 = wrapping_line_eval(l.clone(), 5);
-    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 7);
+    let mut l = SimplLineEvaluator::new();
+    l.load("simple.json".to_string());
+    // let l3 = wrapping_line_eval(l.clone(), 3);
+    // let l4 = wrapping_line_eval(l.clone(), 4);
+    // let l5 = wrapping_line_eval(l.clone(), 5);
+    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l5_.hashmap = true;
     let l5_ = MateWrapperActor::new(Box::new(l5_));
-    let l6 = wrapping_line_eval(l.clone(), 6);
-    let l7 = wrapping_line_eval(l.clone(), 7);
-    let l8 = wrapping_line_eval(l.clone(), 8);
+    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
+    let l7_ = MateWrapperActor::new(Box::new(l7_));
+    // let l6 = wrapping_line_eval(l.clone(), 6);
+    // let l7 = wrapping_line_eval(l.clone(), 7);
+    // let l8 = wrapping_line_eval(l.clone(), 8);
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
     // let att = 0;
     // let def = 0;
@@ -57,9 +59,9 @@ fn main() {
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha(&b);
 
-    // make_db();
+    make_db();
 
-    // play_actor(&m5, &l8, true);
+    // play_actor(&l5_, &m7, true);
 
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -68,7 +70,7 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    // let result = eval_actor(&l5_, &l5, 100, false);
+    // let result = eval_actor(&l5_, &m7, 100, false);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
     // return;
@@ -95,7 +97,7 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
     // train_line_eval();
-    mpc_for_coe(1, 9);
+    // mpc_for_coe(7, 7);
     // beam_search();
     // test_zhash();
 }
@@ -214,9 +216,11 @@ fn wrapping_line_eval(l: LineEvaluator, depth: u8) -> MateWrapperActor {
 fn make_db() {
     let mut l = SimplLineEvaluator::new();
     l.load("simple.json".to_string());
-    let le = NegAlphaF::new(Box::new(l.clone()), 5);
+    let mut le = NegAlphaF::new(Box::new(l.clone()), 29);
+    le.hashmap = true;
+    le.timelimit = 500;
 
-    create_db(Some(le), "sle5_genCoe345_insertRandom1_4_48", 5);
+    create_db(Some(le), "sle_tl500_genCoe345_insertRandom1_4_48", 5);
 }
 
 fn train_line_eval() {

@@ -101,18 +101,30 @@ fn play_with_eval(
     let play_agent = super::board::Agent::Mcts(50, 500);
 
     let mut rng = rand::thread_rng();
-    let id: usize = rng.gen::<usize>() % 4;
+    let b_id: usize = rng.gen::<usize>() % 4;
+    let w_id: usize = rng.gen::<usize>() % 4;
 
     let evaluator = super::ai::CoEvaluator::best();
-    let actor;
-    if id == 0 {
-        actor = super::ai::NegAlpha::new(Box::new(evaluator), 3);
-    } else if id == 1 {
-        actor = super::ai::NegAlpha::new(Box::new(evaluator), 4);
-    } else if id == 2 {
-        actor = super::ai::NegAlpha::new(Box::new(evaluator), 5);
+    let b_actor;
+    let w_actor;
+    if b_id == 0 {
+        b_actor = super::ai::NegAlpha::new(Box::new(evaluator), 3);
+    } else if b_id == 1 {
+        b_actor = super::ai::NegAlpha::new(Box::new(evaluator), 4);
+    } else if b_id == 2 {
+        b_actor = super::ai::NegAlpha::new(Box::new(evaluator), 5);
     } else {
-        actor = super::ai::NegAlpha::new(Box::new(evaluator), 3);
+        b_actor = super::ai::NegAlpha::new(Box::new(evaluator), 3);
+    }
+    let evaluator = super::ai::CoEvaluator::best();
+    if w_id == 0 {
+        w_actor = super::ai::NegAlpha::new(Box::new(evaluator), 3);
+    } else if w_id == 1 {
+        w_actor = super::ai::NegAlpha::new(Box::new(evaluator), 4);
+    } else if w_id == 2 {
+        w_actor = super::ai::NegAlpha::new(Box::new(evaluator), 5);
+    } else {
+        w_actor = super::ai::NegAlpha::new(Box::new(evaluator), 3);
     }
 
     loop {
@@ -128,11 +140,15 @@ fn play_with_eval(
         } else {
             match model {
                 Some(evaluator) => {
-                    if id == 3 {
+                    if b_id == 3 && b.is_black() || w_id == 3 && !b.is_black() {
                         (action, valf) = evaluator.eval_and_act(&b);
                     } else {
                         (_, valf) = evaluator.eval_and_act(&b);
-                        action = actor.get_action(&b);
+                        if b.is_black() {
+                            action = b_actor.get_action(&b);
+                        } else {
+                            action = w_actor.get_action(&b);
+                        }
                     }
                 }
                 None => {

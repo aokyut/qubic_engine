@@ -272,54 +272,124 @@ impl SimplLineEvaluator {
             0xf000,
             0x0000_0010_0100_1001,
         );
-        let (xyz11, xyz12, xyz13) = LineEvaluator::analyze_line(
-            a,
-            a21,
-            a42,
-            a63,
-            b,
-            b21,
-            b42,
-            b63,
-            0x1,
-            0x8000_0400_0020_0001,
-        );
-        let (xyz21, xyz22, xyz23) = LineEvaluator::analyze_line(
-            a,
-            a19,
-            a38,
-            a57,
-            b,
-            b19,
-            b38,
-            b57,
-            0x8,
-            0x0200_0040_0008_0001,
-        );
-        let (xyz31, xyz32, xyz33) = LineEvaluator::analyze_line(
-            a,
-            a13,
-            a26,
-            a39,
-            b,
-            b13,
-            b26,
-            b39,
-            0x1000,
-            0x0000_0080_0400_2001,
-        );
-        let (xyz41, xyz42, xyz43) = LineEvaluator::analyze_line(
-            a,
-            a11,
-            a22,
-            a33,
-            b,
-            b11,
-            b22,
-            b33,
-            0x8000,
-            0x0000_0002_0040_0801,
-        );
+
+        let xyz1d = 0x8000_0400_0020_0001 & d;
+        let (xyz11, xyz12, xyz13) = if xyz1d == 0 {
+            let xyz1_count = (0x8000_0400_0020_0001 & a).count_ones();
+            if xyz1_count > 1 {
+                if xyz1_count == 3 {
+                    (0, 0, 0x8000_0400_0020_0001 & b)
+                } else {
+                    (0, 0x8000_0400_0020_0001 & b, 0)
+                }
+            } else if xyz1_count == 1 {
+                (0x8000_0400_0020_0001 & b, 0, 0)
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        };
+        let xyz2d = 0x1000_0200_0040_0008 & d;
+        let (xyz21, xyz22, xyz23) = if xyz2d == 0 {
+            let xyz2_count = (0x1000_0200_0040_0008 & a).count_ones();
+            if xyz2_count > 1 {
+                if xyz2_count == 3 {
+                    (0, 0, 0x1000_0200_0040_0008 & b)
+                } else {
+                    (0, 0x1000_0200_0040_0008 & b, 0)
+                }
+            } else if xyz2_count == 1 {
+                (0x1000_0200_0040_0008 & b, 0, 0)
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        };
+        let xyz3d = 0x0008_0040_0200_1000 & d;
+        let (xyz31, xyz32, xyz33) = if xyz3d == 0 {
+            let xyz3_count = (0x0008_0040_0200_1000 & a).count_ones();
+            if xyz3_count > 1 {
+                if xyz3_count == 3 {
+                    (0, 0, 0x0008_0040_0200_1000 & b)
+                } else {
+                    (0, 0x0008_0040_0200_1000 & b, 0)
+                }
+            } else if xyz3_count == 1 {
+                (0x0008_0040_0200_1000 & b, 0, 0)
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        };
+        let xyz4d = 0x0001_0020_0400_8000 & d;
+        let (xyz41, xyz42, xyz43) = if xyz4d == 0 {
+            let xyz4_count = (0x0001_0020_0400_8000 & a).count_ones();
+            if xyz4_count > 1 {
+                if xyz4_count == 3 {
+                    (0, 0, 0x0001_0020_0400_8000 & b)
+                } else {
+                    (0, 0x0001_0020_0400_8000 & b, 0)
+                }
+            } else if xyz4_count == 1 {
+                (0x0001_0020_0400_8000 & b, 0, 0)
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        };
+
+        // let (xyz11_, xyz12_, xyz13_) = LineEvaluator::analyze_line(
+        //     a,
+        //     a21,
+        //     a42,
+        //     a63,
+        //     b,
+        //     b21,
+        //     b42,
+        //     b63,
+        //     0x1,
+        //     0x8000_0400_0020_0001,
+        // );
+        // let (xyz21_, xyz22_, xyz23_) = LineEvaluator::analyze_line(
+        //     a,
+        //     a19,
+        //     a38,
+        //     a57,
+        //     b,
+        //     b19,
+        //     b38,
+        //     b57,
+        //     0x8,
+        //     0x0200_0040_0008_0001,
+        // );
+        // let (xyz31_, xyz32_, xyz33_) = LineEvaluator::analyze_line(
+        //     a,
+        //     a13,
+        //     a26,
+        //     a39,
+        //     b,
+        //     b13,
+        //     b26,
+        //     b39,
+        //     0x1000,
+        //     0x0000_0080_0400_2001,
+        // );
+        // let (xyz41_, xyz42_, xyz43_) = LineEvaluator::analyze_line(
+        //     a,
+        //     a11,
+        //     a22,
+        //     a33,
+        //     b,
+        //     b11,
+        //     b22,
+        //     b33,
+        //     0x8000,
+        //     0x0000_0002_0040_0801,
+        // );
 
         let (z1, z2, z3) = (z1 & b, z2 & b, z3 & b);
         let (xy1, xy2, xy3) = (xy1 & b, xy2 & b, xy3 & b);
