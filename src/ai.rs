@@ -4,6 +4,7 @@
 pub mod line;
 pub mod mpc;
 pub mod pattern;
+pub mod timeout;
 pub mod zhashmap;
 
 use crate::board::{
@@ -24,10 +25,11 @@ use std::arch::x86_64::{
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::f32;
 use std::ptr::NonNull;
-use std::sync::Mutex;
+use std::sync::mpsc::RecvTimeoutError;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use std::{f32, thread};
 
 pub const MAX: i32 = 1600;
 const F32_INVERSE_LAMBDA: f32 = 0.999;
@@ -558,6 +560,7 @@ pub fn negalphaf_hash_iter(
     gen: u8,
     hashmap: &mut HashMap<u128, (Fail, u8)>,
     e: &Box<dyn EvaluatorF>,
+    top: bool,
 ) -> (u8, Fail, i32) {
     use Fail::*;
 
@@ -682,6 +685,7 @@ pub fn negalphaf_hash_iter(
                                     gen,
                                     hashmap,
                                     e,
+                                    false,
                                 );
                                 count += _count;
                                 hashmap.insert(hash, (_val, gen));
@@ -694,6 +698,11 @@ pub fn negalphaf_hash_iter(
                         }
                         Low(x) => {
                             if alpha > x {
+                                if cfg!(feature = "view") {
+                                    if top {
+                                        println!("action:{action}, val:Low({x})")
+                                    }
+                                }
                                 continue;
                             } else {
                                 let new_beta = x.min(beta);
@@ -706,6 +715,7 @@ pub fn negalphaf_hash_iter(
                                     gen,
                                     hashmap,
                                     e,
+                                    false,
                                 );
                                 hashmap.insert(hash, (_val, gen));
                                 let _val = _val.inverse();
@@ -729,6 +739,7 @@ pub fn negalphaf_hash_iter(
                         gen,
                         hashmap,
                         e,
+                        false,
                     );
                     hashmap.insert(hash, (_val, gen));
                     count += 1 + _count;
@@ -736,7 +747,14 @@ pub fn negalphaf_hash_iter(
 
                     match _val {
                         High(x) => return (action, High(x), count),
-                        Low(_) => continue,
+                        Low(x) => {
+                            if cfg!(feature = "view") {
+                                if top {
+                                    println!("action:{action}, val:Low({x})")
+                                }
+                            }
+                            continue;
+                        }
                         Ex(x) => {
                             val = x;
                         }
@@ -751,6 +769,7 @@ pub fn negalphaf_hash_iter(
                     gen,
                     hashmap,
                     e,
+                    false,
                 );
                 hashmap.insert(hash, (_val, gen));
                 count += 1 + _count;
@@ -758,10 +777,23 @@ pub fn negalphaf_hash_iter(
 
                 match _val {
                     High(x) => return (action, High(x), count),
-                    Low(_) => continue,
+                    Low(x) => {
+                        if cfg!(feature = "view") {
+                            if top {
+                                println!("action:{action}, val:Low({x})")
+                            }
+                        }
+                        continue;
+                    }
                     Ex(x) => {
                         val = x;
                     }
+                }
+            }
+
+            if cfg!(feature = "view") {
+                if top {
+                    println!("action:{action}, val:{val:#?}")
                 }
             }
 
@@ -790,57 +822,6 @@ pub fn negalphaf_hash_iter(
         count,
     );
 }
-
-// pub fn negalphaf_with_timeout(
-//     b: &Board,
-//     e: &Box<dyn EvaluatorF>,
-//     max_depth: u8,
-//     time_limit_millis: u128,
-// ) -> (u8, f32, i32) {
-//     use std::sync::mpsc;
-//     use std::thread;
-
-//     let start = Instant::now();
-//     let b_ = Mutex::new(b.clone());
-
-//     let (sender, reciever) = mpsc::channel();
-
-//     unsafe {
-//         thread::spawn(|| {
-//             let mut hashmap = HashMap::new();
-
-//             let (mut action, mut val, mut count);
-//             action = 0;
-//             val = Fail::Ex(0.0);
-//             count = 0;
-//             for i in 1..=max_depth {
-//                 let start = Instant::now();
-//                 (action, val, count) =
-//                     negalphaf_hash_iter(&b_.lock().unwrap(), i, -2.0, 2.0, i, &mut hashmap, e);
-//                 let t = start.elapsed().as_nanos();
-//                 sender.send((action, val, count));
-//                 if cfg!(feature = "render") {
-//                     println!("[gen:{i}], action:{action}, val:{val:#?}, count:{count}, time:{t}");
-//                 }
-//             }
-//         })
-//     };
-
-//     let mut action = board::get_random(&b);
-//     let mut val = 0.0;
-//     let mut count = 0;
-
-//     loop {
-//         if let Result::Ok((a, v, c)) = reciever.try_recv() {
-//             action = a;
-//             val = v.get_exval().unwrap();
-//             count = c;
-//         }
-//         if start.elapsed().as_millis() >= time_limit_millis {
-//             return (action, val, count);
-//         }
-//     }
-// }
 
 pub struct NegAlpha {
     evaluator: Box<dyn Evaluator>,
@@ -927,15 +908,17 @@ impl NegAlphaF {
         action = 0;
         val = Fail::Ex(0.0);
         count = 0;
-        for i in 1..=self.depth {
+        for i in (1..=self.depth).step_by(2) {
             let start = Instant::now();
             (action, val, count) =
-                negalphaf_hash_iter(b, i, -2.0, 2.0, i, &mut hashmap, &self.evaluator);
+                negalphaf_hash_iter(b, i, -2.0, 2.0, i, &mut hashmap, &self.evaluator, true);
             let t = start.elapsed().as_nanos();
             if val.get_exval().is_none() {
                 println!(
-                    "[depth:{i}], action:{action}, count:{}, time:{t}",
-                    hashmap.len()
+                    "[depth:{i}], action:{action}, count:{}, time:{},{}",
+                    hashmap.len(),
+                    t / 1000000,
+                    t % 1000000
                 );
                 let (att, def) = b.get_att_def();
                 println!("att:{att}, def:{def}");
@@ -1040,7 +1023,6 @@ pub trait Analyzer {
         }
     }
 }
-
 pub struct PositionEvaluator {
     posmap: Vec<i32>,
 }

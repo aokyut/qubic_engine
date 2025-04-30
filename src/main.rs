@@ -1,5 +1,5 @@
 use proconio::input;
-use qubic_engine::ai::line::{SimplLineEvaluator, TrainableSLE};
+use qubic_engine::ai::line::{BucketLineEvaluator, SimplLineEvaluator, TrainableBLE, TrainableSLE};
 use qubic_engine::ai::zhashmap::test_zhash;
 use qubic_engine::ai::{
     self, LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PositionEvaluator,
@@ -34,6 +34,7 @@ fn main() {
     let m5 = NegAlpha::new(Box::new(CoEvaluator::best()), 5);
     let m6 = NegAlpha::new(Box::new(CoEvaluator::best()), 6);
     let m7 = NegAlpha::new(Box::new(CoEvaluator::best()), 7);
+    let m9 = NegAlpha::new(Box::new(CoEvaluator::best()), 9);
     let mm3 = MateNegAlpha::new(Box::new(CoEvaluator::best()), 5);
     let mm3 = Agent::Struct(String::from("mm3"), Box::new(mm3));
     let m2 = Agent::Struct(String::from("m2"), Box::new(m2));
@@ -46,7 +47,8 @@ fn main() {
     // let l5 = wrapping_line_eval(l.clone(), 5);
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l5_.hashmap = true;
-    l5_.timelimit = 100;
+    l5_.timelimit = 1000;
+    l5_.min_depth = 7;
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
 
@@ -55,15 +57,15 @@ fn main() {
     // let l7 = wrapping_line_eval(l.clone(), 7);
     // let l8 = wrapping_line_eval(l.clone(), 8);
     // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
-    let att = 13268249354320136724;
-    let def = 4854231148105118187;
-    let b = Board::from(att, def, Player::Black);
+    // let att = 13268249354320136724;
+    // let def = 4854231148105118187;
+    // let b = Board::from(att, def, Player::Black);
     // pprint_board(&b);
-    let _ = l5_.eval_with_negalpha_(&b);
+    // let _ = l5_.eval_with_negalpha_(&b);
 
-    // make_db();
+    make_db();
 
-    // play_actor(&l5_, &m7, true);
+    // play_actor(&l5_, &l5_, true);
 
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -100,7 +102,7 @@ fn main() {
     // );
     // train_line_eval();
     // mpc_for_coe(7, 7);
-    profile();
+    // profile();
     // beam_search();
     // test_zhash();
 }
@@ -292,9 +294,9 @@ fn make_db() {
     let mut le = NegAlphaF::new(Box::new(l.clone()), 29);
     le.hashmap = true;
     le.min_depth = 7;
-    le.timelimit = 100;
+    le.timelimit = 50;
 
-    create_db(Some(le), "sle_tl500_genCoe345_insertRandom1_4_48", 5);
+    create_db(Some(le), "sle_tl50_genCoe345_insertRandom1_4_48", 5);
 }
 
 fn train_line_eval() {
@@ -303,6 +305,7 @@ fn train_line_eval() {
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
     let mut model = SimplLineEvaluator::new();
     let _ = model.load("simple.json".to_string());
+    let mut bigmodel = BucketLineEvaluator::from(model);
 
     // let n = 32;
     // for i in 0..n {
@@ -314,15 +317,15 @@ fn train_line_eval() {
     // }
     // return;
 
-    let mut model = TrainableSLE::from(model, 0.001);
+    let mut model = TrainableBLE::from(bigmodel, 0.001);
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
 
     qubic_engine::train::train_model_with_db(
         model,
         false,
         true,
-        String::from("simple.json"),
-        String::from("simple.json"),
+        String::from("ble.json"),
+        String::from("ble.json"),
         String::from("winRate_coe5_genRandom_insertRandom1_48"),
         String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     );

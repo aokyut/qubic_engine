@@ -342,55 +342,6 @@ impl SimplLineEvaluator {
             (0, 0, 0)
         };
 
-        // let (xyz11_, xyz12_, xyz13_) = LineEvaluator::analyze_line(
-        //     a,
-        //     a21,
-        //     a42,
-        //     a63,
-        //     b,
-        //     b21,
-        //     b42,
-        //     b63,
-        //     0x1,
-        //     0x8000_0400_0020_0001,
-        // );
-        // let (xyz21_, xyz22_, xyz23_) = LineEvaluator::analyze_line(
-        //     a,
-        //     a19,
-        //     a38,
-        //     a57,
-        //     b,
-        //     b19,
-        //     b38,
-        //     b57,
-        //     0x8,
-        //     0x0200_0040_0008_0001,
-        // );
-        // let (xyz31_, xyz32_, xyz33_) = LineEvaluator::analyze_line(
-        //     a,
-        //     a13,
-        //     a26,
-        //     a39,
-        //     b,
-        //     b13,
-        //     b26,
-        //     b39,
-        //     0x1000,
-        //     0x0000_0080_0400_2001,
-        // );
-        // let (xyz41_, xyz42_, xyz43_) = LineEvaluator::analyze_line(
-        //     a,
-        //     a11,
-        //     a22,
-        //     a33,
-        //     b,
-        //     b11,
-        //     b22,
-        //     b33,
-        //     0x8000,
-        //     0x0000_0002_0040_0801,
-        // );
-
         let (z1, z2, z3) = (z1 & b, z2 & b, z3 & b);
         let (xy1, xy2, xy3) = (xy1 & b, xy2 & b, xy3 & b);
         let (xy1_, xy2_, xy3_) = (xy1_ & b, xy2_ & b, xy3_ & b);
@@ -457,17 +408,13 @@ impl SimplLineEvaluator {
         let a1_ground = acum_mask_bundle(apply_mask_bundle(a1, ground)) as usize;
         let a2_float = acum_mask_bundle(apply_mask_bundle(a2, float)) as usize;
         let a2_ground = acum_mask_bundle(apply_mask_bundle(a2, ground)) as usize;
-        // let a3_float = acum_mask_bundle(apply_mask_bundle(a3, float)) as usize;
         let a3_float = (acum_or(a3) & float).count_ones() as usize;
-        // let a3_ground = acum_mask_bundle(apply_mask_bundle(a3, ground)) as usize;
         let a3_ground = (acum_or(a3) & ground).count_ones() as usize;
         let d1_float = acum_mask_bundle(apply_mask_bundle(d1, float)) as usize;
         let d1_ground = acum_mask_bundle(apply_mask_bundle(d1, ground)) as usize;
         let d2_float = acum_mask_bundle(apply_mask_bundle(d2, float)) as usize;
         let d2_ground = acum_mask_bundle(apply_mask_bundle(d2, ground)) as usize;
-        // let d3_float = acum_mask_bundle(apply_mask_bundle(d3, float)) as usize;
         let d3_float = (acum_or(d3) & float).count_ones() as usize;
-        // let d3_ground = acum_mask_bundle(apply_mask_bundle(d3, ground)) as usize;
         let d3_ground = (acum_or(d3) & ground).count_ones() as usize;
 
         let l3_mask = acum_or(d3) | acum_or(a3);
@@ -624,6 +571,214 @@ impl Trainable for TrainableSLE {
 }
 
 impl EvaluatorF for TrainableSLE {
+    fn eval_func_f32(&self, b: &Board) -> f32 {
+        return self.main.evaluate_board(b).clamp(0.0, 1.0);
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BucketLineEvaluator {
+    evals: Vec<SimplLineEvaluator>,
+}
+
+impl BucketLineEvaluator {
+    pub fn new() -> Self {
+        let mut v = Vec::new();
+        for _ in 0..64 {
+            v.push(SimplLineEvaluator::new());
+        }
+        return BucketLineEvaluator { evals: v };
+    }
+
+    pub fn from(simpl: SimplLineEvaluator) -> Self {
+        return BucketLineEvaluator {
+            evals: vec![simpl; 64],
+        };
+    }
+
+    pub fn get_counts(
+        &self,
+        b: &Board,
+    ) -> (
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+    ) {
+        let (att, def) = b.get_att_def();
+        let (a1, a2, a3, _, _, _) = LineEvaluator::analyze_board(att, def);
+        let (d1, d2, d3, _, _, _) = LineEvaluator::analyze_board(def, att);
+        let stone = att | def;
+        let ground = !stone & (stone << 16 | 0xffff);
+        let float = !stone ^ ground;
+        let a1_float = acum_mask_bundle(apply_mask_bundle(a1, float)) as usize;
+        let a1_ground = acum_mask_bundle(apply_mask_bundle(a1, ground)) as usize;
+        let a2_float = acum_mask_bundle(apply_mask_bundle(a2, float)) as usize;
+        let a2_ground = acum_mask_bundle(apply_mask_bundle(a2, ground)) as usize;
+        let a3_float = (acum_or(a3) & float).count_ones() as usize;
+        let a3_ground = (acum_or(a3) & ground).count_ones() as usize;
+        let d1_float = acum_mask_bundle(apply_mask_bundle(d1, float)) as usize;
+        let d1_ground = acum_mask_bundle(apply_mask_bundle(d1, ground)) as usize;
+        let d2_float = acum_mask_bundle(apply_mask_bundle(d2, float)) as usize;
+        let d2_ground = acum_mask_bundle(apply_mask_bundle(d2, ground)) as usize;
+        let d3_float = (acum_or(d3) & float).count_ones() as usize;
+        let d3_ground = (acum_or(d3) & ground).count_ones() as usize;
+
+        let l3_mask = acum_or(d3) | acum_or(a3);
+        let trap_3_num = (l3_mask & (!l3_mask << 16) & 0x0000_ffff_0000_0000).count_ones() as usize;
+
+        return (
+            a1_float, a2_float, a3_float, a1_ground, a2_ground, a3_ground, d1_float, d2_float,
+            d3_float, d1_ground, d2_ground, d3_ground, trap_3_num,
+        );
+    }
+
+    pub fn evaluate_board(&self, b: &Board) -> f32 {
+        let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) = self.get_counts(&b);
+        let (att, def) = b.get_att_def();
+        let num = att.count_ones() + def.count_ones();
+        let is_black = num % 2 == 0;
+        let mut val = 0.0;
+
+        let eval = &self.evals[num as usize];
+
+        if is_black {
+            val += eval.wt3nb[tn3];
+        } else {
+            val += eval.wt3nw[tn3];
+        }
+        val += eval.wfl1[af1 * WFL1_WIDTH + df1]
+            + eval.wfl2[af2 * WL2_WIDTH + df2]
+            + eval.wfl3[af3 * WFL3_WIDTH + df3]
+            + eval.wgl1[ag1 * WGL1_WIDTH + dg1]
+            + eval.wgl2[ag2 * WL2_WIDTH + dg2]
+            + eval.wgl3[ag3 * WGL3_WIDTH + dg3]
+            + eval.bias;
+        return 1.0 / (1.0 + (-val).exp());
+    }
+
+    pub fn save(&self, name: String) -> Result<()> {
+        use anyhow::Context;
+        use std::fs::File;
+        use std::io::{BufWriter, Write};
+
+        let data_str = serde_json::to_string(self)?;
+
+        let file = File::create(name)?;
+        let mut buff_writer: BufWriter<File> = BufWriter::new(file);
+
+        buff_writer
+            .write(data_str.as_bytes())
+            .context("write error")?;
+        buff_writer.flush().context("flush error")?;
+
+        Ok(())
+    }
+    pub fn load(&mut self, name: String) -> Result<()> {
+        use anyhow::Context;
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        let file = File::open(name)?;
+        let buff_reader: BufReader<File> = BufReader::new(file);
+
+        let mut lines = Vec::new();
+
+        for line in buff_reader.lines() {
+            // if process here, can save memory
+            lines.push(line.context("read error")?);
+        }
+        let data_str = lines.join("\n");
+        let mut src: BucketLineEvaluator = serde_json::from_str(&data_str)?;
+
+        std::mem::swap(self, &mut src);
+
+        Ok(())
+    }
+}
+
+impl EvaluatorF for BucketLineEvaluator {
+    fn eval_func_f32(&self, b: &Board) -> f32 {
+        return self.evaluate_board(b);
+    }
+}
+
+#[derive(Clone)]
+pub struct TrainableBLE {
+    main: BucketLineEvaluator,
+    v: BucketLineEvaluator,
+    m: BucketLineEvaluator,
+    lr: f32,
+}
+
+impl TrainableBLE {
+    pub fn new(lr: f32) -> Self {
+        TrainableBLE {
+            main: BucketLineEvaluator::new(),
+            v: BucketLineEvaluator::new(),
+            m: BucketLineEvaluator::new(),
+            lr: lr,
+        }
+    }
+
+    pub fn from(e: BucketLineEvaluator, lr: f32) -> Self {
+        TrainableBLE {
+            main: e,
+            v: BucketLineEvaluator::new(),
+            m: BucketLineEvaluator::new(),
+            lr: lr,
+        }
+    }
+}
+
+impl Trainable for TrainableBLE {
+    fn update(&mut self, b: &Board, delta: f32) {
+        let (a1, a2, a3, a1_, a2_, a3_, d1, d2, d3, d1_, d2_, d3_, trap_3_num) =
+            self.main.get_counts(b);
+        let num = (b.black.count_ones() + b.white.count_ones()) as usize;
+        let is_black = num % 2 == 0;
+        // とりあえずsgd
+        let val = self.main.evaluate_board(b);
+        let dv = val * (1.0 - val);
+        let delta = self.lr * delta * dv;
+        self.main.evals[num].wfl1[a1 * WFL1_WIDTH + d1] += delta;
+        self.main.evals[num].wfl2[a2 * WL2_WIDTH + d2] += delta;
+        self.main.evals[num].wfl3[a3 * WFL3_WIDTH + d3] += delta;
+        self.main.evals[num].wgl1[a1_ * WGL1_WIDTH + d1_] += delta;
+        self.main.evals[num].wgl2[a2_ * WL2_WIDTH + d2_] += delta;
+        self.main.evals[num].wgl3[a3_ * WGL3_WIDTH + d3_] += delta;
+        if is_black {
+            self.main.evals[num].wt3nb[trap_3_num] += delta;
+        } else {
+            self.main.evals[num].wt3nw[trap_3_num] += delta;
+        }
+        self.main.evals[num].bias += delta;
+    }
+
+    fn get_val(&self, b: &Board) -> f32 {
+        self.main.evaluate_board(b)
+    }
+
+    fn save(&self, file: String) -> Result<()> {
+        self.main.save(file)
+    }
+    fn load(&mut self, file: String) -> Result<()> {
+        self.main.load(file)
+    }
+    fn eval(&mut self) {}
+    fn train(&mut self) {}
+}
+
+impl EvaluatorF for TrainableBLE {
     fn eval_func_f32(&self, b: &Board) -> f32 {
         return self.main.evaluate_board(b).clamp(0.0, 1.0);
     }
