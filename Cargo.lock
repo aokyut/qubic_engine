@@ -165,7 +165,7 @@ checksum = "c10091de86d0dc939b37a115d74597cbe83af470032a1729d50c98ccee043cb0"
 
 [[package]]
 name = "qubic_engine"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "indicatif",

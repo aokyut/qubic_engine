@@ -6,3 +6,6 @@ ratings
 *.db
 coe*
 mcoe*
+*.svg
+*.json
+util.py
