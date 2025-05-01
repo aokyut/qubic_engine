@@ -2,7 +2,7 @@
 name = "qubic_engine"
 license = "MIT"
 author = ["epaperamic@gmail.com"]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "qubic engine"
 repository = "https://github.com/aokyut/qubic_engine"
