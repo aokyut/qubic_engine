@@ -6,7 +6,8 @@ use qubic_engine::ai::{
     TrainableLineEvaluator,
 };
 use qubic_engine::board::{
-    count_2row_, get_random, mate_check_horizontal, pprint_board, pprint_u64, Board, GetAction,
+    count_2row_, get_random, mate_check_horizontal, play_actor, pprint_board, pprint_u64, Board,
+    GetAction,
 };
 use qubic_engine::db::BoardDB;
 use qubic_engine::train::{create_db, train_with_db};
@@ -47,7 +48,7 @@ fn main() {
     // let l5 = wrapping_line_eval(l.clone(), 5);
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l5_.hashmap = true;
-    l5_.timelimit = 100;
+    l5_.timelimit = 1000;
     l5_.min_depth = 7;
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
@@ -64,8 +65,8 @@ fn main() {
     // let _ = l5_.eval_with_negalpha_(&b);
 
     // make_db();
-
-    play_actor(&Agent::Human, &l5_, true);
+    use_ai();
+    // play_actor(&Agent::Human, &l5_, true);
 
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -105,6 +106,49 @@ fn main() {
     // profile();
     // beam_search();
     // test_zhash();
+}
+
+fn use_ai() {
+    let mut l = SimplLineEvaluator::new();
+    l.load("simple.json".to_string());
+    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
+    l5_.hashmap = true;
+    l5_.timelimit = 1000;
+    l5_.min_depth = 7;
+    let l5_ = MateWrapperActor::new(Box::new(l5_));
+
+
+    loop {
+        println!("0: 人間 vs AI");
+        println!("1: AI vs AI");
+        input! {
+            n: usize,
+        }
+        if n == 0 {
+            loop {
+                println!("-> 人間 vs AI");
+                println!("0: 人間が先手");
+                println!("1: AIが先手");
+
+                input! {
+                    n: usize,
+                }
+                if n == 0 {
+                    println!("-> 人間が先手");
+                    play_actor(&Agent::Human, &l5_, true);
+                } else if n == 1 {
+                    println!("-> AIが先手");
+                    play_actor(&l5_, &Agent::Human, true);
+                } else {
+                    println!("Please input valid number.")
+                }
+            }
+        } else if n == 1 {
+            play_actor(&l5_, &l5_, true);
+        } else {
+            println!("Please input valid number");
+        }
+    }
 }
 
 fn profile() {

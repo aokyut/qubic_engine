@@ -1250,7 +1250,6 @@ impl GetAction for Agent {
                 let mate_action_h = mate_check_horizontal(board);
                 let end = start.elapsed();
                 let b_milis = end.as_nanos();
-                println!("実行時間:{},{}", a_milis, b_milis);
                 if let Some(action) = mate_action {
                     let (is_mate, h_action) = mate_action_h.unwrap();
                     println!("mate:{is_mate}, v[{action}], h[{h_action}]");
