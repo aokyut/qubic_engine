@@ -1295,6 +1295,10 @@ pub fn play(a1: &Agent, a2: &Agent) -> (f32, f32) {
 
 pub fn play_actor(a1: &impl GetAction, a2: &impl GetAction, render: bool) -> (f32, f32) {
     let mut b = Board::new();
+    // b = b.next(get_random(&b));
+    // b = b.next(get_random(&b));
+    // b = b.next(15);
+    // b = b.next(12);
 
     loop {
         if render {

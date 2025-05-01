@@ -315,9 +315,9 @@ impl Fail {
     fn to_string(&self) -> String {
         use Fail::*;
         match self {
-            High(x) => format!("High({x})"),
-            Low(x) => format!("Low({x})"),
-            Ex(x) => format!("Ex({x})"),
+            High(x) => format!("High({x:.4})"),
+            Low(x) => format!("Low({x:.4})"),
+            Ex(x) => format!(" Ex({x:.4})"),
         }
     }
 }
@@ -327,13 +327,13 @@ impl std::fmt::Debug for Fail {
         use Fail::*;
         match self {
             High(x) => {
-                let _ = write!(f, "High({x})");
+                let _ = write!(f, "High({x:.4})");
             }
             Low(x) => {
-                let _ = write!(f, "Low({x})");
+                let _ = write!(f, "Low({x:.4})");
             }
             Ex(x) => {
-                let _ = write!(f, "Ex({x})");
+                let _ = write!(f, " Ex({x:.4})");
             }
         }
 
@@ -667,7 +667,7 @@ pub fn negalphaf_hash_iter(
         for (action, next_board, old_val, hash, (hit, old_gen)) in action_nb_vals {
             let val;
             if old_gen == gen {
-                if let Some(fail_val) = hit {
+                if let Some(fail_val) = hit.clone() {
                     // if depth > 2 {
                     //     println!("[{depth}]hit, {}", fail_val.to_string());
                     // }
@@ -698,9 +698,12 @@ pub fn negalphaf_hash_iter(
                         }
                         Low(x) => {
                             if alpha > x {
-                                if cfg!(feature = "view") {
+                                if cfg!(feature = "view_detail") {
                                     if top {
-                                        println!("action:{action}, val:Low({x})")
+                                        match hit{
+                                            Some(fail)=>println!("action:{action:>2}, val:Low({x}), old:{fail:#?}-{old_val}"),
+                                            None => println!("action:{action:>2}, val:Low({x}), old:None-{old_val}"),
+                                        }
                                     }
                                 }
                                 continue;
@@ -748,9 +751,16 @@ pub fn negalphaf_hash_iter(
                     match _val {
                         High(x) => return (action, High(x), count),
                         Low(x) => {
-                            if cfg!(feature = "view") {
+                            if cfg!(feature = "view_detail") {
                                 if top {
-                                    println!("action:{action}, val:Low({x})")
+                                    match hit {
+                                        Some(fail) => println!(
+                                            "action:{action:>2}, val:Low({x:.4}), old:{fail:#?}-{old_val:.4}"
+                                        ),
+                                        None => println!(
+                                            "action:{action:>2}, val:Low({x:.4}), old:None-{old_val:.4}"
+                                        ),
+                                    }
                                 }
                             }
                             continue;
@@ -778,9 +788,16 @@ pub fn negalphaf_hash_iter(
                 match _val {
                     High(x) => return (action, High(x), count),
                     Low(x) => {
-                        if cfg!(feature = "view") {
+                        if cfg!(feature = "view_detail") {
                             if top {
-                                println!("action:{action}, val:Low({x})")
+                                match hit {
+                                    Some(fail) => println!(
+                                        "action:{action:>2}, val:Low({x:.4}), old:{fail:#?}-{old_val:.4}"
+                                    ),
+                                    None => println!(
+                                        "action:{action:>2}, val:Low({x:.4}), old:None-{old_val:.4}"
+                                    ),
+                                }
                             }
                         }
                         continue;
@@ -791,9 +808,14 @@ pub fn negalphaf_hash_iter(
                 }
             }
 
-            if cfg!(feature = "view") {
+            if cfg!(feature = "view_detail") {
                 if top {
-                    println!("action:{action}, val:{val:#?}")
+                    match hit {
+                        Some(x) => {
+                            println!("action:{action:>2}, val:{val:.4}, old:{x:#?}-{old_val:.4}")
+                        }
+                        None => println!("action:{action:>2}, val:{val:.4}, old:None-{old_val:.4}"),
+                    }
                 }
             }
 

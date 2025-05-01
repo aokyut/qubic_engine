@@ -47,7 +47,7 @@ fn main() {
     // let l5 = wrapping_line_eval(l.clone(), 5);
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l5_.hashmap = true;
-    l5_.timelimit = 1000;
+    l5_.timelimit = 100;
     l5_.min_depth = 7;
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
@@ -63,9 +63,9 @@ fn main() {
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha_(&b);
 
-    make_db();
+    // make_db();
 
-    // play_actor(&l5_, &l5_, true);
+    play_actor(&Agent::Human, &l5_, true);
 
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -112,7 +112,7 @@ fn profile() {
     let mut l = SimplLineEvaluator::new();
     let _ = l.load("simple.json".to_string());
 
-    let mut long = NegAlphaF::new(Box::new(l.clone()), 29);
+    let mut long = NegAlphaF::new(Box::new(l.clone()), 7);
     long.timelimit = 500;
     long.min_depth = 7;
 
@@ -135,7 +135,7 @@ fn profile() {
         let action;
 
         let start = Instant::now();
-        let (action2, val_, _) = long.eval_with_negalpha_(&b);
+        let (action2, val_, _) = long.eval_with_negalpha(&b);
         let t = start.elapsed().as_nanos();
 
         let stones = b.get_att_def();
@@ -154,13 +154,13 @@ fn profile() {
                     continue;
                 }
                 println!(
-                    "[{i}] count:{}, time:{}%",
+                    "[{i}] count:{}, time:{}",
                     counts[i],
                     search_time[i] as f32 / counts[i],
                 );
             }
             println!(
-                "[all] count:{}, time:{}%",
+                "[all] count:{}, time:{}",
                 counts.iter().sum::<f32>(),
                 search_time.iter().sum::<u128>() as f32 / counts.iter().sum::<f32>(),
             );
