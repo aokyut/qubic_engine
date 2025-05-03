@@ -1045,7 +1045,6 @@ impl Record {
         }
     }
 }
-
 pub struct Node {
     board: Board,
     n: f32,
@@ -1082,8 +1081,8 @@ impl Node {
         return Node {
             board: board,
             children: HashMap::new(),
-            n: 2f32,
-            w: 1f32,
+            n: 1f32,
+            w: 0f32,
         };
     }
 
@@ -1127,7 +1126,7 @@ impl Node {
             self.n += 1.0;
             return 0.0;
         } else if self.children.len() == 0 {
-            let value = -(0.5 * playout(&self.board)) + 0.5;
+            let value = -playout(&self.board);
             self.w += value;
             self.n += 1.0;
             if self.n == expand_n as f32 {
@@ -1149,13 +1148,12 @@ impl Node {
                 }
                 best_action
             };
-            let value = 1.0
-                - self
-                    .children
-                    .get(&next_node_action)
-                    .unwrap()
-                    .borrow_mut()
-                    .evaluate(expand_n);
+            let value = -self
+                .children
+                .get(&next_node_action)
+                .unwrap()
+                .borrow_mut()
+                .evaluate(expand_n);
             self.w += value;
             self.n += 1.0;
             return value;
@@ -1295,7 +1293,6 @@ pub fn play(a1: &Agent, a2: &Agent) -> (f32, f32) {
 }
 
 pub fn play_actor(a1: &impl GetAction, a2: &impl GetAction, render: bool) -> (f32, f32) {
-    // let mut b = Board::from(2449980224164053531, 1155210714492189764, Player::Black);
     let mut b = Board::new();
     // b = b.next(get_random(&b));
     // b = b.next(get_random(&b));

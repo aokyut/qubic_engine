@@ -692,7 +692,6 @@ pub fn train_model_with_db(
                 thread::sleep(Duration::from_micros(200));
             }
             let (loss, delta) = bce_loss(val, t.t_val);
-            let (loss, delta) = bce_loss(val, (t.result as f32) * 0.499 + 0.5);
             match smoothing_loss {
                 None => smoothing_loss = Some(loss),
                 Some(loss_) => smoothing_loss = Some(SMOOTHING * loss_ + (1.0 - SMOOTHING) * loss),
@@ -718,7 +717,6 @@ pub fn train_model_with_db(
                     let val = model.get_val(b);
 
                     let (loss, _) = bce_loss(val, t.t_val);
-                    let (loss, _) = bce_loss(val, (t.result as f32) * 0.499 + 0.5);
                     losses.push(loss);
                 }
                 let size = losses.len();

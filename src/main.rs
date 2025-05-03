@@ -1,10 +1,9 @@
 use proconio::input;
 use qubic_engine::ai::line::{BucketLineEvaluator, SimplLineEvaluator, TrainableBLE, TrainableSLE};
-use qubic_engine::ai::position::{PositionMaskEvaluator, TrainablePME};
 use qubic_engine::ai::zhashmap::test_zhash;
 use qubic_engine::ai::{
-    self, LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PlayoutEvaluator, PlayoutLevel,
-    PositionEvaluator, TrainableLineEvaluator,
+    self, LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PositionEvaluator,
+    TrainableLineEvaluator,
 };
 use qubic_engine::board::{
     count_2row_, get_random, mate_check_horizontal, play_actor, pprint_board, pprint_u64, Board,
@@ -47,24 +46,14 @@ fn main() {
     // let l3 = wrapping_line_eval(l.clone(), 3);
     // let l4 = wrapping_line_eval(l.clone(), 4);
     // let l5 = wrapping_line_eval(l.clone(), 5);
-    // let mut l3_ = NegAlphaF::new(Box::new(l.clone()), 1);
-    // let l3_ = MateWrapperActor::new(Box::new(l3_));
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l5_.hashmap = true;
-    l5_.timelimit = 100;
+    l5_.timelimit = 1000;
     l5_.min_depth = 7;
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
+
     let l7_ = MateWrapperActor::new(Box::new(l7_));
-
-    let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
-
-    let mcts = ai::mcts::Mcts::new(10_000, 3, 2000, po);
-    // let mcts2 = ai::mcts::Mcts::new(10_000, 3, l3_);
-
-    // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
-    // let l5_ = MateWrapperActor::new(Box::new(l5_));
-
     // let l6 = wrapping_line_eval(l.clone(), 6);
     // let l7 = wrapping_line_eval(l.clone(), 7);
     // let l8 = wrapping_line_eval(l.clone(), 8);
@@ -76,8 +65,9 @@ fn main() {
     // let _ = l5_.eval_with_negalpha_(&b);
 
     // make_db();
-    // use_aip();
-    // play_actor(&mcts, &l5_, true);
+    use_ai();
+    // play_actor(&Agent::Human, &l5_, true);
+
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
     // db.concat(db_);
@@ -85,10 +75,10 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    let result = eval_actor(&l5_, &mcts, 100, false);
+    // let result = eval_actor(&l5_, &m7, 100, false);
     // println!("time:{}", start.elapsed().as_nanos());
-    println!("{result:#?}");
-    return;
+    // println!("{result:#?}");
+    // return;
     // let (a, b, c) = compare(&m2, &mm3);
 
     // exp_count_2row_();
@@ -116,75 +106,6 @@ fn main() {
     // profile();
     // beam_search();
     // test_zhash();
-    // print_pmodel();
-    // exp_positoin_eval_get_count();
-}
-
-fn call_evaluator() {
-    let mut l = SimplLineEvaluator::new();
-    l.load("simple.json".to_string());
-    // let l3 = wrapping_line_eval(l.clone(), 3);
-    // let l4 = wrapping_line_eval(l.clone(), 4);
-    // let l5 = wrapping_line_eval(l.clone(), 5);
-    // let mut l3_ = NegAlphaF::new(Box::new(l.clone()), 1);
-    // let l3_ = MateWrapperActor::new(Box::new(l3_));
-    let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
-    l5_.hashmap = true;
-    l5_.timelimit = 1;
-    l5_.min_depth = 5;
-
-    input! {
-        black: u64,
-        white: u64,
-    }
-}
-
-fn exp_positoin_eval_get_count() {
-    use qubic_engine::ai::position::PositionMaskEvaluator;
-    use qubic_engine::exp::BoardIter;
-
-    let mut it = BoardIter::new(true);
-    let mut time_a = 0;
-    let mut time_b = 0;
-    let n = 1000_000;
-    let mut count = 0;
-
-    for b in it {
-        count += 1;
-        let start = Instant::now();
-        let a_list = PositionMaskEvaluator::get_counts(&b);
-        time_a += start.elapsed().as_nanos();
-
-        let start = Instant::now();
-        let b_list = PositionMaskEvaluator::get_counts(&b);
-        // let b_list = PositionMaskEvaluator::get_counts_(&b);
-        time_b += start.elapsed().as_nanos();
-
-        for j in 0..16 {
-            // assert_eq!(a_list[j], b_list[j], "{:#?}, {:#?}", a_list, b_list);
-            if a_list[j] != b_list[j] {
-                println!("{:#?}, {:#?}", a_list, b_list);
-                pprint_board(&b);
-                assert!(false);
-            }
-        }
-        if count > n {
-            break;
-        }
-    }
-    println!(
-        "time_a:{time_a}:{}, time_b:{time_b}:{}, rate:{}%",
-        time_a / n,
-        time_b / n,
-        time_b * 100 / time_a
-    );
-}
-
-fn print_pmodel() {
-    let mut pmodel = PositionMaskEvaluator::new();
-    pmodel.load("position.json".to_string());
-
-    println!("{:#?}", pmodel);
 }
 
 fn use_ai() {
@@ -195,6 +116,7 @@ fn use_ai() {
     l5_.timelimit = 1000;
     l5_.min_depth = 7;
     let l5_ = MateWrapperActor::new(Box::new(l5_));
+
 
     loop {
         println!("0: 人間 vs AI");
@@ -214,7 +136,6 @@ fn use_ai() {
                 if n == 0 {
                     println!("-> 人間が先手");
                     play_actor(&Agent::Human, &l5_, true);
-                    return;
                 } else if n == 1 {
                     println!("-> AIが先手");
                     play_actor(&l5_, &Agent::Human, true);
@@ -224,7 +145,6 @@ fn use_ai() {
             }
         } else if n == 1 {
             play_actor(&l5_, &l5_, true);
-            return;
         } else {
             println!("Please input valid number");
         }
@@ -234,9 +154,7 @@ fn use_ai() {
 fn profile() {
     let mut b = Board::new();
     let mut l = SimplLineEvaluator::new();
-    // let mut l = PositionMaskEvaluator::new();
     let _ = l.load("simple.json".to_string());
-    // let _ = l.load("position.json".to_string());
 
     let mut long = NegAlphaF::new(Box::new(l.clone()), 7);
     long.timelimit = 500;
@@ -445,15 +363,13 @@ fn train_line_eval() {
 
     let mut model = TrainableBLE::from(bigmodel, 0.001);
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
-    let mut pmodel = PositionMaskEvaluator::new();
-    let mut pmodel = TrainablePME::from(pmodel, 0.001);
 
     qubic_engine::train::train_model_with_db(
-        pmodel,
+        model,
         false,
         true,
-        String::from("position.json"),
-        String::from("position.json"),
+        String::from("ble.json"),
+        String::from("ble.json"),
         String::from("winRate_coe5_genRandom_insertRandom1_48"),
         String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     );

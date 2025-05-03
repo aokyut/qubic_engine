@@ -1,8 +1,6 @@
-use crate::board::{get_random, mate_check_horizontal, Board};
-
 use super::board;
 use rand::Rng;
-use std::{collections::binary_heap::Iter, thread, time};
+use std::{thread, time};
 
 const K: f32 = 16.0;
 const START: f32 = 1500.0;
@@ -135,41 +133,5 @@ impl Rating {
         for i in 0..self.agents.len() {
             println!("{:<15}: {}", self.agents[i].name(), self.rates[i]);
         }
-    }
-}
-
-pub struct BoardIter {
-    pub b: Board,
-    mate_end: bool,
-}
-
-impl BoardIter {
-    pub fn new(mate_end: bool) -> Self {
-        return BoardIter {
-            b: Board::new(),
-            mate_end: mate_end,
-        };
-    }
-}
-
-impl Iterator for BoardIter {
-    type Item = Board;
-    fn next(&mut self) -> Option<Self::Item> {
-        let mate = mate_check_horizontal(&self.b);
-        if let Some((flag, _)) = mate {
-            if flag && self.mate_end {
-                self.b = Board::new();
-            }
-        }
-        if self.b.is_win() {
-            self.b = Board::new();
-        } else if self.b.is_draw() {
-            self.b = Board::new();
-        }
-
-        let b = self.b.clone();
-        self.b = self.b.next(get_random(&self.b));
-
-        return Some(b);
     }
 }
