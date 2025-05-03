@@ -2,13 +2,16 @@
 #![feature(ptr_internals)]
 
 pub mod line;
+pub mod mcts;
 pub mod mpc;
 pub mod pattern;
+pub mod position;
 pub mod timeout;
 pub mod zhashmap;
 
 use crate::board::{
-    self, count_1row, count_2row, count_3row, get_reach_mask, mate_check_horizontal, pprint_board,
+    self, count_1row, count_2row, count_3row, get_random, get_reach_mask, mate_check_horizontal,
+    pprint_board,
 };
 use crate::train::Transition;
 
@@ -983,19 +986,15 @@ impl NegAlphaF {
         // }
         let (att, def) = b.get_att_def();
         let stone = (att | def).count_ones() as usize;
-        if cfg!(feature = "render") {
+        if cfg!(feature = "view") {
             println!("att:{att}, def:{def}");
             let start = Instant::now();
-            let (action, val, count) = negalphaf(b, self.depth, -2.0, 2.0, &self.evaluator);
+            let (action, val, count) = negalphaf(b, self.min_depth, -2.0, 2.0, &self.evaluator);
             let t = start.elapsed().as_nanos();
-            let start = Instant::now();
-            let (action2, val2, count2) = self.eval_with_negalpha_(b);
-            let t2 = start.elapsed().as_nanos();
-            println!(
-                "action:{action}-{action2}, val:{val}-{}, count:{count}/{t}-{count2}/{t2}, rate:{}%",
-                val2,
-                t2 * 100 / t
-            );
+            // let start = Instant::now();
+            // let (action2, val2, count2) = self.eval_with_negalpha_(b);
+            // let t2 = start.elapsed().as_nanos();
+            println!("action:{action}, val:{val}, count:{count}/{t}ns",);
         }
 
         if self.hashmap {
@@ -1021,6 +1020,13 @@ impl EvalAndActF for NegAlphaF {
     fn eval_and_act(&self, b: &Board) -> (u8, f32) {
         let (action, val, _) = self.eval_with_negalpha(b);
         return (action, val);
+    }
+}
+
+impl EvaluatorF for NegAlphaF {
+    fn eval_func_f32(&self, b: &Board) -> f32 {
+        let (_, val, _) = self.eval_with_negalpha(b);
+        return val;
     }
 }
 
@@ -3780,5 +3786,76 @@ impl GetAction for MateNegAlpha {
         //     action: u8
         // }
         // return action;
+    }
+}
+
+pub enum PlayoutLevel {
+    Zero,
+    Attack4,
+    Defence4,
+    MateCheck,
+}
+
+pub struct PlayoutEvaluator {
+    level: PlayoutLevel,
+}
+
+impl PlayoutEvaluator {
+    pub fn new(level: PlayoutLevel) -> Self {
+        return PlayoutEvaluator { level: level };
+    }
+}
+
+impl EvaluatorF for PlayoutEvaluator {
+    fn eval_func_f32(&self, b: &Board) -> f32 {
+        let mut result = 1.0;
+        let mut b = b.clone();
+        loop {
+            let action;
+            match self.level {
+                PlayoutLevel::Zero => {
+                    action = get_random(&b);
+                }
+                PlayoutLevel::Attack4 => {
+                    let (att, def) = b.get_att_def();
+                    let mask = get_reach_mask(att, def);
+                    if mask > 0 {
+                        action = (mask.trailing_zeros() % 16) as u8;
+                    } else {
+                        action = get_random(&b);
+                    }
+                }
+                PlayoutLevel::Defence4 => {
+                    let (att, def) = b.get_att_def();
+                    let mask = get_reach_mask(att, def);
+                    if mask > 0 {
+                        action = (mask.trailing_zeros() % 16) as u8;
+                    } else {
+                        let mask = get_reach_mask(def, att);
+                        if mask > 0 {
+                            action = (mask.trailing_zeros() % 16) as u8;
+                        } else {
+                            action = get_random(&b);
+                        }
+                    }
+                }
+                PlayoutLevel::MateCheck => {
+                    let mate = mate_check_horizontal(&b);
+                    if let Some((_, act)) = mate {
+                        action = act;
+                    } else {
+                        action = get_random(&b);
+                    }
+                }
+            }
+            b = b.next(action);
+
+            if b.is_win() {
+                return result;
+            } else if b.is_draw() {
+                return 0.5;
+            }
+            result = 1.0 - result;
+        }
     }
 }
