@@ -381,7 +381,6 @@ impl SimplLineEvaluator {
     }
 
     pub fn get_counts(
-        &self,
         b: &Board,
     ) -> (
         usize,
@@ -427,7 +426,8 @@ impl SimplLineEvaluator {
     }
 
     pub fn evaluate_board(&self, b: &Board) -> f32 {
-        let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) = self.get_counts(&b);
+        let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) =
+            SimplLineEvaluator::get_counts(&b);
         let (att, def) = b.get_att_def();
         let is_black = (att.count_ones() + def.count_ones()) % 2 == 0;
         let mut val = 0.0;
@@ -530,7 +530,7 @@ impl TrainableSLE {
 impl Trainable for TrainableSLE {
     fn update(&mut self, b: &Board, delta: f32) {
         let (a1, a2, a3, a1_, a2_, a3_, d1, d2, d3, d1_, d2_, d3_, trap_3_num) =
-            self.main.get_counts(b);
+            SimplLineEvaluator::get_counts(b);
         let is_black = (b.black.count_ones() + b.white.count_ones()) % 2 == 0;
         // とりあえずsgd
         let val = self.main.evaluate_board(b);

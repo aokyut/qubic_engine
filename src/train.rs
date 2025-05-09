@@ -1,3 +1,4 @@
+#[allow(warnings)]
 use crate::db::BoardDB;
 
 use super::{ai::*, board::*, ml::*};
@@ -650,6 +651,7 @@ pub fn train_model_with_db(
     let eval_db = BoardDB::new(&eval_db_name, 0);
     let ts = db.get_all();
     let eval_ts = eval_db.get_all()[..1024].to_vec();
+    let mut smoothing_loss = None;
 
     for epoch in 0..EPOCH {
         let mut step = 0;
@@ -658,7 +660,7 @@ pub fn train_model_with_db(
         model.train();
         db.set_batch_num();
         // db.set_lambda(LAMBDA);
-        if epoch > 0 {
+        if epoch < 0 {
             let agent = NegAlphaF::new(Box::new(model.clone()), 3);
             let agent = MateWrapperActor::new(Box::new(agent));
             let (e11, e12) = eval_actor(&agent, &test_actor1, EVAL_NUM, false);
@@ -672,7 +674,7 @@ pub fn train_model_with_db(
         }
 
         let batch_num = ts.len() / BATCH_SIZE;
-        let n = BATCH_SIZE * 1000000;
+        let n = BATCH_SIZE * 1000_000;
         let batch_num = n / BATCH_SIZE;
 
         let pb = ProgressBar::new(batch_num as u64);
@@ -681,8 +683,8 @@ pub fn train_model_with_db(
             .unwrap()
             .progress_chars("#>-"));
 
-        let mut smoothing_loss = None;
         let data: Vec<Transition> = ts.choose_multiple(&mut rng, n).cloned().collect();
+        // let data = vec![data[0].clone(); n];
 
         for t in data.iter() {
             let b = &u128_to_b(random_rot(t.board, rng.gen()));
@@ -691,13 +693,15 @@ pub fn train_model_with_db(
             if cfg!(feature = "slow") {
                 thread::sleep(Duration::from_micros(200));
             }
+            // println!("val:{:#?}", bce_loss(0.5, t.t_val));
             let (loss, delta) = bce_loss(val, t.t_val);
-            let (loss, delta) = bce_loss(val, (t.result as f32) * 0.499 + 0.5);
+            model.update(b, delta);
+            // let (loss, delta) = bce_loss(0.5, t.t_val);
+            // let (loss, delta) = bce_loss(val, (t.result as f32) * 0.499 + 0.5);
             match smoothing_loss {
                 None => smoothing_loss = Some(loss),
                 Some(loss_) => smoothing_loss = Some(SMOOTHING * loss_ + (1.0 - SMOOTHING) * loss),
             }
-            model.update(b, delta);
 
             pb.inc(1);
             pb.set_message(format!(
@@ -707,7 +711,7 @@ pub fn train_model_with_db(
             ));
             if step % LOG_LOSS_N == 0 {
                 pb.println(format!("[loss]:{}", smoothing_loss.unwrap()));
-
+                println!("[loss]:{}", smoothing_loss.unwrap());
                 let mut losses = Vec::new();
 
                 let eval_it =
@@ -717,8 +721,9 @@ pub fn train_model_with_db(
                     let b = &u128_to_b(t.board);
                     let val = model.get_val(b);
 
+                    // let (loss, _) = bce_loss(val, (t.result as f32) * 0.499 + 0.5);
                     let (loss, _) = bce_loss(val, t.t_val);
-                    let (loss, _) = bce_loss(val, (t.result as f32) * 0.499 + 0.5);
+                    // let (loss, _) = bce_loss(0.5, t.t_val);
                     losses.push(loss);
                 }
                 let size = losses.len();
@@ -726,6 +731,7 @@ pub fn train_model_with_db(
                     "[eval_loss]:{}",
                     losses.iter().sum::<f32>() / size as f32
                 ));
+                println!("[eval_loss:{}]", losses.iter().sum::<f32>() / size as f32);
             }
             step += 1;
         }

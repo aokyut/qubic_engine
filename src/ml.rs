@@ -11,7 +11,7 @@ use std::fs;
 use std::ops::{Add, AddAssign};
 use std::path::PathBuf;
 
-fn xiver_vec(n: usize, size: usize) -> Vec<f32> {
+pub fn xiver_vec(n: usize, size: usize) -> Vec<f32> {
     let mut rng = rand::thread_rng();
     let sigma = (1.0 / n as f32).sqrt();
     let normal = Normal::new(0.0, sigma).unwrap();

@@ -5,6 +5,8 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rand::{thread_rng, Rng};
 use rand_distr::Distribution;
 
+use super::Trainable;
+use anyhow::Result;
 use std::thread;
 use std::time::Duration;
 
@@ -106,6 +108,7 @@ impl Pattern {
     }
 }
 
+#[derive(Clone)]
 pub struct PatternEvaluator {
     patterns: Vec<Pattern>,
 }
@@ -127,12 +130,18 @@ impl PatternEvaluator {
             val += pat.get_value(b).iter().sum::<f32>();
         }
 
-        return val;
+        return 1.0 / (1.0 + (-val).exp());
     }
     pub fn update(&mut self, b: &Board, deltas: Vec<f32>) {
         for i in 0..self.patterns.len() {
             self.patterns[i].update(b, &deltas);
         }
+    }
+}
+
+impl EvaluatorF for PatternEvaluator {
+    fn eval_func_f32(&self, b: &Board) -> f32 {
+        return self.get_value(b);
     }
 }
 
@@ -293,6 +302,7 @@ pub fn test_pattern_evaluator() -> PatternEvaluator {
     return pe;
 }
 
+#[derive(Clone)]
 pub struct TrainablePatternEvaluator {
     pats: Vec<Pattern>,
     pats_v: Vec<Pattern>,
@@ -344,16 +354,18 @@ impl TrainablePatternEvaluator {
         return pe;
     }
 
-    pub fn get_value(&self, b: &Board) -> f32 {
+    pub fn get_value_(&self, b: &Board) -> f32 {
         let mut val = 0.0;
         for i in 0..self.pats.len() {
             val += self.pats[i].get_value(b).iter().sum::<f32>();
         }
 
-        return val;
+        return 1.0 / (1.0 + (-val).exp());
     }
 
-    pub fn update(&mut self, b: &Board, delta: f32) {
+    pub fn update_(&mut self, b: &Board, delta: f32) {
+        let val = self.get_value_(b);
+        let delta = val * (1.0 - val) * delta;
         for i in 0..self.pats.len() {
             let vt_ = self.pats_v[i].get_value(b);
             let vt = self.pats_v[i].update(
@@ -373,24 +385,32 @@ impl TrainablePatternEvaluator {
                 b,
                 &vt.iter()
                     .zip(mt.iter())
-                    .map(|(v, m)| -self.alpha * v / (m + EPS).sqrt())
+                    .map(|(v, m)| self.alpha * v / (m + EPS).sqrt())
                     .collect::<Vec<f32>>(),
             );
         }
     }
 }
 
-impl EvaluatorF for PatternEvaluator {
-    fn eval_func_f32(&self, b: &Board) -> f32 {
-        let val = self.get_value(b);
-        if val < 0.001 {
-            return 0.001;
-        } else if val > 0.999 {
-            return 0.999;
-        } else {
-            val
-        }
+impl Trainable for TrainablePatternEvaluator {
+    fn update(&mut self, b: &Board, delta: f32) {
+        self.update_(b, delta);
     }
+
+    fn get_val(&self, b: &Board) -> f32 {
+        self.get_value_(b)
+    }
+
+    fn save(&self, file: String) -> Result<()> {
+        // self.main.save(file)
+        Ok(())
+    }
+    fn load(&mut self, file: String) -> Result<()> {
+        // self.main.load(file)
+        Ok(())
+    }
+    fn eval(&mut self) {}
+    fn train(&mut self) {}
 }
 
 impl Analyzer for PatternEvaluator {
@@ -410,14 +430,7 @@ impl EvalAndAnalyze for PatternEvaluator {}
 
 impl EvaluatorF for TrainablePatternEvaluator {
     fn eval_func_f32(&self, b: &Board) -> f32 {
-        let val = self.get_value(b);
-        if val < 0.001 {
-            return 0.001;
-        } else if val > 0.999 {
-            return 0.999;
-        } else {
-            val
-        }
+        self.get_val(b)
     }
 }
 

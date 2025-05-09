@@ -1,10 +1,12 @@
 use proconio::input;
 use qubic_engine::ai::line::{BucketLineEvaluator, SimplLineEvaluator, TrainableBLE, TrainableSLE};
+use qubic_engine::ai::line_nn::{NNLineEvaluator, NNLineEvaluator_, TrainableNLE, TrainableNLE_};
+use qubic_engine::ai::pattern::TrainablePatternEvaluator;
 use qubic_engine::ai::position::{PositionMaskEvaluator, TrainablePME};
 use qubic_engine::ai::zhashmap::test_zhash;
 use qubic_engine::ai::{
-    self, LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PlayoutEvaluator, PlayoutLevel,
-    PositionEvaluator, TrainableLineEvaluator,
+    self, pattern, LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PlayoutEvaluator,
+    PlayoutLevel, PositionEvaluator, TrainableLineEvaluator,
 };
 use qubic_engine::board::{
     count_2row_, get_random, mate_check_horizontal, play_actor, pprint_board, pprint_u64, Board,
@@ -29,6 +31,7 @@ fn main() {
     use qubic_engine::board::*;
 
     // let a1 = Agent::Mcts(50, 5000);
+    let m1 = NegAlpha::new(Box::new(CoEvaluator::best()), 1);
     let m2 = NegAlpha::new(Box::new(CoEvaluator::best()), 2);
     let m3 = NegAlpha::new(Box::new(CoEvaluator::best()), 3);
     let m3_f32 = NegAlphaF::new(Box::new(CoEvaluator::best()), 3);
@@ -47,20 +50,21 @@ fn main() {
     // let l3 = wrapping_line_eval(l.clone(), 3);
     // let l4 = wrapping_line_eval(l.clone(), 4);
     // let l5 = wrapping_line_eval(l.clone(), 5);
-    // let mut l3_ = NegAlphaF::new(Box::new(l.clone()), 1);
-    // let l3_ = MateWrapperActor::new(Box::new(l3_));
+    let mut l3_ = NegAlphaF::new(Box::new(l.clone()), 1);
+    let l3_ = MateWrapperActor::new(Box::new(l3_));
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l5_.hashmap = true;
-    l5_.timelimit = 100;
+    l5_.timelimit = 1000;
     l5_.min_depth = 7;
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
     let l7_ = MateWrapperActor::new(Box::new(l7_));
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
+    let po2 = PlayoutEvaluator::new(PlayoutLevel::Actor(Box::new(m1)));
 
-    let mcts = ai::mcts::Mcts::new(10_000, 3, 2000, po);
-    // let mcts2 = ai::mcts::Mcts::new(10_000, 3, l3_);
+    let mcts = ai::mcts::Mcts::new(10_000, 3, 5000, po);
+    let mcts2 = ai::mcts::Mcts::new(10_000, 3, 5000, po2);
 
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
@@ -77,7 +81,7 @@ fn main() {
 
     // make_db();
     // use_aip();
-    // play_actor(&mcts, &l5_, true);
+    // play_actor(&mcts, &mcts2, true);
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
     // db.concat(db_);
@@ -85,11 +89,13 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    let result = eval_actor(&l5_, &mcts, 100, false);
+    // let result = eval_actor(&l5_, &mcts, 100, false);
     // println!("time:{}", start.elapsed().as_nanos());
-    println!("{result:#?}");
-    return;
+    // println!("{result:#?}");
+    // return;
     // let (a, b, c) = compare(&m2, &mm3);
+
+    // pprint_u64(0b1000010000100001100001000010000110000100001000011000010000100001);
 
     // exp_count_2row_();
     // println!("{}", 3 * 3 & 1)
@@ -113,11 +119,51 @@ fn main() {
     // );
     // train_line_eval();
     // mpc_for_coe(7, 7);
-    // profile();
+    profile();
     // beam_search();
     // test_zhash();
     // print_pmodel();
     // exp_positoin_eval_get_count();
+    // get_magic_number();
+}
+
+fn get_magic_number() {
+    // let digit = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    let digit = vec![0, 21, 42, 63];
+    let mut max = 0;
+    let mut rng = thread_rng();
+
+    for i in 0_u64..(1 << 32) {
+        let tar = rng.gen::<u64>();
+        // let tar = tar as u32;
+        let mut ok = true;
+        // println!("tar:{tar}");
+
+        for i in 0_u64..(1 << digit.len()) {
+            let mut j: u64 = 0;
+            for k in 0..digit.len() {
+                if (i >> k) & 1 == 1 {
+                    j |= 1 << digit[k];
+                }
+            }
+            println!("i:{i}, j:{j:b},{}", j.count_ones());
+            let produce = ((j.wrapping_mul(tar)) >> 60) & 15;
+
+            let expected: u64 = j.count_ones() as u64;
+            if expected != produce.count_ones() as u64 {
+                if max < i {
+                    max = i;
+                }
+                println!("tar:{tar:x}, end:{i:x}, produce:{produce}, expected:{expected}");
+                ok = false;
+                break;
+            }
+        }
+        if ok {
+            println!("magic number:{tar:x} !");
+            break;
+        }
+    }
 }
 
 fn call_evaluator() {
@@ -146,7 +192,7 @@ fn exp_positoin_eval_get_count() {
     let mut it = BoardIter::new(true);
     let mut time_a = 0;
     let mut time_b = 0;
-    let n = 1000_000;
+    let n = 1_000_000;
     let mut count = 0;
 
     for b in it {
@@ -239,8 +285,10 @@ fn profile() {
     // let _ = l.load("position.json".to_string());
 
     let mut long = NegAlphaF::new(Box::new(l.clone()), 7);
-    long.timelimit = 500;
+    long.timelimit = 1000;
     long.min_depth = 7;
+    long.scout = true;
+    // long.hashmap = true;
 
     let mut counts: Vec<f32> = vec![0.0; 64];
     let mut search_time: Vec<u128> = vec![0; 64];
@@ -431,7 +479,7 @@ fn train_line_eval() {
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
     let mut model = SimplLineEvaluator::new();
     let _ = model.load("simple.json".to_string());
-    let mut bigmodel = BucketLineEvaluator::from(model);
+    // let mut bigmodel = BucketLineEvaluator::from(model);
 
     // let n = 32;
     // for i in 0..n {
@@ -443,18 +491,23 @@ fn train_line_eval() {
     // }
     // return;
 
-    let mut model = TrainableBLE::from(bigmodel, 0.001);
+    // let mut model = TrainableBLE::from(bigmodel, 0.001);
+    let mut model = TrainableSLE::from(model, 0.001);
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
     let mut pmodel = PositionMaskEvaluator::new();
     let mut pmodel = TrainablePME::from(pmodel, 0.001);
+    let mut nmodel = NNLineEvaluator_::zero();
+    let mut nmodel = TrainableNLE_::from(nmodel, 0.005);
+    let mut pmodel = pattern::test_pattern_evaluator();
+    let mut pmodel = TrainablePatternEvaluator::from_pattern_evaluator(pmodel, 0.0001, 0.9, 0.999);
 
     qubic_engine::train::train_model_with_db(
-        pmodel,
+        nmodel,
         false,
         true,
-        String::from("position.json"),
-        String::from("position.json"),
-        String::from("winRate_coe5_genRandom_insertRandom1_48"),
+        String::from("dummy.json"),
+        String::from("dummy.json"),
+        String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
         String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     );
 }
