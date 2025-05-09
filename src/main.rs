@@ -56,8 +56,12 @@ fn main() {
     l5_.hashmap = true;
     l5_.timelimit = 1000;
     l5_.min_depth = 7;
-    // let l5_ = MateWrapperActor::new(Box::new(l5_));
-    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
+    let l5_ = MateWrapperActor::new(Box::new(l5_));
+
+    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 29);
+    l7_.scout = true;
+    l7_.timelimit = 1000;
+    l7_.min_depth = 7;
     let l7_ = MateWrapperActor::new(Box::new(l7_));
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
@@ -79,9 +83,10 @@ fn main() {
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha_(&b);
 
-    // make_db();
+    make_db();
     // use_aip();
-    // play_actor(&mcts, &mcts2, true);
+    // let result = play_actor(&l5_, &l7_, true);
+    // println!("{result:#?}");
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
     // db.concat(db_);
@@ -89,7 +94,7 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    // let result = eval_actor(&l5_, &mcts, 100, false);
+    // let result = eval_actor(&l5_, &l7_, 100, false);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
     // return;
@@ -118,8 +123,8 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
     // train_line_eval();
-    // mpc_for_coe(7, 7);
-    profile();
+    // mpc_for_coe(7,7);
+    // profile();
     // beam_search();
     // test_zhash();
     // print_pmodel();
@@ -279,6 +284,7 @@ fn use_ai() {
 
 fn profile() {
     let mut b = Board::new();
+    b = b.next(0);
     let mut l = SimplLineEvaluator::new();
     // let mut l = PositionMaskEvaluator::new();
     let _ = l.load("simple.json".to_string());
@@ -320,7 +326,7 @@ fn profile() {
         action = Agent::Random.get_action(&b);
 
         // let action = m3.get_action(&b);
-        b = b.next(action);
+        // b = b.next(action);
         step += 1;
         if step % 1 == 0 {
             for i in 0..64 {
@@ -358,8 +364,13 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
     let mut l = SimplLineEvaluator::new();
     let _ = l.load("simple.json".to_string());
 
-    let long = NegAlphaF::new(Box::new(l.clone()), long_depth);
-    let short = NegAlphaF::new(Box::new(l.clone()), short_depth);
+    let mut long = NegAlphaF::new(Box::new(l.clone()), long_depth);
+    let mut short = NegAlphaF::new(Box::new(l.clone()), short_depth);
+
+    long.min_depth = long_depth;
+    short.min_depth = short_depth;
+    long.hashmap = true;
+    short.scout = true;
 
     let mut all_count = 0.0;
     let mut all_err_sum = 0.0;
@@ -387,7 +398,7 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
 
         let action;
         let start = Instant::now();
-        let (action1, val, _) = short.eval_with_negalpha_zhash(&b);
+        let (action1, val, _) = short.eval_with_negalpha(&b);
         let t2 = start.elapsed().as_nanos();
 
         let start = Instant::now();

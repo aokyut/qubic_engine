@@ -873,57 +873,35 @@ pub fn negscoutf_hash_iter(
 
     let mut count = 0;
     let actions = b.valid_actions();
+
+    let (att, def) = b.get_att_def();
+    let four_mask = get_reach_mask(att, def);
+    if four_mask != 0{
+        let action = four_mask.trailing_zeros() % 16;
+        return (action as u8, Ex(1.0), 0);
+    }
+    let stone = att | def;
+    // あと一箇所しか置ける場所がなければ引き分けが確定している。
+    if stone.count_ones() == 63{
+        let action = !stone.trailing_zeros() % 16;
+        return (action as u8, Ex(0.5), 0);
+    }
+
     let mut max_val = -2.0;
     let mut max_actions = Vec::new();
     let mut alpha = alpha;
 
-    // pprint_board(b);
-    // print_blank(5 - depth);
-    // println!("[depth:{depth}]alpha:{alpha}, beta:{beta}");
-
     if depth <= 1 {
         for action in actions.iter() {
             let next_board = &b.next(*action);
-            let hash = next_board.hash();
-            let hash = b2u128(next_board);
-            let map_val = hashmap.get(&hash);
-            let val;
-            match map_val {
-                Some(&(old_val, old_gen)) => {
-                    if old_val.is_equal(0.0) {
-                        return (*action, Ex(1.0), count);
-                    } else if next_board.is_draw() {
-                        return (*action, Ex(0.5), count);
-                    }
-                    val = 1.0 - old_val.get_val();
-                }
-                None => {
-                    if next_board.is_win() {
-                        hashmap.insert(hash, (Ex(0.0), gen));
-                        return (*action, Ex(1.0), count);
-                    } else if next_board.is_draw() {
-                        hashmap.insert(hash, (Ex(0.5), gen));
-                        return (*action, Ex(0.5), count);
-                    }
-                    let next_val = e.eval_func_f32(next_board);
-                    val = 1.0 - next_val;
-                    hashmap.insert(hash, (Ex(next_val), gen));
-                }
-            }
-            // if next_board.is_win(){
-            //     return (*action, Ex(1.0), count);
-            // }else if next_board.is_draw(){
-            //     return (*action, Ex(0.5), count)
-            // }
-            // let next_val = e.eval_func_f32(next_board);
-            // let val = 1.0 - next_val;
+            let next_val = e.eval_func_f32(next_board);
+            let val = 1.0 - next_val;
             if max_val < val {
                 max_val = val;
                 max_actions = vec![*action];
                 if max_val > alpha {
                     alpha = max_val;
                     if alpha > beta {
-                        // println!("[{depth}]->max_val:{max_val}");
                         return (*action, High(max_val), count);
                     }
                 }
@@ -942,11 +920,6 @@ pub fn negscoutf_hash_iter(
 
             match map_val {
                 Some(&(old_val, old_gen)) => {
-                    if old_val.is_equal(0.0) {
-                        return (action, Ex(1.0), count);
-                    } else if next_board.is_draw() {
-                        return (action, Ex(0.5), count);
-                    }
                     action_nb_vals.push((
                         action,
                         next_board,
@@ -956,17 +929,6 @@ pub fn negscoutf_hash_iter(
                     ));
                 }
                 None => {
-                    if next_board.is_win() {
-                        hashmap.insert(hash, (Ex(0.0), gen));
-                        // print_blank(5 - depth);
-                        // println!("[depth:{depth}]action:{action}, win");
-                        return (action, Ex(1.0), count);
-                    } else if next_board.is_draw() {
-                        hashmap.insert(hash, (Ex(0.5), gen));
-                        // print_blank(5 - depth);
-                        // println!("[depth:{depth}]action:{action}, draw");
-                        return (action, Ex(0.5), count);
-                    }
                     let val = 1.0 - e.eval_func_f32(&next_board);
                     action_nb_vals.push((action, next_board, val, hash, (None, 0)));
                 }
@@ -982,9 +944,6 @@ pub fn negscoutf_hash_iter(
             let val;
             if old_gen == gen {
                 if let Some(fail_val) = hit.clone() {
-                    // if depth > 2 {
-                    //     println!("[{depth}]hit, {}", fail_val.to_string());
-                    // }
                     match fail_val {
                         High(x) => {
                             if beta < x {
@@ -1023,23 +982,23 @@ pub fn negscoutf_hash_iter(
                                 continue;
                             } else {
                                 // null window search
-                                if depth == 7 && idx == 0{
-                                    let (_, _val, _) = negscoutf_hash_iter(
-                                        &next_board,
-                                        depth - 1,
-                                        (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00002,
-                                        (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00001,
-                                        gen,
-                                        hashmap,
-                                        e,
-                                        false,
-                                    );
-                                    println!("{_val:#?}");
+                                // if depth == 7 && idx > 0{
+                                //     let (_, _val, _) = negscoutf_hash_iter(
+                                //         &next_board,
+                                //         depth - 1,
+                                //         (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00002,
+                                //         (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00001,
+                                //         gen,
+                                //         hashmap,
+                                //         e,
+                                //         false,
+                                //     );
+                                //     // println!("{_val:#?}");
 
-                                    if _val.is_fail_high() {
-                                        continue;
-                                    }
-                                }
+                                //     if _val.is_fail_high() {
+                                //         continue;
+                                //     }
+                                // }
 
                                 let new_beta = x.min(beta);
                                 // fial_low(alpha) or fail_ex(val) < new_beta
@@ -1067,22 +1026,22 @@ pub fn negscoutf_hash_iter(
                         }
                     }
                 } else {
-                    if depth == 7 && idx == 0{
-                        let (_, _val, _) = negscoutf_hash_iter(
-                            &next_board,
-                            depth - 1,
-                            (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00002,
-                            (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00001,
-                            gen,
-                            hashmap,
-                            e,
-                            false,
-                        );
-                        println!("{_val:#?}");
-                        if _val.is_fail_high(){
-                            continue;
-                        }
-                    }
+                    // if depth == 7 && idx > 0{
+                    //     let (_, _val, _) = negscoutf_hash_iter(
+                    //         &next_board,
+                    //         depth - 1,
+                    //         (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00002,
+                    //         (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00001,
+                    //         gen,
+                    //         hashmap,
+                    //         e,
+                    //         false,
+                    //     );
+                    //     // println!("{_val:#?}");
+                    //     if _val.is_fail_high(){
+                    //         continue;
+                    //     }
+                    // }
 
                     let (_, _val, _count) = negscoutf_hash_iter(
                         &next_board,
@@ -1121,23 +1080,23 @@ pub fn negscoutf_hash_iter(
                     }
                 }
             } else {
-                if depth == 7 && idx == 0{
-                    let (_, _val, _) = negscoutf_hash_iter(
-                        &next_board,
-                        depth - 1,
-                        (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00002,
-                        (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00001,
-                        gen,
-                        hashmap,
-                        e,
-                        false,
-                    );
-                    println!("{_val:#?}");
+                // if depth == 7 && idx > 0{
+                //     let (_, _val, _) = negscoutf_hash_iter(
+                //         &next_board,
+                //         depth - 1,
+                //         (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00002,
+                //         (F32_INVERSE_BIAS - alpha) * F32_INVERSE_LAMBDA_INVERSE - 0.00001,
+                //         gen,
+                //         hashmap,
+                //         e,
+                //         false,
+                //     );
+                //     // println!("{_val:#?}");
     
-                    if _val.is_fail_high() {
-                        continue;
-                    }
-                }
+                //     if _val.is_fail_high() {
+                //         continue;
+                //     }
+                // }
 
                 let (_, _val, _count) = negscoutf_hash_iter(
                     &next_board,
@@ -1267,7 +1226,7 @@ impl NegAlphaF {
             hashmap: false,
             scout: false,
             timelimit: 1000,
-            min_depth: depth / 2,
+            min_depth: 1,
         };
     }
 

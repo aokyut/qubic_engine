@@ -331,7 +331,7 @@ pub struct NNLineEvaluator_ {
 }
 
 impl NNLineEvaluator_ {
-    const D: usize = 2;
+    const D: usize = 4;
     const INPUT: usize = 7 * Self::D;
     const F3: usize = WFL3_WIDTH * WFL3_WIDTH;
     const F2: usize = WFL2_WIDTH * WFL2_WIDTH;

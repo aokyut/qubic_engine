@@ -1299,8 +1299,8 @@ pub fn play_actor(a1: &impl GetAction, a2: &impl GetAction, render: bool) -> (f3
     let mut b = Board::new();
     // b = b.next(get_random(&b));
     // b = b.next(get_random(&b));
+    // b = b.next(0);
     // b = b.next(15);
-    // b = b.next(12);
 
     loop {
         if render {
