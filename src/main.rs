@@ -46,22 +46,24 @@ fn main() {
     let m3 = Agent::Struct(String::from("m3"), Box::new(m3));
     let m5 = Agent::Struct(String::from("m5"), Box::new(m5));
     let mut l = SimplLineEvaluator::new();
-    l.load("simple.json".to_string());
+    l.load("sle_tl50.json".to_string());
     // let l3 = wrapping_line_eval(l.clone(), 3);
     // let l4 = wrapping_line_eval(l.clone(), 4);
     // let l5 = wrapping_line_eval(l.clone(), 5);
     let mut l3_ = NegAlphaF::new(Box::new(l.clone()), 1);
     let l3_ = MateWrapperActor::new(Box::new(l3_));
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
+    // l5_.scout = true;
     l5_.hashmap = true;
-    l5_.timelimit = 1000;
-    l5_.min_depth = 7;
+    l5_.timelimit = 0;
+    l5_.min_depth = 5;
     let l5_ = MateWrapperActor::new(Box::new(l5_));
+    l.load("simple.json".to_string());
 
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 29);
-    l7_.scout = true;
-    l7_.timelimit = 1000;
-    l7_.min_depth = 7;
+    l7_.hashmap = true;
+    l7_.timelimit = 0;
+    l7_.min_depth = 5;
     let l7_ = MateWrapperActor::new(Box::new(l7_));
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
@@ -83,7 +85,7 @@ fn main() {
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha_(&b);
 
-    make_db();
+    // make_db();
     // use_aip();
     // let result = play_actor(&l5_, &l7_, true);
     // println!("{result:#?}");
@@ -95,6 +97,7 @@ fn main() {
 
     // let start = Instant::now();
     // let result = eval_actor(&l5_, &l7_, 100, false);
+    // compare(&l5_, &l7_);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
     // return;
@@ -122,7 +125,7 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
-    // train_line_eval();
+    train_line_eval();
     // mpc_for_coe(7,7);
     // profile();
     // beam_search();
@@ -507,18 +510,18 @@ fn train_line_eval() {
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
     let mut pmodel = PositionMaskEvaluator::new();
     let mut pmodel = TrainablePME::from(pmodel, 0.001);
-    let mut nmodel = NNLineEvaluator_::zero();
+    let mut nmodel = NNLineEvaluator_::new();
     let mut nmodel = TrainableNLE_::from(nmodel, 0.005);
     let mut pmodel = pattern::test_pattern_evaluator();
     let mut pmodel = TrainablePatternEvaluator::from_pattern_evaluator(pmodel, 0.0001, 0.9, 0.999);
 
     qubic_engine::train::train_model_with_db(
         nmodel,
-        false,
         true,
-        String::from("dummy.json"),
-        String::from("dummy.json"),
-        String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
+        true,
+        String::from("sle_tl50_.json"),
+        String::from("sle_tl50_.json"),
+        String::from("winRate_coe5_genRandom_insertRandom1_48"),
         String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     );
 }
@@ -616,16 +619,16 @@ fn explore_best_model() {
         }
 
         let score = 3.0 / score;
-        println!("score:{}, max_v:{}:{}", score, max_v, best.name());
+        // println!("score:{}, max_v:{}:{}", score, max_v, best.name());
 
         if max_v < score {
             max_v = score;
             best = tar;
-            println!("[{}]swap! best model is {}", score, best.name());
+            // println!("[{}]swap! best model is {}", score, best.name());
         }
     }
 
-    println!("best_model:{}", best.name());
+    // println!("best_model:{}", best.name());
 }
 
 fn mc(a: usize, b: usize) -> Agent {
@@ -693,7 +696,7 @@ fn get_position_eval_agent_alpha(
     return m3_;
 }
 
-fn compare(a1: &Agent, a2: &Agent) -> (i32, f32, f32) {
+fn compare(a1: &impl GetAction, a2: &impl GetAction) -> (i32, f32, f32) {
     let (r1, r2, flag) = compare_agent(a1, a2, 200, 0.001, false);
 
     let r1 = r1.floor();
@@ -701,25 +704,25 @@ fn compare(a1: &Agent, a2: &Agent) -> (i32, f32, f32) {
 
     if flag && r1 < r2 {
         println!(
-            "[{}]({r1:>4}:lose)\nvs\n[{}]({r2:>4}: win) [{:>4}]",
-            a1.name(),
-            a2.name(),
+            "[a1]({r1:>4}:lose)\nvs\n[a2]({r2:>4}: win) [{:>4}]",
+            // a1.name(),
+            // a2.name(),
             r1 + r2
         );
         return (1, r1, r2);
     } else if flag {
         println!(
-            "[{}]({r1:>4}: win)\nvs\n[{}]({r2:>4}:lose) [{:>4}]",
-            a1.name(),
-            a2.name(),
+            "[a1]({r1:>4}: win)\nvs\n[a2]({r2:>4}:lose) [{:>4}]",
+            // a1.name(),
+            // a2.name(),
             r1 + r2
         );
         return (-1, r1, r2);
     } else {
         println!(
-            "[{}]({r1:>4}:draw)\nvs\n[{}]({r2:>4}:draw) [{:>4}]",
-            a1.name(),
-            a2.name(),
+            "[a1]({r1:>4}:draw)\nvs\n[a2]({r2:>4}:draw) [{:>4}]",
+            // a1.name(),
+            // a2.name(),
             r1 + r2
         );
         return (0, r1, r2);

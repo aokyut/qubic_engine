@@ -1373,7 +1373,7 @@ pub fn eval(a1: &Agent, a2: &Agent, n: usize) -> (f32, f32) {
     return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
 }
 
-pub fn compare_agent(a1: &Agent, a2: &Agent, n: usize, th: f64, render: bool) -> (f32, f32, bool) {
+pub fn compare_agent(a1: &impl GetAction, a2: &impl GetAction, n: usize, th: f64, render: bool) -> (f32, f32, bool) {
     use super::utills::half_imcomplete_beta_func;
     let mut score1 = 0.0;
     let mut score2 = 0.0;

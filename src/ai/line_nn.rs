@@ -331,7 +331,7 @@ pub struct NNLineEvaluator_ {
 }
 
 impl NNLineEvaluator_ {
-    const D: usize = 4;
+    const D: usize = 8;
     const INPUT: usize = 7 * Self::D;
     const F3: usize = WFL3_WIDTH * WFL3_WIDTH;
     const F2: usize = WFL2_WIDTH * WFL2_WIDTH;
@@ -489,6 +489,121 @@ impl NNLineEvaluator_ {
     pub fn load(&mut self, _: String) -> Result<()> {
         Ok(())
     }
+
+    pub fn adjust(&mut self) {
+        let mut mean = vec![0.0; Self::D];
+        let mut square = vec![0.0; Self::D];
+        let mut stds = vec![0.0; Self::D];
+        let sigma = (Self::D as f32).sqrt();
+
+        for j in 0..Self::D {
+            for i in 0..self.wfl1.len() {
+                mean[j] += self.wfl1[i][j];
+                square[j] += self.wfl1[i][j].powi(2);
+            }
+            mean[j] /= self.wfl1.len() as f32;
+            square[j] /= self.wfl1.len() as f32;
+            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
+        }
+        for i in 0..self.wfl1.len() {
+            for j in 0..Self::D {
+                self.wfl1[i][j] = (self.wfl1[i][j] - mean[j]) / (stds[j] * sigma);
+            }
+        }
+
+        let mut mean = vec![0.0; Self::D];
+        let mut square = vec![0.0; Self::D];
+        let mut stds = vec![0.0; Self::D];
+
+        for j in 0..Self::D {
+            for i in 0..self.wfl2.len() {
+                mean[j] += self.wfl2[i][j];
+                square[j] += self.wfl2[i][j].powi(2);
+            }
+            mean[j] /= self.wfl2.len() as f32;
+            square[j] /= self.wfl2.len() as f32;
+            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
+        }
+        for i in 0..self.wfl2.len() {
+            for j in 0..Self::D {
+                self.wfl2[i][j] = (self.wfl2[i][j] - mean[j]) / (stds[j] * sigma);
+            }
+        }
+        let mut mean = vec![0.0; Self::D];
+        let mut square = vec![0.0; Self::D];
+        let mut stds = vec![0.0; Self::D];
+
+        for j in 0..Self::D {
+            for i in 0..self.wfl3.len() {
+                mean[j] += self.wfl3[i][j];
+                square[j] += self.wfl3[i][j].powi(2);
+            }
+            mean[j] /= self.wfl3.len() as f32;
+            square[j] /= self.wfl3.len() as f32;
+            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
+        }
+        for i in 0..self.wfl3.len() {
+            for j in 0..Self::D {
+                self.wfl3[i][j] = (self.wfl3[i][j] - mean[j]) / (stds[j] * sigma);
+            }
+        }
+
+        let mut mean = vec![0.0; Self::D];
+        let mut square = vec![0.0; Self::D];
+        let mut stds = vec![0.0; Self::D];
+
+        for j in 0..Self::D {
+            for i in 0..self.wgl1.len() {
+                mean[j] += self.wgl1[i][j];
+                square[j] += self.wgl1[i][j].powi(2);
+            }
+            mean[j] /= self.wgl1.len() as f32;
+            square[j] /= self.wgl1.len() as f32;
+            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
+        }
+        for i in 0..self.wgl1.len() {
+            for j in 0..Self::D {
+                self.wgl1[i][j] = (self.wgl1[i][j] - mean[j]) / (stds[j] * sigma);
+            }
+        }
+
+        let mut mean = vec![0.0; Self::D];
+        let mut square = vec![0.0; Self::D];
+        let mut stds = vec![0.0; Self::D];
+
+        for j in 0..Self::D {
+            for i in 0..self.wgl2.len() {
+                mean[j] += self.wgl2[i][j];
+                square[j] += self.wgl2[i][j].powi(2);
+            }
+            mean[j] /= self.wgl2.len() as f32;
+            square[j] /= self.wgl2.len() as f32;
+            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
+        }
+        for i in 0..self.wgl2.len() {
+            for j in 0..Self::D {
+                self.wgl2[i][j] = (self.wgl2[i][j] - mean[j]) / (stds[j] * sigma);
+            }
+        }
+        let mut mean = vec![0.0; Self::D];
+        let mut square = vec![0.0; Self::D];
+        let mut stds = vec![0.0; Self::D];
+
+        for j in 0..Self::D {
+            for i in 0..self.wgl3.len() {
+                mean[j] += self.wgl3[i][j];
+                square[j] += self.wgl3[i][j].powi(2);
+            }
+            mean[j] /= self.wgl3.len() as f32;
+            square[j] /= self.wgl3.len() as f32;
+            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
+        }
+        for i in 0..self.wgl3.len() {
+            for j in 0..Self::D {
+                self.wgl3[i][j] = (self.wgl3[i][j] - mean[j]) / (stds[j] * sigma);
+            }
+        }
+    }
 }
 
 impl EvaluatorF for NNLineEvaluator_ {
@@ -592,7 +707,10 @@ impl Trainable for TrainableNLE_ {
             v0[i] += self.main.bias[i];
         }
 
-        let v1 = v0.iter().map(|a| a.max(0.0) + (a * 0.01).min(0.0)).collect::<Vec<f32>>();
+        let v1 = v0
+            .iter()
+            .map(|a| a.max(0.0) + (a * 0.01).min(0.0))
+            .collect::<Vec<f32>>();
         // let v1: Vec<f32> = v0.iter().map(|a| *a).collect::<Vec<f32>>();
 
         let v2 = v1
@@ -612,31 +730,35 @@ impl Trainable for TrainableNLE_ {
         // let dw_w_acum: Vec<f32> = dv2.iter().zip(v1.iter()).map(|(a, b)| a * b).collect();
         let dw_w_acum: Vec<f32> = v1.iter().map(|a| a * dv2).collect();
         let dv1: Vec<f32> = self.main.w_acum.iter().map(|a| a * dv2).collect();
-        let dv0: Vec<f32> = dv1.iter().zip(v0.iter()).map(|(a, b)| a * (b.signum()) * 0.495 + 0.505).collect();
+        let dv0: Vec<f32> = dv1
+            .iter()
+            .zip(v0.iter())
+            .map(|(a, b)| a * (b.signum()) * 0.495 + 0.505)
+            .collect();
         let di: Vec<f32> = dv0.clone();
 
-        // println!("v0:{:#?}", v0);
-        // println!("v1:{:#?}", v1);
-        // println!("v2:{:#?}", v2);
-        // println!("v3:{:#?}", v3);
+        println!("v0:{:#?}", v0);
+        println!("v1:{:#?}", v1);
+        println!("v2:{:#?}", v2);
+        println!("v3:{:#?}", v3);
 
-        // println!("dv0:{:#?}", dv0);
-        // println!("dv1:{:#?}", dv1);
-        // println!("dv2:{:#?}", dv2);
-        // println!("dv3:{:#?}", delta);
-        self.main.w_acum = vec![1.0, -1.0, 1.0, -1.0];
+        println!("dv0:{:#?}", dv0);
+        println!("dv1:{:#?}", dv1);
+        println!("dv2:{:#?}", dv2);
+        println!("dv3:{:#?}", delta);
+        self.main.w_acum = vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0];
 
         // di
 
         for i in 0..NNLineEvaluator_::D {
-            // print!("{:#?},", self.v.wfl1[f1][i]);
-            // print!("{:#?},", self.v.wfl2[f2][i]);
-            // print!("{:#?},", self.v.wfl3[f3][i]);
-            // print!("{:#?},", self.v.wgl1[g1][i]);
-            // print!("{:#?},", self.v.wgl2[g2][i]);
-            // print!("{:#?},", self.v.wgl3[g3][i]);
-            // print!("{:#?},", self.v.bias[i]);
-            // println!("");
+            print!("{:#?},", self.v.wfl1[f1][i]);
+            print!("{:#?},", self.v.wfl2[f2][i]);
+            print!("{:#?},", self.v.wfl3[f3][i]);
+            print!("{:#?},", self.v.wgl1[g1][i]);
+            print!("{:#?},", self.v.wgl2[g2][i]);
+            print!("{:#?},", self.v.wgl3[g3][i]);
+            print!("{:#?},", self.v.bias[i]);
+            println!("");
             self.v.wfl1[f1][i] = self.beta * self.v.wfl1[f1][i] + (1.0 - self.beta) * di[i];
             self.v.wfl2[f2][i] = self.beta * self.v.wfl2[f2][i] + (1.0 - self.beta) * di[i];
             self.v.wfl3[f3][i] = self.beta * self.v.wfl3[f3][i] + (1.0 - self.beta) * di[i];
@@ -663,6 +785,8 @@ impl Trainable for TrainableNLE_ {
                 self.main.wt3nw[tn3][i] += self.v.wt3nw[tn3][i];
             }
         }
+
+        self.main.adjust();
     }
 
     fn get_val(&self, b: &Board) -> f32 {

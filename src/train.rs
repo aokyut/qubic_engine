@@ -637,11 +637,15 @@ pub fn train_model_with_db(
     let test_actor2 = Agent::Mcts(50, 500);
     let evaluator = super::ai::CoEvaluator::best();
     let neg = super::ai::NegAlpha::new(Box::new(evaluator), 3);
-    let mut l = super::ai::LineEvaluator::new();
-    l.load("wR5_gR_ir1_48.leval".to_string());
-    let mut l3 = NegAlphaF::new(Box::new(l.clone()), 3);
+    let mut l = super::ai::line::SimplLineEvaluator::new();
+    l.load("simple.json".to_string());
+    let mut l3 = NegAlphaF::new(Box::new(l.clone()), 29);
+    l3.hashmap = true;
+    l3.min_depth = 5;
+    l3.timelimit = 1;
     let le = MateWrapperActor::new(Box::new(l3));
     let mut rng = thread_rng();
+    let mut max_score = 0.0;
 
     if load {
         model.load(load_name.clone());
@@ -660,18 +664,6 @@ pub fn train_model_with_db(
         model.train();
         db.set_batch_num();
         // db.set_lambda(LAMBDA);
-        if epoch < 0 {
-            let agent = NegAlphaF::new(Box::new(model.clone()), 3);
-            let agent = MateWrapperActor::new(Box::new(agent));
-            let (e11, e12) = eval_actor(&agent, &test_actor1, EVAL_NUM, false);
-            let (e21, e22) = eval_actor(&agent, &test_actor2, EVAL_NUM, false);
-            let (e31, e32) = eval_actor(&agent, &neg, EVAL_NUM, false);
-            let (e41, e42) = eval_actor(&agent, &le, EVAL_NUM, false);
-            println!("[minimax(3)]:({}, {})", e11, e12);
-            println!("[mcts(50, 500)]:({}, {})", e21, e22);
-            println!("[neg(3)]:({}, {})", e31, e32);
-            println!("[le(3)]:({}, {})", e41, e42);
-        }
 
         let batch_num = ts.len() / BATCH_SIZE;
         let n = BATCH_SIZE * 1000_000;
@@ -695,6 +687,7 @@ pub fn train_model_with_db(
             }
             // println!("val:{:#?}", bce_loss(0.5, t.t_val));
             let (loss, delta) = bce_loss(val, t.t_val);
+            // let (loss, delta) = mse_loss(val, t.t_val);
             model.update(b, delta);
             // let (loss, delta) = bce_loss(0.5, t.t_val);
             // let (loss, delta) = bce_loss(val, (t.result as f32) * 0.499 + 0.5);
@@ -723,6 +716,7 @@ pub fn train_model_with_db(
 
                     // let (loss, _) = bce_loss(val, (t.result as f32) * 0.499 + 0.5);
                     let (loss, _) = bce_loss(val, t.t_val);
+                    // let (loss, _) = mse_loss(val, t.t_val);
                     // let (loss, _) = bce_loss(0.5, t.t_val);
                     losses.push(loss);
                 }
@@ -735,10 +729,36 @@ pub fn train_model_with_db(
             }
             step += 1;
         }
+        pb.finish();
 
-        if save {
-            model.train();
-            model.save(name.clone());
+        if epoch < 0 {
+            model.eval();
+            let mut agent = NegAlphaF::new(Box::new(model.clone()), 3);
+            agent.hashmap = true;
+            agent.min_depth = 3;
+            let agent = MateWrapperActor::new(Box::new(agent));
+            let (e11, e12) = eval_actor(&agent, &test_actor1, EVAL_NUM, false);
+            let (e21, e22) = eval_actor(&agent, &test_actor2, EVAL_NUM, false);
+            let (e31, e32) = eval_actor(&agent, &neg, EVAL_NUM, false);
+            let mut agent = NegAlphaF::new(Box::new(model.clone()), 29);
+            agent.hashmap = true;
+            agent.min_depth = 5;
+            agent.timelimit = 1;
+            let agent = MateWrapperActor::new(Box::new(agent));
+            let (e41, e42) = eval_actor(&agent, &le, EVAL_NUM, false);
+            println!("[minimax(3)]:({}, {})", e11, e12);
+            println!("[mcts(50, 500)]:({}, {})", e21, e22);
+            println!("[neg(3)]:({}, {})", e31, e32);
+            println!("[sle(3)]:({}, {})", e41, e42);
+
+            if max_score < e41 * e31 {
+                println!("max_score:{}->{}({},{})", max_score, e41 * e31, e41, e31);
+                max_score = e41 * e31;
+                if save {
+                    model.train();
+                    model.save(name.clone());
+                }
+            }
         }
     }
 }
