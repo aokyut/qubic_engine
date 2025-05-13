@@ -733,7 +733,7 @@ impl Trainable for TrainableNLE_ {
         let dv0: Vec<f32> = dv1
             .iter()
             .zip(v0.iter())
-            .map(|(a, b)| a * (b.signum()) * 0.495 + 0.505)
+            .map(|(a, b)| a * (b.signum() * 0.495 + 0.505))
             .collect();
         let di: Vec<f32> = dv0.clone();
 
@@ -746,7 +746,21 @@ impl Trainable for TrainableNLE_ {
         println!("dv1:{:#?}", dv1);
         println!("dv2:{:#?}", dv2);
         println!("dv3:{:#?}", delta);
-        self.main.w_acum = vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0];
+        self.v.w_acum = self
+            .v
+            .w_acum
+            .iter()
+            .zip(dw_w_acum.iter())
+            .map(|(a, b)| a * self.beta + (1.0 - self.beta) * b)
+            .collect();
+        self.main.w_acum = self
+            .main
+            .w_acum
+            .iter()
+            .zip(self.v.w_acum.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+        // self.main.w_acum = vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0];
 
         // di
 
@@ -786,7 +800,7 @@ impl Trainable for TrainableNLE_ {
             }
         }
 
-        self.main.adjust();
+        // self.main.adjust();
     }
 
     fn get_val(&self, b: &Board) -> f32 {
