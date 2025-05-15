@@ -704,7 +704,7 @@ pub fn train_model_with_db(
             ));
             if step % LOG_LOSS_N == 0 {
                 pb.println(format!("[loss]:{}", smoothing_loss.unwrap()));
-                println!("[loss]:{}", smoothing_loss.unwrap());
+                println!("[epoch:{epoch}][loss]:{}", smoothing_loss.unwrap());
                 let mut losses = Vec::new();
 
                 let eval_it =
@@ -725,13 +725,16 @@ pub fn train_model_with_db(
                     "[eval_loss]:{}",
                     losses.iter().sum::<f32>() / size as f32
                 ));
-                println!("[eval_loss:{}]", losses.iter().sum::<f32>() / size as f32);
+                println!(
+                    "[epoch:{epoch}][eval_loss:{}]",
+                    losses.iter().sum::<f32>() / size as f32
+                );
             }
             step += 1;
         }
         pb.finish();
 
-        if epoch < 0 {
+        if epoch >= 0 {
             model.eval();
             let mut agent = NegAlphaF::new(Box::new(model.clone()), 3);
             agent.hashmap = true;
@@ -746,14 +749,14 @@ pub fn train_model_with_db(
             agent.timelimit = 1;
             let agent = MateWrapperActor::new(Box::new(agent));
             let (e41, e42) = eval_actor(&agent, &le, EVAL_NUM, false);
-            println!("[minimax(3)]:({}, {})", e11, e12);
-            println!("[mcts(50, 500)]:({}, {})", e21, e22);
-            println!("[neg(3)]:({}, {})", e31, e32);
-            println!("[sle(3)]:({}, {})", e41, e42);
+            println!("[epoch:{epoch}][minimax(3)]:({}, {})", e11, e12);
+            println!("[epoch:{epoch}][mcts(50, 500)]:({}, {})", e21, e22);
+            println!("[epoch:{epoch}][neg(3)]:({}, {})", e31, e32);
+            println!("[epoch:{epoch}][sle(3)]:({}, {})", e41, e42);
 
-            if max_score < e41 * e31 {
-                println!("max_score:{}->{}({},{})", max_score, e41 * e31, e41, e31);
-                max_score = e41 * e31;
+            if max_score < e41 {
+                println!("max_score:{}->{}", max_score, e41);
+                max_score = e41;
                 if save {
                     model.train();
                     model.save(name.clone());

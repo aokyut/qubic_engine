@@ -517,7 +517,7 @@ fn train_line_eval() {
 
     qubic_engine::train::train_model_with_db(
         nmodel,
-        true,
+        false,
         true,
         String::from("sle_tl50_.json"),
         String::from("sle_tl50_.json"),

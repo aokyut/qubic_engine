@@ -7,7 +7,7 @@ use ndarray::{
     self as nd, array, concatenate, s, Array, Array0, Array2, ArrayViewMut1, Axis, Dim, Ix,
 };
 use rand_distr::Distribution;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::ml;
 
@@ -315,7 +315,7 @@ impl EvaluatorF for TrainableNLE {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct NNLineEvaluator_ {
     pub wfl3: Vec<Vec<f32>>,
     pub wgl3: Vec<Vec<f32>>,
@@ -482,11 +482,42 @@ impl NNLineEvaluator_ {
         return 1.0 / (1.0 + (-val).exp());
     }
 
-    pub fn save(&self, _: String) -> Result<()> {
+    pub fn save(&self, name: String) -> Result<()> {
+        use anyhow::Context;
+        use std::fs::File;
+        use std::io::{BufWriter, Write};
+
+        let data_str = serde_json::to_string(self)?;
+
+        let file = File::create(name)?;
+        let mut buff_writer: BufWriter<File> = BufWriter::new(file);
+
+        buff_writer
+            .write(data_str.as_bytes())
+            .context("write error")?;
+        buff_writer.flush().context("flush error")?;
+
         Ok(())
     }
+    pub fn load(&mut self, name: String) -> Result<()> {
+        use anyhow::Context;
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
 
-    pub fn load(&mut self, _: String) -> Result<()> {
+        let file = File::open(name)?;
+        let buff_reader: BufReader<File> = BufReader::new(file);
+
+        let mut lines = Vec::new();
+
+        for line in buff_reader.lines() {
+            // if process here, can save memory
+            lines.push(line.context("read error")?);
+        }
+        let data_str = lines.join("\n");
+        let mut src: Self = serde_json::from_str(&data_str)?;
+
+        std::mem::swap(self, &mut src);
+
         Ok(())
     }
 
@@ -718,10 +749,11 @@ impl Trainable for TrainableNLE_ {
             .zip(self.main.w_acum.iter())
             .map(|(a, b)| a * b)
             .sum::<f32>()
-            + self.main.lbias;
+            + self.main.lbias
+            + v0[0];
         let v3 = 1.0 / (1.0 + (-v2).exp());
 
-        println!("val:{v3}, bias:{}, delta:{delta}", self.main.lbias);
+        // println!("val:{v3}, bias:{}, delta:{delta}", self.main.lbias);
 
         let dv2 = v3 * (1.0 - v3) * delta * self.lr;
         self.main.lbias += dv2;
@@ -737,15 +769,15 @@ impl Trainable for TrainableNLE_ {
             .collect();
         let di: Vec<f32> = dv0.clone();
 
-        println!("v0:{:#?}", v0);
-        println!("v1:{:#?}", v1);
-        println!("v2:{:#?}", v2);
-        println!("v3:{:#?}", v3);
+        // println!("v0:{:#?}", v0);
+        // println!("v1:{:#?}", v1);
+        // println!("v2:{:#?}", v2);
+        // println!("v3:{:#?}", v3);
 
-        println!("dv0:{:#?}", dv0);
-        println!("dv1:{:#?}", dv1);
-        println!("dv2:{:#?}", dv2);
-        println!("dv3:{:#?}", delta);
+        // println!("dv0:{:#?}", dv0);
+        // println!("dv1:{:#?}", dv1);
+        // println!("dv2:{:#?}", dv2);
+        // println!("dv3:{:#?}", delta);
         self.v.w_acum = self
             .v
             .w_acum
@@ -765,14 +797,15 @@ impl Trainable for TrainableNLE_ {
         // di
 
         for i in 0..NNLineEvaluator_::D {
-            print!("{:#?},", self.v.wfl1[f1][i]);
-            print!("{:#?},", self.v.wfl2[f2][i]);
-            print!("{:#?},", self.v.wfl3[f3][i]);
-            print!("{:#?},", self.v.wgl1[g1][i]);
-            print!("{:#?},", self.v.wgl2[g2][i]);
-            print!("{:#?},", self.v.wgl3[g3][i]);
-            print!("{:#?},", self.v.bias[i]);
-            println!("");
+            // print!("{:#?},", self.v.wfl1[f1][i]);
+            // print!("{:#?},", self.v.wfl2[f2][i]);
+            // print!("{:#?},", self.v.wfl3[f3][i]);
+            // print!("{:#?},", self.v.wgl1[g1][i]);
+            // print!("{:#?},", self.v.wgl2[g2][i]);
+            // print!("{:#?},", self.v.wgl3[g3][i]);
+            // print!("{:#?},", self.v.bias[i]);
+            // println!("");
+
             self.v.wfl1[f1][i] = self.beta * self.v.wfl1[f1][i] + (1.0 - self.beta) * di[i];
             self.v.wfl2[f2][i] = self.beta * self.v.wfl2[f2][i] + (1.0 - self.beta) * di[i];
             self.v.wfl3[f3][i] = self.beta * self.v.wfl3[f3][i] + (1.0 - self.beta) * di[i];
