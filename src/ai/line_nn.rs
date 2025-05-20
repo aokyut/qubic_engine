@@ -520,121 +520,6 @@ impl NNLineEvaluator_ {
 
         Ok(())
     }
-
-    pub fn adjust(&mut self) {
-        let mut mean = vec![0.0; Self::D];
-        let mut square = vec![0.0; Self::D];
-        let mut stds = vec![0.0; Self::D];
-        let sigma = (Self::D as f32).sqrt();
-
-        for j in 0..Self::D {
-            for i in 0..self.wfl1.len() {
-                mean[j] += self.wfl1[i][j];
-                square[j] += self.wfl1[i][j].powi(2);
-            }
-            mean[j] /= self.wfl1.len() as f32;
-            square[j] /= self.wfl1.len() as f32;
-            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
-        }
-        for i in 0..self.wfl1.len() {
-            for j in 0..Self::D {
-                self.wfl1[i][j] = (self.wfl1[i][j] - mean[j]) / (stds[j] * sigma);
-            }
-        }
-
-        let mut mean = vec![0.0; Self::D];
-        let mut square = vec![0.0; Self::D];
-        let mut stds = vec![0.0; Self::D];
-
-        for j in 0..Self::D {
-            for i in 0..self.wfl2.len() {
-                mean[j] += self.wfl2[i][j];
-                square[j] += self.wfl2[i][j].powi(2);
-            }
-            mean[j] /= self.wfl2.len() as f32;
-            square[j] /= self.wfl2.len() as f32;
-            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
-        }
-        for i in 0..self.wfl2.len() {
-            for j in 0..Self::D {
-                self.wfl2[i][j] = (self.wfl2[i][j] - mean[j]) / (stds[j] * sigma);
-            }
-        }
-        let mut mean = vec![0.0; Self::D];
-        let mut square = vec![0.0; Self::D];
-        let mut stds = vec![0.0; Self::D];
-
-        for j in 0..Self::D {
-            for i in 0..self.wfl3.len() {
-                mean[j] += self.wfl3[i][j];
-                square[j] += self.wfl3[i][j].powi(2);
-            }
-            mean[j] /= self.wfl3.len() as f32;
-            square[j] /= self.wfl3.len() as f32;
-            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
-        }
-        for i in 0..self.wfl3.len() {
-            for j in 0..Self::D {
-                self.wfl3[i][j] = (self.wfl3[i][j] - mean[j]) / (stds[j] * sigma);
-            }
-        }
-
-        let mut mean = vec![0.0; Self::D];
-        let mut square = vec![0.0; Self::D];
-        let mut stds = vec![0.0; Self::D];
-
-        for j in 0..Self::D {
-            for i in 0..self.wgl1.len() {
-                mean[j] += self.wgl1[i][j];
-                square[j] += self.wgl1[i][j].powi(2);
-            }
-            mean[j] /= self.wgl1.len() as f32;
-            square[j] /= self.wgl1.len() as f32;
-            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
-        }
-        for i in 0..self.wgl1.len() {
-            for j in 0..Self::D {
-                self.wgl1[i][j] = (self.wgl1[i][j] - mean[j]) / (stds[j] * sigma);
-            }
-        }
-
-        let mut mean = vec![0.0; Self::D];
-        let mut square = vec![0.0; Self::D];
-        let mut stds = vec![0.0; Self::D];
-
-        for j in 0..Self::D {
-            for i in 0..self.wgl2.len() {
-                mean[j] += self.wgl2[i][j];
-                square[j] += self.wgl2[i][j].powi(2);
-            }
-            mean[j] /= self.wgl2.len() as f32;
-            square[j] /= self.wgl2.len() as f32;
-            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
-        }
-        for i in 0..self.wgl2.len() {
-            for j in 0..Self::D {
-                self.wgl2[i][j] = (self.wgl2[i][j] - mean[j]) / (stds[j] * sigma);
-            }
-        }
-        let mut mean = vec![0.0; Self::D];
-        let mut square = vec![0.0; Self::D];
-        let mut stds = vec![0.0; Self::D];
-
-        for j in 0..Self::D {
-            for i in 0..self.wgl3.len() {
-                mean[j] += self.wgl3[i][j];
-                square[j] += self.wgl3[i][j].powi(2);
-            }
-            mean[j] /= self.wgl3.len() as f32;
-            square[j] /= self.wgl3.len() as f32;
-            stds[j] = (square[j] - mean[j].powi(2)).sqrt();
-        }
-        for i in 0..self.wgl3.len() {
-            for j in 0..Self::D {
-                self.wgl3[i][j] = (self.wgl3[i][j] - mean[j]) / (stds[j] * sigma);
-            }
-        }
-    }
 }
 
 impl EvaluatorF for NNLineEvaluator_ {
@@ -832,8 +717,6 @@ impl Trainable for TrainableNLE_ {
                 self.main.wt3nw[tn3][i] += self.v.wt3nw[tn3][i];
             }
         }
-
-        // self.main.adjust();
     }
 
     fn get_val(&self, b: &Board) -> f32 {

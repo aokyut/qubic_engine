@@ -21,6 +21,7 @@ use qubic_engine::{
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
 use rand::Rng;
+use rand_distr::num_traits::WrappingNeg;
 use std::collections::HashSet;
 use std::ops::Neg;
 use std::os::unix::thread;
@@ -60,10 +61,10 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 29);
+    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
     l7_.hashmap = true;
-    l7_.timelimit = 0;
-    l7_.min_depth = 5;
+    l7_.timelimit = 100;
+    l7_.min_depth = 7;
     let l7_ = MateWrapperActor::new(Box::new(l7_));
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
@@ -72,6 +73,13 @@ fn main() {
     let mcts = ai::mcts::Mcts::new(10_000, 3, 5000, po);
     let mcts2 = ai::mcts::Mcts::new(10_000, 3, 5000, po2);
 
+    let mut nmodel = NNLineEvaluator_::new();
+    nmodel.load("sle_tl50_.json".to_string());
+    let mut na = NegAlphaF::new(Box::new(nmodel.clone()), 7);
+    na.hashmap = true;
+    na.timelimit = 100;
+    na.min_depth = 7;
+    let na = MateWrapperActor::new(Box::new(na));
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
 
@@ -87,7 +95,7 @@ fn main() {
 
     // make_db();
     // use_aip();
-    // let result = play_actor(&l5_, &l7_, true);
+    let result = play_actor(&na, &l7_, true);
     // println!("{result:#?}");
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
@@ -100,7 +108,7 @@ fn main() {
     // compare(&l5_, &l7_);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
-    // return;
+    return;
     // let (a, b, c) = compare(&m2, &mm3);
 
     // pprint_u64(0b1000010000100001100001000010000110000100001000011000010000100001);

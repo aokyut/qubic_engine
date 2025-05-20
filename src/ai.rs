@@ -36,10 +36,9 @@ use std::time::Instant;
 use std::{f32, thread};
 
 pub const MAX: i32 = 1600;
-const F32_INVERSE_LAMBDA: f32 = 0.999;
-const F32_INVERSE_LAMBDA_INVERSE: f32 = 2000.0 / 1999.0;
-const F32_INVERSE_BIAS: f32 = 0.9995;
-
+const F32_INVERSE_LAMBDA: f32 = 0.9999;
+const F32_INVERSE_LAMBDA_INVERSE: f32 = 20000.0 / 19999.0;
+const F32_INVERSE_BIAS: f32 = 0.99995;
 
 pub fn negmax<F>(b: &Board, depth: u8, eval_func: &F) -> (u8, i32, i32)
 where
@@ -261,7 +260,7 @@ impl Fail {
             Ex(val) => Ex(F32_INVERSE_BIAS - F32_INVERSE_LAMBDA * val),
         }
     }
-    fn ininverse(&self) -> Self{
+    fn ininverse(&self) -> Self {
         use Fail::*;
         match self {
             High(beta) => Low((F32_INVERSE_BIAS - beta) * F32_INVERSE_LAMBDA_INVERSE),
@@ -876,13 +875,13 @@ pub fn negscoutf_hash_iter(
 
     let (att, def) = b.get_att_def();
     let four_mask = get_reach_mask(att, def);
-    if four_mask != 0{
+    if four_mask != 0 {
         let action = four_mask.trailing_zeros() % 16;
         return (action as u8, Ex(1.0), 0);
     }
     let stone = att | def;
     // あと一箇所しか置ける場所がなければ引き分けが確定している。
-    if stone.count_ones() == 63{
+    if stone.count_ones() == 63 {
         let action = !stone.trailing_zeros() % 16;
         return (action as u8, Ex(0.5), 0);
     }
@@ -940,7 +939,9 @@ pub fn negscoutf_hash_iter(
             b.2.partial_cmp(&a.2).unwrap()
         });
 
-        for (idx, &(action, ref next_board, old_val, hash, (hit, old_gen))) in action_nb_vals.iter().enumerate() {
+        for (idx, &(action, ref next_board, old_val, hash, (hit, old_gen))) in
+            action_nb_vals.iter().enumerate()
+        {
             let val;
             if old_gen == gen {
                 if let Some(fail_val) = hit.clone() {
@@ -1092,7 +1093,7 @@ pub fn negscoutf_hash_iter(
                 //         false,
                 //     );
                 //     // println!("{_val:#?}");
-    
+
                 //     if _val.is_fail_high() {
                 //         continue;
                 //     }
@@ -1141,7 +1142,9 @@ pub fn negscoutf_hash_iter(
                         Some(x) => {
                             println!("action:{action:>2}, val:{val:.10}, old:{x:#?}-{old_val:.4}")
                         }
-                        None => println!("action:{action:>2}, val:{val:.10}, old:None-{old_val:.4}"),
+                        None => {
+                            println!("action:{action:>2}, val:{val:.10}, old:None-{old_val:.4}")
+                        }
                     }
                 }
             }
