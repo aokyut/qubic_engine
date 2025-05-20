@@ -325,6 +325,7 @@ pub struct NNLineEvaluator_ {
     pub wgl1: Vec<Vec<f32>>,
     pub wt3nw: Vec<Vec<f32>>,
     pub wt3nb: Vec<Vec<f32>>,
+    pub wcore: Vec<Vec<f32>>,
     pub w_acum: Vec<f32>,
     pub bias: Vec<f32>,
     pub lbias: f32,
@@ -339,6 +340,14 @@ impl NNLineEvaluator_ {
     const G3: usize = WGL3_WIDTH * WGL3_WIDTH;
     const G2: usize = WGL2_WIDTH * WGL2_WIDTH;
     const G1: usize = WGL1_WIDTH * WGL1_WIDTH;
+    const CORE_SIZE: usize = 1 << 12;
+    const CORE_MAGIC: u64 = 0x201060008020200;
+
+    pub fn get_core_idx(a: u64, d: u64) -> usize {
+        let a = a & 0x0000_0660_0660_0000;
+        let d = a | ((d & 0x0000_0660_0660_0000) << 8);
+        return (((d * Self::CORE_MAGIC) >> 52) & 0xfff) as usize;
+    }
 
     pub fn new() -> Self {
         use rand_distr::{Distribution, Normal};
@@ -351,6 +360,7 @@ impl NNLineEvaluator_ {
         let mut g1 = vec![vec![0.0; Self::D]; Self::G1];
         let mut tb = vec![vec![0.0; Self::D]; 12];
         let mut tw = vec![vec![0.0; Self::D]; 12];
+        let mut co = vec![vec![0.0; Self::D]; Self::CORE_SIZE];
 
         let mut rng = rand::thread_rng();
         let normal = Normal::new(0.0, 1.0).unwrap();
@@ -396,6 +406,11 @@ impl NNLineEvaluator_ {
                 tw[i][j] = normal.sample(&mut rng);
             }
         }
+        for i in 0..Self::CORE_SIZE {
+            for j in 0..Self::D {
+                co[i][j] = normal.sample(&mut rng);
+            }
+        }
         let mut bias = vec![0.0; Self::D];
 
         for j in 0..Self::D {
@@ -420,6 +435,7 @@ impl NNLineEvaluator_ {
             wt3nw: tw,
             wt3nb: tb,
             w_acum: acum,
+            wcore: co,
             bias: bias,
             lbias: 0.0,
         };
@@ -437,6 +453,7 @@ impl NNLineEvaluator_ {
             wt3nb: vec![vec![0.0; Self::D]; 12],
             w_acum: vec![0.0; Self::D],
             bias: vec![0.0; Self::D],
+            wcore: vec![vec![0.0; Self::D]; Self::CORE_SIZE],
             lbias: 0.0,
         };
     }
@@ -455,6 +472,8 @@ impl NNLineEvaluator_ {
         } else {
             wt3 = self.wt3nw[tn3].clone();
         }
+        let core = &self.wcore[Self::get_core_idx(att, def)];
+        // println!("core:{}", Self::get_core_idx(att, def));
 
         let mut v = self.wfl1[af1 * WFL1_WIDTH + df1].clone();
 
@@ -465,6 +484,7 @@ impl NNLineEvaluator_ {
             v[i] += self.wgl2[ag2 * WGL2_WIDTH + dg2][i];
             v[i] += self.wgl3[ag3 * WGL3_WIDTH + dg3][i];
             v[i] += wt3[i];
+            v[i] += core[i];
             v[i] += self.bias[i];
         }
         // let val = v[0];
@@ -612,14 +632,17 @@ impl Trainable for TrainableNLE_ {
             ag3 * WGL3_WIDTH + dg3,
         );
 
+        let core_idx = NNLineEvaluator_::get_core_idx(att, def);
+
         let mut v0 = self.main.wfl1[af1 * WFL1_WIDTH + df1].clone();
         for i in 0..NNLineEvaluator_::D {
-            v0[i] += self.main.wfl2[af2 * WFL2_WIDTH + df2][i];
-            v0[i] += self.main.wfl3[af3 * WFL3_WIDTH + df3][i];
-            v0[i] += self.main.wgl1[ag1 * WGL1_WIDTH + dg1][i];
-            v0[i] += self.main.wgl2[ag2 * WGL2_WIDTH + dg2][i];
-            v0[i] += self.main.wgl3[ag3 * WGL3_WIDTH + dg3][i];
+            v0[i] += self.main.wfl2[f2][i];
+            v0[i] += self.main.wfl3[f3][i];
+            v0[i] += self.main.wgl1[g1][i];
+            v0[i] += self.main.wgl2[g2][i];
+            v0[i] += self.main.wgl3[g3][i];
             v0[i] += wt3[i];
+            v0[i] += self.main.wcore[core_idx][i];
             v0[i] += self.main.bias[i];
         }
 
@@ -703,6 +726,8 @@ impl Trainable for TrainableNLE_ {
             } else {
                 self.v.wt3nw[tn3][i] = self.beta * self.v.wt3nw[tn3][i] + (1.0 - self.beta) * di[i];
             }
+            self.v.wcore[core_idx][i] =
+                self.beta * self.v.wcore[core_idx][i] + (1.0 - self.beta) * di[i];
 
             self.main.wfl1[f1][i] += self.v.wfl1[f1][i];
             self.main.wfl2[f2][i] += self.v.wfl2[f2][i];
@@ -716,6 +741,7 @@ impl Trainable for TrainableNLE_ {
             } else {
                 self.main.wt3nw[tn3][i] += self.v.wt3nw[tn3][i];
             }
+            self.main.wcore[core_idx][i] += self.v.wcore[core_idx][i];
         }
     }
 
