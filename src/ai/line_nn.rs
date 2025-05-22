@@ -812,7 +812,7 @@ impl Trainable for TrainableNLE_ {
         let dv0: Vec<f32> = dv1
             .iter()
             .zip(v0.iter())
-            .map(|(a, b)| if b < 0 { 0.01 * a } else { a })
+            .map(|(a, b)| if *b < 0.0 { 0.01 * a } else { *a })
             .collect();
         let di: Vec<f32> = dv0.clone();
 
