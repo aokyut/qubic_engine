@@ -326,6 +326,7 @@ pub struct MMEvaluator {
     pub wt3nb: Vec<__m256>,
     pub wt3nw: Vec<__m256>,
     pub wcore: Vec<__m256>,
+    pub wturn: Vec<__m256>,
     pub w_acum: __m256,
     pub bias: __m256,
     pub lbias: f32,
@@ -341,6 +342,7 @@ impl MMEvaluator {
     const G2: usize = WGL2_WIDTH * WGL2_WIDTH;
     const G1: usize = WGL1_WIDTH * WGL1_WIDTH;
     const ZERO: __m256 = unsafe { std::mem::transmute([0.0f32; 8]) };
+    const ALPHA: __m256 = unsafe { std::mem::transmute([0.01f32; 8]) };
     pub fn from(nn: NNLineEvaluator_) -> Self {
         let mut f1: Vec<__m256> = Vec::new();
         for v in nn.wfl1.iter() {
@@ -379,6 +381,11 @@ impl MMEvaluator {
         for v in nn.wcore.iter() {
             core.push(unsafe { _mm256_load_ps(v.as_ptr()) });
         }
+        let mut turn = Vec::new();
+        for v in nn.wturn.iter() {
+            turn.push(unsafe { _mm256_load_ps(v.as_ptr()) });
+        }
+
         let bias = unsafe { _mm256_load_ps(nn.bias.as_ptr()) };
         let acum = unsafe { _mm256_load_ps(nn.w_acum.as_ptr()) };
         let lbias = nn.lbias;
@@ -394,6 +401,7 @@ impl MMEvaluator {
             wt3nw: t3w,
             wcore: core,
             w_acum: acum,
+            wturn: turn,
             bias: bias,
             lbias: lbias,
         };
@@ -402,7 +410,8 @@ impl MMEvaluator {
         let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) =
             line::SimplLineEvaluator::get_counts(&b);
         let (att, def) = b.get_att_def();
-        let is_black = (att.count_ones() + def.count_ones()) % 2 == 0;
+        let n_stone = (att | def).count_ones() as usize;
+        let is_black = n_stone % 2 == 0;
 
         let mut input = vec![0.0; Self::INPUT];
 
@@ -423,11 +432,12 @@ impl MMEvaluator {
         v = unsafe { _mm256_add_ps(v, self.wgl2[ag2 * WGL2_WIDTH + dg2]) };
         v = unsafe { _mm256_add_ps(v, self.wgl3[ag3 * WGL3_WIDTH + dg3]) };
         v = unsafe { _mm256_add_ps(v, core) };
+        v = unsafe { _mm256_add_ps(v, self.wturn[n_stone]) };
         v = unsafe { _mm256_add_ps(v, self.bias) };
+        v = unsafe { _mm256_max_ps(v, _mm256_mul_ps(v, Self::ALPHA)) };
 
         v = unsafe { _mm256_mul_ps(v, self.w_acum) };
 
-        v = unsafe { _mm256_max_ps(v, Self::ZERO) };
         v = unsafe { _mm256_add_ps(v, _mm256_permute_ps::<0b01_00_11_10>(v)) };
         v = unsafe { _mm256_add_ps(v, _mm256_permute_ps::<0b10_11_00_01>(v)) };
 

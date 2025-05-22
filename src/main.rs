@@ -77,7 +77,13 @@ fn main() {
 
     let mut nmodel = NNLineEvaluator_::new();
     nmodel.load("sle_tl50_.json".to_string());
-    // let mut nmodel = MMEvaluator::from(nmodel);
+    let mut mmodel = MMEvaluator::from(nmodel.clone());
+    let mut ma = NegAlphaF::new(Box::new(mmodel), 29);
+    ma.hashmap = true;
+    ma.timelimit = 1000;
+    ma.min_depth = 7;
+    let ma = MateWrapperActor::new(Box::new(ma));
+
     let mut na = NegAlphaF::new(Box::new(nmodel), 29);
     na.hashmap = true;
     na.timelimit = 1000;
@@ -98,7 +104,7 @@ fn main() {
 
     // make_db();
     // use_aip();
-    // let result = play_actor(&na, &na, true);
+    // let result = play_actor(&ma, &na, true);
     // println!("{result:#?}");
     // return;
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
@@ -137,9 +143,9 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
-    train_line_eval();
+    // train_line_eval();
     // mpc_for_coe(7,7);
-    // profile();
+    profile();
     // beam_search();
     // test_zhash();
     // print_pmodel();
@@ -305,7 +311,10 @@ fn profile() {
     let _ = l.load("simple.json".to_string());
     // let _ = l.load("position.json".to_string());
 
-    let mut long = NegAlphaF::new(Box::new(l.clone()), 7);
+    let mut nmodel = NNLineEvaluator_::new();
+    nmodel.load("sle_tl50_.json".to_string());
+    // let mut nmodel = MMEvaluator::from(nmodel);
+    let mut long = NegAlphaF::new(Box::new(nmodel), 7);
     long.timelimit = 1000;
     long.min_depth = 7;
     long.scout = true;
@@ -340,8 +349,8 @@ fn profile() {
 
         action = Agent::Random.get_action(&b);
 
-        // let action = m3.get_action(&b);
-        // b = b.next(action);
+        let action = action2;
+        b = b.next(action);
         step += 1;
         if step % 1 == 0 {
             for i in 0..64 {
