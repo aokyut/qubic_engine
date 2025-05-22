@@ -636,7 +636,7 @@ impl NNLineEvaluator_ {
         let val = v
             .iter()
             .zip(self.w_acum.iter())
-            .map(|(a, b)| a.max(0.0) * b)
+            .map(|(a, b)| (a.max(a * 0.01)) * b)
             // .map(|(a, b)| a * b)
             .sum::<f32>()
             + self.lbias;
@@ -790,7 +790,7 @@ impl Trainable for TrainableNLE_ {
             v0[i] += self.main.wturn[n_stone][i];
         }
 
-        let v1 = v0.iter().map(|a| a.max(0.0)).collect::<Vec<f32>>();
+        let v1 = v0.iter().map(|a| a.max(a * 0.01)).collect::<Vec<f32>>();
 
         let v2 = v1
             .iter()
@@ -812,7 +812,7 @@ impl Trainable for TrainableNLE_ {
         let dv0: Vec<f32> = dv1
             .iter()
             .zip(v0.iter())
-            .map(|(a, b)| a * (b.signum() * 0.5 + 0.5))
+            .map(|(a, b)| if b < 0 { 0.01 * a } else { a })
             .collect();
         let di: Vec<f32> = dv0.clone();
 
