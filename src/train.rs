@@ -656,10 +656,9 @@ pub fn train_model_with_db(
     let ts = db.get_all();
     let eval_ts = eval_db.get_all()[..1024].to_vec();
     let mut smoothing_loss = None;
+    let mut step = 0;
 
     for epoch in 0..EPOCH {
-        let mut step = 0;
-
         // play_with_analyze(&model);
         model.train();
         db.set_batch_num();
@@ -737,7 +736,7 @@ pub fn train_model_with_db(
         }
         pb.finish();
 
-        if epoch < 0 {
+        if epoch % 50 == 0 {
             model.eval();
             let mut agent = NegAlphaF::new(Box::new(model.clone()), 3);
             agent.hashmap = true;

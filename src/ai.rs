@@ -1316,6 +1316,7 @@ impl NegAlphaF {
         count = 0;
         let (att, def) = b.get_att_def();
         let depth = (((att | def).count_zeros() / 2) * 2 + 1) as u8;
+        let depth = depth.min(self.depth);
         for i in (1..=depth).step_by(2) {
             let start = Instant::now();
             (action, val, count) =
