@@ -457,6 +457,7 @@ pub struct NNLineEvaluator_ {
     pub wt3nw: Vec<Vec<f32>>,
     pub wt3nb: Vec<Vec<f32>>,
     pub wcore: Vec<Vec<f32>>,
+    pub wturn: Vec<Vec<f32>>,
     pub w_acum: Vec<f32>,
     pub bias: Vec<f32>,
     pub lbias: f32,
@@ -491,6 +492,7 @@ impl NNLineEvaluator_ {
         let mut g1 = vec![vec![0.0; Self::D]; Self::G1];
         let mut tb = vec![vec![0.0; Self::D]; 12];
         let mut tw = vec![vec![0.0; Self::D]; 12];
+        let mut tn = vec![vec![0.0; Self::D]; 65];
         let mut co = vec![vec![0.0; Self::D]; Self::CORE_SIZE];
 
         let mut rng = rand::thread_rng();
@@ -537,6 +539,11 @@ impl NNLineEvaluator_ {
                 tw[i][j] = normal.sample(&mut rng);
             }
         }
+        for i in 0..65 {
+            for j in 0..Self::D {
+                tn[i][j] = normal.sample(&mut rng);
+            }
+        }
         for i in 0..Self::CORE_SIZE {
             for j in 0..Self::D {
                 co[i][j] = normal.sample(&mut rng);
@@ -565,6 +572,7 @@ impl NNLineEvaluator_ {
             wgl1: g1,
             wt3nw: tw,
             wt3nb: tb,
+            wturn: tn,
             w_acum: acum,
             wcore: co,
             bias: bias,
@@ -582,6 +590,7 @@ impl NNLineEvaluator_ {
             wgl1: vec![vec![0.0; Self::D]; Self::G1],
             wt3nw: vec![vec![0.0; Self::D]; 12],
             wt3nb: vec![vec![0.0; Self::D]; 12],
+            wturn: vec![vec![0.0; Self::D]; 65],
             w_acum: vec![0.0; Self::D],
             bias: vec![0.0; Self::D],
             wcore: vec![vec![0.0; Self::D]; Self::CORE_SIZE],
@@ -593,7 +602,8 @@ impl NNLineEvaluator_ {
         let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) =
             line::SimplLineEvaluator::get_counts(&b);
         let (att, def) = b.get_att_def();
-        let is_black = (att.count_ones() + def.count_ones()) % 2 == 0;
+        let n_stone = (att | def).count_ones() as usize;
+        let is_black = n_stone % 2 == 0;
 
         let mut input = vec![0.0; Self::INPUT];
 
@@ -617,6 +627,7 @@ impl NNLineEvaluator_ {
             v[i] += wt3[i];
             v[i] += core[i];
             v[i] += self.bias[i];
+            v[i] += self.wturn[n_stone][i];
         }
         // let val = v[0];
 
@@ -745,7 +756,8 @@ impl Trainable for TrainableNLE_ {
         let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) =
             line::SimplLineEvaluator::get_counts(&b);
         let (att, def) = b.get_att_def();
-        let is_black = (att.count_ones() + def.count_ones()) % 2 == 0;
+        let n_stone = (att | def).count_ones() as usize;
+        let is_black = n_stone % 2 == 0;
 
         let wt3;
         if is_black {
@@ -775,18 +787,17 @@ impl Trainable for TrainableNLE_ {
             v0[i] += wt3[i];
             v0[i] += self.main.wcore[core_idx][i];
             v0[i] += self.main.bias[i];
+            v0[i] += self.main.wturn[n_stone][i];
         }
 
         let v1 = v0.iter().map(|a| a.max(0.0)).collect::<Vec<f32>>();
-        // let v1: Vec<f32> = v0.iter().map(|a| *a).collect::<Vec<f32>>();
 
         let v2 = v1
             .iter()
             .zip(self.main.w_acum.iter())
             .map(|(a, b)| a * b)
             .sum::<f32>()
-            + self.main.lbias
-            + v0[0];
+            + self.main.lbias;
         let v3 = 1.0 / (1.0 + (-v2).exp());
 
         // println!("val:{v3}, bias:{}, delta:{delta}", self.main.lbias);
@@ -856,7 +867,8 @@ impl Trainable for TrainableNLE_ {
             }
             self.v.wcore[core_idx][i] =
                 self.beta * self.v.wcore[core_idx][i] + (1.0 - self.beta) * di[i];
-
+            // self.v.wturn[n_stone][i] =
+            //     self.beta * self.v.wturn[n_stone][i] + (1.0 - self.beta) * di[i];
             self.main.wfl1[f1][i] += self.v.wfl1[f1][i];
             self.main.wfl2[f2][i] += self.v.wfl2[f2][i];
             self.main.wfl3[f3][i] += self.v.wfl3[f3][i];
@@ -870,6 +882,7 @@ impl Trainable for TrainableNLE_ {
                 self.main.wt3nw[tn3][i] += self.v.wt3nw[tn3][i];
             }
             self.main.wcore[core_idx][i] += self.v.wcore[core_idx][i];
+            // self.main.wturn[n_stone][i] += self.v.wturn[n_stone][i];
         }
     }
 

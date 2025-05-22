@@ -704,7 +704,10 @@ pub fn train_model_with_db(
             ));
             if step % LOG_LOSS_N == 0 {
                 pb.println(format!("[loss]:{}", smoothing_loss.unwrap()));
-                println!("[epoch:{epoch}][loss]:{}", smoothing_loss.unwrap());
+                println!(
+                    "[epoch:{epoch}][step:{step}][loss]:{}",
+                    smoothing_loss.unwrap()
+                );
                 let mut losses = Vec::new();
 
                 let eval_it =
@@ -722,11 +725,11 @@ pub fn train_model_with_db(
                 }
                 let size = losses.len();
                 pb.println(format!(
-                    "[eval_loss]:{}",
+                    "[eval]:{}",
                     losses.iter().sum::<f32>() / size as f32
                 ));
                 println!(
-                    "[epoch:{epoch}][eval_loss:{}]",
+                    "[epoch:{epoch}][step:{step}][eval:{}]",
                     losses.iter().sum::<f32>() / size as f32
                 );
             }
@@ -749,10 +752,16 @@ pub fn train_model_with_db(
             agent.timelimit = 1;
             let agent = MateWrapperActor::new(Box::new(agent));
             let (e41, e42) = eval_actor(&agent, &le, EVAL_NUM, false);
-            println!("[epoch:{epoch}][minimax(3)]:({}, {})", e11, e12);
-            println!("[epoch:{epoch}][mcts(50, 500)]:({}, {})", e21, e22);
-            println!("[epoch:{epoch}][neg(3)]:({}, {})", e31, e32);
-            println!("[epoch:{epoch}][sle(3)]:({}, {})", e41, e42);
+            println!(
+                "[epoch:{epoch}][step:{step}][minimax(3)]:({}, {})",
+                e11, e12
+            );
+            println!(
+                "[epoch:{epoch}][step:{step}][mcts(50, 500)]:({}, {})",
+                e21, e22
+            );
+            println!("[epoch:{epoch}][step:{step}][neg(3)]:({}, {})", e31, e32);
+            println!("[epoch:{epoch}][step:{step}][sle(3)]:({}, {})", e41, e42);
 
             if max_score < e41 {
                 println!("[epoch:{epoch}]max_score:{}->{}", max_score, e41);

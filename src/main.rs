@@ -98,7 +98,7 @@ fn main() {
 
     // make_db();
     // use_aip();
-    // let result = play_actor(&l7_, &na, true);
+    // let result = play_actor(&na, &na, true);
     // println!("{result:#?}");
     // return;
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);

@@ -1314,7 +1314,9 @@ impl NegAlphaF {
         action = 0;
         val = Fail::Ex(0.0);
         count = 0;
-        for i in (1..=self.depth).step_by(2) {
+        let (att, def) = b.get_att_def();
+        let depth = (((att | def).count_zeros() / 2) * 2 + 1) as u8;
+        for i in (1..=depth).step_by(2) {
             let start = Instant::now();
             (action, val, count) =
                 negalphaf_hash_iter(b, i, -2.0, 2.0, i, &mut hashmap, &self.evaluator, true);
