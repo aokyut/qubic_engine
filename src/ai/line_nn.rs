@@ -867,8 +867,8 @@ impl Trainable for TrainableNLE_ {
             }
             self.v.wcore[core_idx][i] =
                 self.beta * self.v.wcore[core_idx][i] + (1.0 - self.beta) * di[i];
-            // self.v.wturn[n_stone][i] =
-            //     self.beta * self.v.wturn[n_stone][i] + (1.0 - self.beta) * di[i];
+            self.v.wturn[n_stone][i] =
+                self.beta * self.v.wturn[n_stone][i] + (1.0 - self.beta) * di[i];
             self.main.wfl1[f1][i] += self.v.wfl1[f1][i];
             self.main.wfl2[f2][i] += self.v.wfl2[f2][i];
             self.main.wfl3[f3][i] += self.v.wfl3[f3][i];
@@ -882,7 +882,7 @@ impl Trainable for TrainableNLE_ {
                 self.main.wt3nw[tn3][i] += self.v.wt3nw[tn3][i];
             }
             self.main.wcore[core_idx][i] += self.v.wcore[core_idx][i];
-            // self.main.wturn[n_stone][i] += self.v.wturn[n_stone][i];
+            self.main.wturn[n_stone][i] += self.v.wturn[n_stone][i];
         }
     }
 

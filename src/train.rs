@@ -24,7 +24,7 @@ pub const LAMBDA: f32 = 0.0;
 const DECAY_ALPHA: f32 = 0.92;
 const EVAL_NUM: usize = 25;
 const LOG_LOSS_N: usize = 100000;
-const SMOOTHING: f32 = 0.9999;
+const SMOOTHING: f32 = 0.999999;
 
 #[derive(Debug, Clone)]
 pub struct Transition {
