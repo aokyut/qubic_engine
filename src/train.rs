@@ -734,7 +734,7 @@ pub fn train_model_with_db(
         }
         pb.finish();
 
-        if epoch >= 0 {
+        if epoch < 0 {
             model.eval();
             let mut agent = NegAlphaF::new(Box::new(model.clone()), 3);
             agent.hashmap = true;
@@ -755,7 +755,7 @@ pub fn train_model_with_db(
             println!("[epoch:{epoch}][sle(3)]:({}, {})", e41, e42);
 
             if max_score < e41 {
-                println!("max_score:{}->{}", max_score, e41);
+                println!("[epoch:{epoch}]max_score:{}->{}", max_score, e41);
                 max_score = e41;
                 if save {
                     model.train();

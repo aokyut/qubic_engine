@@ -1,6 +1,8 @@
 use proconio::input;
 use qubic_engine::ai::line::{BucketLineEvaluator, SimplLineEvaluator, TrainableBLE, TrainableSLE};
-use qubic_engine::ai::line_nn::{NNLineEvaluator, NNLineEvaluator_, TrainableNLE, TrainableNLE_};
+use qubic_engine::ai::line_nn::{
+    MMEvaluator, NNLineEvaluator, NNLineEvaluator_, TrainableNLE, TrainableNLE_,
+};
 use qubic_engine::ai::pattern::TrainablePatternEvaluator;
 use qubic_engine::ai::position::{PositionMaskEvaluator, TrainablePME};
 use qubic_engine::ai::zhashmap::test_zhash;
@@ -61,9 +63,9 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
+    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l7_.hashmap = true;
-    l7_.timelimit = 100;
+    l7_.timelimit = 1000;
     l7_.min_depth = 7;
     let l7_ = MateWrapperActor::new(Box::new(l7_));
 
@@ -75,9 +77,10 @@ fn main() {
 
     let mut nmodel = NNLineEvaluator_::new();
     nmodel.load("sle_tl50_.json".to_string());
-    let mut na = NegAlphaF::new(Box::new(nmodel.clone()), 7);
+    // let mut nmodel = MMEvaluator::from(nmodel);
+    let mut na = NegAlphaF::new(Box::new(nmodel), 29);
     na.hashmap = true;
-    na.timelimit = 100;
+    na.timelimit = 1000;
     na.min_depth = 7;
     let na = MateWrapperActor::new(Box::new(na));
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
@@ -95,8 +98,9 @@ fn main() {
 
     // make_db();
     // use_aip();
-    let result = play_actor(&na, &l7_, true);
+    // let result = play_actor(&l7_, &na, true);
     // println!("{result:#?}");
+    // return;
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
     // db.concat(db_);
@@ -104,11 +108,11 @@ fn main() {
     // explore_best_model();
 
     // let start = Instant::now();
-    // let result = eval_actor(&l5_, &l7_, 100, false);
+    // let result = eval_actor(&na, &l7_, 100, false);
     // compare(&l5_, &l7_);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
-    return;
+    // return;
     // let (a, b, c) = compare(&m2, &mm3);
 
     // pprint_u64(0b1000010000100001100001000010000110000100001000011000010000100001);
@@ -529,8 +533,8 @@ fn train_line_eval() {
         true,
         String::from("sle_tl50_.json"),
         String::from("sle_tl50_.json"),
-        String::from("winRate_coe5_genRandom_insertRandom1_48"),
-        String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
+        String::from("sle_tl50_genCoe345_insertRandom1_4_48"),
+        String::from("sle_tl50_genCoe345_insertRandom1_4_48_test"),
     );
 }
 

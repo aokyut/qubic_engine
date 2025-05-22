@@ -315,6 +315,137 @@ impl EvaluatorF for TrainableNLE {
     }
 }
 
+use std::arch::x86_64::*;
+pub struct MMEvaluator {
+    pub wfl3: Vec<__m256>,
+    pub wfl2: Vec<__m256>,
+    pub wfl1: Vec<__m256>,
+    pub wgl3: Vec<__m256>,
+    pub wgl2: Vec<__m256>,
+    pub wgl1: Vec<__m256>,
+    pub wt3nb: Vec<__m256>,
+    pub wt3nw: Vec<__m256>,
+    pub wcore: Vec<__m256>,
+    pub w_acum: __m256,
+    pub bias: __m256,
+    pub lbias: f32,
+}
+
+impl MMEvaluator {
+    const D: usize = 8;
+    const INPUT: usize = 7 * Self::D;
+    const F3: usize = WFL3_WIDTH * WFL3_WIDTH;
+    const F2: usize = WFL2_WIDTH * WFL2_WIDTH;
+    const F1: usize = WFL1_WIDTH * WFL1_WIDTH;
+    const G3: usize = WGL3_WIDTH * WGL3_WIDTH;
+    const G2: usize = WGL2_WIDTH * WGL2_WIDTH;
+    const G1: usize = WGL1_WIDTH * WGL1_WIDTH;
+    const ZERO: __m256 = unsafe { std::mem::transmute([0.0f32; 8]) };
+    pub fn from(nn: NNLineEvaluator_) -> Self {
+        let mut f1: Vec<__m256> = Vec::new();
+        for v in nn.wfl1.iter() {
+            f1.push(unsafe { _mm256_load_ps(v.as_ptr()) });
+        }
+        let mut f2 = Vec::new();
+        for v in nn.wfl2.iter() {
+            f2.push({ unsafe { _mm256_load_ps(v.as_ptr()) } });
+        }
+        let mut f3 = Vec::new();
+        for v in nn.wfl3.iter() {
+            f3.push({ unsafe { _mm256_load_ps(v.as_ptr()) } });
+        }
+        let mut g1: Vec<__m256> = Vec::new();
+        for v in nn.wgl1.iter() {
+            g1.push(unsafe { _mm256_load_ps(v.as_ptr()) });
+        }
+        let mut g2 = Vec::new();
+        for v in nn.wgl2.iter() {
+            g2.push({ unsafe { _mm256_load_ps(v.as_ptr()) } });
+        }
+        let mut g3 = Vec::new();
+        for v in nn.wgl3.iter() {
+            g3.push({ unsafe { _mm256_load_ps(v.as_ptr()) } });
+        }
+
+        let mut t3b = Vec::new();
+        for v in nn.wt3nb.iter() {
+            t3b.push({ unsafe { _mm256_load_ps(v.as_ptr()) } });
+        }
+        let mut t3w = Vec::new();
+        for v in nn.wt3nw.iter() {
+            t3w.push({ unsafe { _mm256_load_ps(v.as_ptr()) } });
+        }
+        let mut core = Vec::new();
+        for v in nn.wcore.iter() {
+            core.push(unsafe { _mm256_load_ps(v.as_ptr()) });
+        }
+        let bias = unsafe { _mm256_load_ps(nn.bias.as_ptr()) };
+        let acum = unsafe { _mm256_load_ps(nn.w_acum.as_ptr()) };
+        let lbias = nn.lbias;
+
+        return MMEvaluator {
+            wfl3: f3,
+            wfl2: f2,
+            wfl1: f1,
+            wgl3: g3,
+            wgl2: g2,
+            wgl1: g1,
+            wt3nb: t3b,
+            wt3nw: t3w,
+            wcore: core,
+            w_acum: acum,
+            bias: bias,
+            lbias: lbias,
+        };
+    }
+    pub fn evaluate_board(&self, b: &Board) -> f32 {
+        let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) =
+            line::SimplLineEvaluator::get_counts(&b);
+        let (att, def) = b.get_att_def();
+        let is_black = (att.count_ones() + def.count_ones()) % 2 == 0;
+
+        let mut input = vec![0.0; Self::INPUT];
+
+        let wt3;
+        if is_black {
+            wt3 = self.wt3nb[tn3].clone();
+        } else {
+            wt3 = self.wt3nw[tn3].clone();
+        }
+        let core = self.wcore[NNLineEvaluator_::get_core_idx(att, def)];
+        // println!("core:{}", Self::get_core_idx(att, def));
+
+        let mut v = self.wfl1[af1 * WFL1_WIDTH + df1];
+
+        v = unsafe { _mm256_add_ps(v, self.wfl2[af2 * WFL2_WIDTH + df2]) };
+        v = unsafe { _mm256_add_ps(v, self.wfl3[af3 * WFL3_WIDTH + df3]) };
+        v = unsafe { _mm256_add_ps(v, self.wgl1[ag1 * WGL1_WIDTH + dg1]) };
+        v = unsafe { _mm256_add_ps(v, self.wgl2[ag2 * WGL2_WIDTH + dg2]) };
+        v = unsafe { _mm256_add_ps(v, self.wgl3[ag3 * WGL3_WIDTH + dg3]) };
+        v = unsafe { _mm256_add_ps(v, core) };
+        v = unsafe { _mm256_add_ps(v, self.bias) };
+
+        v = unsafe { _mm256_mul_ps(v, self.w_acum) };
+
+        v = unsafe { _mm256_max_ps(v, Self::ZERO) };
+        v = unsafe { _mm256_add_ps(v, _mm256_permute_ps::<0b01_00_11_10>(v)) };
+        v = unsafe { _mm256_add_ps(v, _mm256_permute_ps::<0b10_11_00_01>(v)) };
+
+        let mut out: [f32; 8] = [0.0; 8];
+        unsafe { _mm256_store_ps(&mut out as *mut f32, v) };
+
+        let val = out[0] + out[4] + self.lbias;
+
+        return 1.0 / (1.0 + (-val).exp());
+    }
+}
+
+impl EvaluatorF for MMEvaluator {
+    fn eval_func_f32(&self, b: &Board) -> f32 {
+        return self.evaluate_board(b);
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NNLineEvaluator_ {
     pub wfl3: Vec<Vec<f32>>,
@@ -494,7 +625,7 @@ impl NNLineEvaluator_ {
         let val = v
             .iter()
             .zip(self.w_acum.iter())
-            .map(|(a, b)| a.max(0.0) * b + (a * 0.01).min(0.0) * b)
+            .map(|(a, b)| a.max(0.0) * b)
             // .map(|(a, b)| a * b)
             .sum::<f32>()
             + self.lbias;
@@ -646,10 +777,7 @@ impl Trainable for TrainableNLE_ {
             v0[i] += self.main.bias[i];
         }
 
-        let v1 = v0
-            .iter()
-            .map(|a| a.max(0.0) + (a * 0.01).min(0.0))
-            .collect::<Vec<f32>>();
+        let v1 = v0.iter().map(|a| a.max(0.0)).collect::<Vec<f32>>();
         // let v1: Vec<f32> = v0.iter().map(|a| *a).collect::<Vec<f32>>();
 
         let v2 = v1
@@ -673,7 +801,7 @@ impl Trainable for TrainableNLE_ {
         let dv0: Vec<f32> = dv1
             .iter()
             .zip(v0.iter())
-            .map(|(a, b)| a * (b.signum() * 0.495 + 0.505))
+            .map(|(a, b)| a * (b.signum() * 0.5 + 0.5))
             .collect();
         let di: Vec<f32> = dv0.clone();
 
