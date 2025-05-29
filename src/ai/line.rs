@@ -577,11 +577,132 @@ impl EvaluatorF for TrainableSLE {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct Linear {
+    weight: Vec<f32>,
+    bias: Vec<f32>,
+    v_weight: Vec<f32>,
+    v_bias: Vec<f32>,
+    m_weight: Vec<f32>,
+    m_bias: Vec<f32>,
+    activation: bool,
+    width: usize,
+    height: usize,
+}
+
+impl Linear {
+    pub fn new(width: usize, height: usize, activation: bool) -> Self {
+        use crate::ml::xiver_vec;
+        let weight = xiver_vec(width, height * width);
+        let bias = xiver_vec(1, height);
+
+        return Linear {
+            weight: weight,
+            width: width,
+            height: height,
+            bias: bias,
+            activation: activation,
+            v_weight: vec![0.0; width * height],
+            v_bias: vec![0.0; height],
+            m_weight: vec![0.0; width * height],
+            m_bias: vec![0.0; height],
+        };
+    }
+
+    pub fn affine(&self, x: Vec<f32>) -> Vec<f32> {
+        let mut out = vec![0.0; self.height];
+        for i in 0..self.height {
+            let offset = i * self.width;
+            for j in 0..self.width {
+                out[i] += self.weight[offset + j] * x[j];
+            }
+            out[i] += self.bias[i];
+        }
+        return out;
+    }
+
+    pub fn forward(&self, x: Vec<f32>) -> Vec<f32> {
+        let mut x = self.affine(x);
+        if self.activation {
+            x = self.apply_activation(x);
+        }
+        return x;
+    }
+
+    pub fn apply_activation(&self, mut x: Vec<f32>) -> Vec<f32> {
+        for i in 0..self.height {
+            x[i] = x[i].max(0.0);
+        }
+        return x;
+    }
+
+    pub fn backward(
+        &mut self,
+        input: &[f32],
+        out: &[f32],
+        dout: &Vec<f32>,
+        beta1: f32,
+        beta2: f32,
+    ) -> Vec<f32> {
+        let mut daffine = vec![0.0; self.height];
+        if self.activation {
+            for i in 0..self.height {
+                if out[i] > 0.0 {
+                    daffine[i] = dout[i];
+                }
+            }
+        } else {
+            daffine = dout.clone();
+        }
+
+        // prepare for update bias
+        for i in 0..self.height {
+            self.v_bias[i] = beta1 * self.v_bias[i] + (1.0 - beta1) * daffine[i];
+            self.m_bias[i] = beta2 * self.m_bias[i] + (1.0 - beta2) * daffine[i].powi(2);
+        }
+
+        let mut dweight = vec![0.0; self.weight.len()];
+        for i in 0..self.height {
+            let offset = i * self.width;
+            for j in 0..self.width {
+                dweight[offset + j] = daffine[i] * input[j];
+            }
+        }
+        for i in 0..self.weight.len() {
+            self.v_weight[i] = beta1 * self.v_weight[i] + (1.0 - beta1) * dweight[i];
+            self.m_weight[i] = beta2 * self.m_weight[i] + (1.0 - beta2) * dweight[i].powi(2);
+        }
+
+        let mut dinput = vec![0.0; self.width];
+        for i in 0..self.height {
+            if daffine[i] == 0.0 {
+                continue;
+            }
+            let offset = i * self.width;
+            for j in 0..self.width {
+                dinput[j] += self.weight[offset + j] * daffine[i];
+            }
+        }
+        return dinput;
+    }
+
+    pub fn update(&mut self, lr: f32) {
+        for i in 0..self.height {
+            self.bias[i] += lr * self.v_bias[i] / (self.m_bias[i] + 0.000001).sqrt();
+        }
+        for i in 0..self.weight.len() {
+            self.weight[i] += lr * self.v_weight[i] / (self.m_weight[i] + 0.000001).sqrt();
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SimplePatternEvaluator {
     // big_h: Vec<f32>,
     // piller_3x4: Vec<f32>,
     // bottom_corner: Vec<f32>,
     p4x4: Vec<f32>,
+    l1: Linear,
+    l2: Linear,
 }
 
 impl SimplePatternEvaluator {
@@ -798,11 +919,15 @@ impl SimplePatternEvaluator {
         // let piller = vec![0.0; Self::PILLER3X4_SIZE];
         // let bottom_corner = vec![0.0; Self::BOTTOM_CORNER_SIZE];
         let p4x4 = vec![0.0; 31 * 31 * 31 * 31];
+        let l1 = Linear::new(10, 8, true);
+        let l2 = Linear::new(8, 1, false);
         return SimplePatternEvaluator {
             // big_h: big_h,
             // piller_3x4: piller,
             // bottom_corner: bottom_corner,
             p4x4: p4x4,
+            l1: l1,
+            l2: l2,
         };
     }
 
@@ -822,9 +947,12 @@ impl SimplePatternEvaluator {
         //     val += self.bottom_corner[idx];
         // }
         let idxs = Self::get_piller4x4_idx(att, def);
+        let mut xs = Vec::new();
         for idx in idxs {
-            val += self.p4x4[idx];
+            xs.push(self.p4x4[idx]);
         }
+        let xs = self.l1.forward(xs);
+        let val = self.l2.forward(xs)[0];
 
         return 1.0 / (1.0 + (-val).exp());
     }
@@ -899,14 +1027,15 @@ impl TrainableSPE {
 impl Trainable for TrainableSPE {
     fn update(&mut self, b: &Board, delta: f32) {
         let (att, def) = b.get_att_def();
-        let bigh_idxs = SimplePatternEvaluator::get_bigh_idx(att, def);
-        let pi3x4_idxs = SimplePatternEvaluator::get_piller3x4_idx(att, def);
-        let bcorner_idxs = SimplePatternEvaluator::get_bottom_corner_idx(att, def);
+        // let bigh_idxs = SimplePatternEvaluator::get_bigh_idx(att, def);
+        // let pi3x4_idxs = SimplePatternEvaluator::get_piller3x4_idx(att, def);
+        // let bcorner_idxs = SimplePatternEvaluator::get_bottom_corner_idx(att, def);
         let p4x4_idxs = SimplePatternEvaluator::get_piller4x4_idx(att, def);
         let val = self.main.evaluate_board(b);
 
         let dv = val * (1.0 - val);
-        let delta = self.lr * delta * dv;
+        let delta = delta * dv;
+
         // for i in bigh_idxs {
         //     self.main.big_h[i] += delta;
         // }
@@ -916,9 +1045,22 @@ impl Trainable for TrainableSPE {
         // for i in bcorner_idxs {
         //     self.main.bottom_corner[i] += delta;
         // }
-        for i in p4x4_idxs {
-            self.main.p4x4[i] += delta;
+        let mut x1 = Vec::new();
+        for &idx in p4x4_idxs.iter() {
+            x1.push(self.main.p4x4[idx]);
         }
+        let x2 = self.main.l1.forward(x1.clone());
+        let x3 = self.main.l2.forward(x2.clone());
+        let dx3 = vec![delta];
+        let dx2 = self.main.l2.backward(&x2, &x3, &dx3, 0.9, 0.999);
+        let dx1 = self.main.l1.backward(&x1, &x2, &dx2, 0.9, 0.999);
+
+        for (i, &idx) in p4x4_idxs.iter().enumerate() {
+            self.main.p4x4[idx] += self.lr * dx1[i];
+        }
+
+        self.main.l1.update(self.lr);
+        self.main.l2.update(self.lr);
     }
 
     fn get_val(&self, b: &Board) -> f32 {
