@@ -287,6 +287,14 @@ impl Board {
             | ((bitboard << 3) & mask << 3);
     }
 
+    pub fn u64_hflip(bitboard: u64) -> u64 {
+        let mask: u64 = 0x1111_1111_1111_1111;
+        return ((bitboard >> 3) & mask)
+            | ((bitboard >> 1) & mask << 1)
+            | ((bitboard << 1) & mask << 2)
+            | ((bitboard << 3) & mask << 3);
+    }
+
     pub fn dflip(bitboard: u128) -> u128 {
         let mask1: u128 = 0x0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a;
         let mask1_: u128 = 0xa5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5;
@@ -294,6 +302,33 @@ impl Board {
         let mask2_: u128 = 0xcc33cc33cc33cc33cc33cc33cc33cc33;
         let bitboard = (bitboard & mask1_) | ((bitboard >> 3) & mask1) | ((bitboard & mask1) << 3);
         return (bitboard & mask2_) | ((bitboard >> 6) & mask2) | ((bitboard & mask2) << 6);
+    }
+
+    pub const fn u64_dflip(bitboard: u64) -> u64 {
+        let mask1 = 0x0a0a_0a0a_0a0a_0a0a;
+        let mask1_ = 0xa5a5_a5a5_a5a5_a5a5;
+        let mask2 = 0x00cc00cc00cc00cc;
+        let mask2_ = 0xcc33cc33cc33cc33;
+        let bitboard = (bitboard & mask1_) | (bitboard >> 3) & mask1 | ((bitboard & mask1) << 3);
+        return (bitboard & mask2_) | (bitboard >> 6) & mask2 | ((bitboard & mask2) << 6);
+    }
+
+    pub const fn u64_xzflip(bboard: u64) -> u64 {
+        let mask1 = 0x0000_aaaa_0000_aaaa;
+        let mask1_ = 0xaaaa_5555_aaaa_5555;
+        let mask2 = 0x0000_0000_cccc_cccc;
+        let mask2_ = 0xcccc_cccc_3333_3333;
+        let bboard = (bboard & mask1) << 15 | (bboard >> 15) & mask1 | (bboard & mask1_);
+        return (bboard & mask2) << 30 | (bboard >> 30) & mask2 | (bboard & mask2_);
+    }
+
+    pub const fn u64_yzflip(bboard: u64) -> u64 {
+        let mask1 = 0x0000_f0f0_0000_f0f0;
+        let mask1_ = 0xf0f0_0f0f_f0f0_0f0f;
+        let mask2 = 0x0000_0000_ff00_ff00;
+        let mask2_ = 0xff00_ff00_00ff_00ff;
+        let bboard = (bboard & mask1) << 20 | (bboard >> 20) & mask1 | (bboard & mask1_);
+        return (bboard & mask2) << 40 | (bboard >> 40) & mask2 | (bboard & mask2_);
     }
 
     pub fn rot(bitboard: u128) -> u128 {
@@ -1373,7 +1408,13 @@ pub fn eval(a1: &Agent, a2: &Agent, n: usize) -> (f32, f32) {
     return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
 }
 
-pub fn compare_agent(a1: &impl GetAction, a2: &impl GetAction, n: usize, th: f64, render: bool) -> (f32, f32, bool) {
+pub fn compare_agent(
+    a1: &impl GetAction,
+    a2: &impl GetAction,
+    n: usize,
+    th: f64,
+    render: bool,
+) -> (f32, f32, bool) {
     use super::utills::half_imcomplete_beta_func;
     let mut score1 = 0.0;
     let mut score2 = 0.0;

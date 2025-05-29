@@ -577,6 +577,371 @@ impl EvaluatorF for TrainableSLE {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub struct SimplePatternEvaluator {
+    // big_h: Vec<f32>,
+    // piller_3x4: Vec<f32>,
+    // bottom_corner: Vec<f32>,
+    p4x4: Vec<f32>,
+}
+
+impl SimplePatternEvaluator {
+    const BIGH_SIZE: usize = 1 << 16;
+    const BIGH_MAGIC: u64 = 0x8008101000200040;
+
+    const PILLER3X4_SIZE: usize = 1 << 16;
+    const PILLER3X4_MAGIC: u64 = 0x1011000200040000;
+
+    const BOTTOM_CORNER_SIZE: usize = 1 << 16;
+    const BOTTOM_CORNER_MAGIC: u64 = 0x100800100020000;
+
+    const fn _get_piller4x4_idx(a: u64, d: u64) -> usize {
+        // a = ......0000_1111
+        //           ^^^^ ^^^^
+        //          black white
+
+        let a = (a + (d << 1));
+        let a = (a & 0x0000_ffff_0000_ffff) + ((a >> 16) & 0x0000_ffff_0000_ffff) * 31;
+        let a = (a & 0xffff_ffff) + ((a >> 32) & 0xffff_ffff) * 31 * 31;
+
+        return a as usize;
+    }
+
+    const fn get_piller4x4_idx(a: u64, d: u64) -> [usize; 10] {
+        let a = Board::u64_xzflip(a);
+        let d = Board::u64_xzflip(d);
+        let mut idxs: [usize; 10] = [0; 10];
+        idxs[0] = Self::_get_piller4x4_idx(a & 0x000f_000f_000f_000f, d & 0x000f_000f_000f_000f);
+        idxs[1] = Self::_get_piller4x4_idx(
+            (a >> 4) & 0x000f_000f_000f_000f,
+            (d >> 4) & 0x000f_000f_000f_000f,
+        );
+        idxs[2] = Self::_get_piller4x4_idx(
+            (a >> 8) & 0x000f_000f_000f_000f,
+            (d >> 8) & 0x000f_000f_000f_000f,
+        );
+        idxs[3] = Self::_get_piller4x4_idx(
+            (a >> 12) & 0x000f_000f_000f_000f,
+            (d >> 12) & 0x000f_000f_000f_000f,
+        );
+
+        let (a, d) = (Board::u64_yzflip(a), Board::u64_yzflip(d));
+        idxs[4] = Self::_get_piller4x4_idx(a & 0x000f_000f_000f_000f, d & 0x000f_000f_000f_000f);
+        idxs[5] = Self::_get_piller4x4_idx(
+            (a >> 4) & 0x000f_000f_000f_000f,
+            (d >> 4) & 0x000f_000f_000f_000f,
+        );
+        idxs[6] = Self::_get_piller4x4_idx(
+            (a >> 8) & 0x000f_000f_000f_000f,
+            (d >> 8) & 0x000f_000f_000f_000f,
+        );
+        idxs[7] = Self::_get_piller4x4_idx(
+            (a >> 12) & 0x000f_000f_000f_000f,
+            (d >> 12) & 0x000f_000f_000f_000f,
+        );
+        idxs[8] = Self::_get_piller4x4_idx(
+            a & 0x000f
+                | (a >> 4) & 0xf_0000
+                | (a >> 8) & 0xf_0000_0000
+                | (a >> 12) & 0xf_0000_0000_0000,
+            d & 0x000f
+                | (d >> 4) & 0xf_0000
+                | (d >> 8) & 0xf_0000_0000
+                | (d >> 12) & 0xf_0000_0000_0000,
+        );
+        idxs[9] = Self::_get_piller4x4_idx(
+            (a >> 12) & 0x000f
+                | (a >> 8) & 0xf_0000
+                | (a >> 4) & 0xf_0000_0000
+                | a & 0xf_0000_0000_0000,
+            (d >> 12) & 0x000f
+                | (d >> 8) & 0xf_0000
+                | (d >> 4) & 0xf_0000_0000
+                | d & 0xf_0000_0000_0000,
+        );
+        return idxs;
+    }
+
+    fn get_bigh_idx(a: u64, d: u64) -> [usize; 10] {
+        let a_ = Board::u64_dflip(a);
+        let d_ = Board::u64_dflip(d);
+
+        let a = (a >> 8) & 0x00f0_00f0_00f0_00f0
+            | (a << 8) & 0xf000_f000_f000_f000
+            | a & 0x0f0f_0f0f_0f0f_0f0f;
+        let d = (d >> 8) & 0x00f0_00f0_00f0_00f0
+            | (d << 8) & 0xf000_f000_f000_f000
+            | d & 0x0f0f_0f0f_0f0f_0f0f;
+
+        let bboard = a & 0x0011_1111_1111_0011 | ((d & 0x0011_1111_1111_0011) << 1);
+        let mut idxs: [usize; 10] = [0; 10];
+        for i in 0..4 {
+            let bboard =
+                (a >> i) & 0x0011_1111_1111_0011 | (((d >> i) & 0x0011_1111_1111_0011) << 1);
+            idxs[i] = ((bboard * Self::BIGH_MAGIC) >> 48) as usize;
+        }
+        for i in 0..4 {
+            let bboard =
+                (a_ >> i) & 0x0011_1111_1111_0011 | (((d_ >> i) & 0x0011_1111_1111_0011) << 1);
+            idxs[i + 4] = ((bboard * Self::BIGH_MAGIC) >> 48) as usize;
+        }
+        let bboard = (a & 0x0080_0080_0080_0080) >> 3
+            | (a & 0x0400_0400_0400_0400) >> 2
+            | (a & 0x2000_2000_2000_2000) >> 1
+            | (a & 0x0001_0001_0001_0001)
+            | (d & 0x0080_0080_0080_0080) >> 2
+            | (d & 0x0400_0400_0400_0400) >> 1
+            | (d & 0x2000_2000_2000_2000)
+            | (d & 0x0001_0001_0001_0001) << 1;
+        idxs[8] = ((bboard * Self::BIGH_MAGIC) >> 48) as usize;
+        let (a, d) = (Board::u64_hflip(a), Board::u64_hflip(d));
+        let bboard = (a & 0x0080_0080_0080_0080) >> 3
+            | (a & 0x0400_0400_0400_0400) >> 2
+            | (a & 0x2000_2000_2000_2000) >> 1
+            | (a & 0x0001_0001_0001_0001)
+            | (d & 0x0080_0080_0080_0080) >> 2
+            | (d & 0x0400_0400_0400_0400) >> 1
+            | (d & 0x2000_2000_2000_2000)
+            | (d & 0x0001_0001_0001_0001) << 1;
+        idxs[9] = ((bboard * Self::BIGH_MAGIC) >> 48) as usize;
+
+        return idxs;
+    }
+
+    fn get_piller3x4_idx(a: u64, d: u64) -> [usize; 10] {
+        let mut ans = [0; 10];
+        for i in 0..4 {
+            let bboard;
+            if i == 0 {
+                bboard = a & 0x1111_1111_1111_1111 | ((d & 0x1111_1111_1111_1111) << 1);
+            } else {
+                bboard =
+                    (a >> i) & 0x1111_1111_1111_1111 | ((d >> i) & 0x1111_1111_1111_1111) >> (i - 1)
+            }
+            ans[i] = ((bboard * Self::PILLER3X4_MAGIC) >> 48) as usize;
+        }
+        let (a, d) = (Board::u64_dflip(a), Board::u64_dflip(a));
+        for i in 0..4 {
+            let bboard: u64;
+            if i == 0 {
+                bboard = a & 0x1111_1111_1111_1111 | ((d & 0x1111_1111_1111_1111) << 1);
+            } else {
+                bboard =
+                    (a >> i) & 0x1111_1111_1111_1111 | ((d >> i) & 0x1111_1111_1111_1111) >> (i - 1)
+            }
+            ans[i + 4] = ((bboard * Self::PILLER3X4_MAGIC) >> 48) as usize;
+        }
+        let bboard: u64 = (a & 0x0080_0080_0080_0080) >> 3
+            | (a & 0x0400_0400_0400_0400) >> 2
+            | (a & 0x2000_2000_2000_2000) >> 1
+            | (a & 0x0001_0001_0001_0001)
+            | (d & 0x0080_0080_0080_0080) >> 2
+            | (d & 0x0400_0400_0400_0400) >> 1
+            | (d & 0x2000_2000_2000_2000)
+            | (d & 0x0001_0001_0001_0001) << 1;
+        ans[8] = ((bboard * Self::PILLER3X4_MAGIC) >> 48) as usize;
+        let (a, d) = (Board::u64_hflip(a), Board::u64_hflip(d));
+        let bboard = (a & 0x0080_0080_0080_0080) >> 3
+            | (a & 0x0400_0400_0400_0400) >> 2
+            | (a & 0x2000_2000_2000_2000) >> 1
+            | (a & 0x0001_0001_0001_0001)
+            | (d & 0x0080_0080_0080_0080) >> 2
+            | (d & 0x0400_0400_0400_0400) >> 1
+            | (d & 0x2000_2000_2000_2000)
+            | (d & 0x0001_0001_0001_0001) << 1;
+        ans[9] = ((bboard * Self::PILLER3X4_MAGIC) >> 48) as usize;
+
+        return ans;
+    }
+
+    fn xflip(a: u64) -> u64 {
+        return (a >> 3) & 0x1111_1111_1111_1111
+            | (a >> 1) & 0x2222_2222_2222_2222
+            | (a << 1) & 0x4444_4444_4444_4444
+            | (a << 3) & 0x8888_8888_8888_8888;
+    }
+
+    fn yflip(a: u64) -> u64 {
+        return (a >> 12) & 0x000f_000f_000f_000f
+            | (a >> 4) & 0x00f0_00f0_00f0_00f0
+            | (a << 4) & 0x0f00_0f00_0f00_0f00
+            | (a << 12) & 0xf000_f000_f000_f000;
+    }
+
+    fn get_bottom_corner_idx(a: u64, d: u64) -> [usize; 4] {
+        let mut idxs = [0; 4];
+        idxs[0] = Self::_get_bottom_corner_idx(a, d);
+        let (a, d) = (Self::xflip(a), Self::xflip(d));
+        idxs[1] = Self::_get_bottom_corner_idx(a, d);
+        let (a, d) = (Self::yflip(a), Self::yflip(d));
+        idxs[2] = Self::_get_bottom_corner_idx(a, d);
+        let (a, d) = (Self::xflip(a), Self::xflip(d));
+        idxs[3] = Self::_get_bottom_corner_idx(a, d);
+        return idxs;
+    }
+    fn _get_bottom_corner_idx(a: u64, b: u64) -> usize {
+        let mut k = 0;
+        k = 3 * k + (a & 1) + (b & 1) << 1;
+        k = 3 * k + (a >> 1) & 1 + ((b >> 1) & 1) << 1;
+        k = 3 * k + (a >> 2) & 1 + ((b >> 2) & 1) << 1;
+        k = 3 * k + (a >> 3) & 1 + ((b >> 3) & 1) << 1;
+        k = 3 * k + (a >> 4) & 1 + ((b >> 4) & 1) << 1;
+        k = 3 * k + (a >> 5) & 1 + ((b >> 5) & 1) << 1;
+        k = 3 * k + (a >> 8) & 1 + ((b >> 8) & 1) << 1;
+        k = 3 * k + (a >> 10) & 1 + ((b >> 10) & 1) << 1;
+        k = 3 * k + (a >> 12) & 1 + ((b >> 12) & 1) << 1;
+        k = 3 * k + (a >> 15) & 1 + ((b >> 15) & 1) << 1;
+        return k as usize;
+    }
+
+    pub fn new() -> Self {
+        // let big_h = vec![0.0; Self::BIGH_SIZE];
+        // let piller = vec![0.0; Self::PILLER3X4_SIZE];
+        // let bottom_corner = vec![0.0; Self::BOTTOM_CORNER_SIZE];
+        let p4x4 = vec![0.0; 31 * 31 * 31 * 31];
+        return SimplePatternEvaluator {
+            // big_h: big_h,
+            // piller_3x4: piller,
+            // bottom_corner: bottom_corner,
+            p4x4: p4x4,
+        };
+    }
+
+    pub fn evaluate_board(&self, b: &Board) -> f32 {
+        let mut val = 0.0;
+        let (att, def) = b.get_att_def();
+        // let idxs = Self::get_bigh_idx(att, def);
+        // for idx in idxs {
+        //     val += self.big_h[idx];
+        // }
+        // let idxs = Self::get_piller3x4_idx(att, def);
+        // for idx in idxs {
+        //     val += self.piller_3x4[idx];
+        // }
+        // let idxs = Self::get_bottom_corner_idx(att, def);
+        // for idx in idxs {
+        //     val += self.bottom_corner[idx];
+        // }
+        let idxs = Self::get_piller4x4_idx(att, def);
+        for idx in idxs {
+            val += self.p4x4[idx];
+        }
+
+        return 1.0 / (1.0 + (-val).exp());
+    }
+    pub fn save(&self, name: String) -> Result<()> {
+        use anyhow::Context;
+        use std::fs::File;
+        use std::io::{BufWriter, Write};
+
+        let data_str = serde_json::to_string(self)?;
+
+        let file = File::create(name)?;
+        let mut buff_writer: BufWriter<File> = BufWriter::new(file);
+
+        buff_writer
+            .write(data_str.as_bytes())
+            .context("write error")?;
+        buff_writer.flush().context("flush error")?;
+
+        Ok(())
+    }
+    pub fn load(&mut self, name: String) -> Result<()> {
+        use anyhow::Context;
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        let file = File::open(name)?;
+        let buff_reader: BufReader<File> = BufReader::new(file);
+
+        let mut lines = Vec::new();
+
+        for line in buff_reader.lines() {
+            // if process here, can save memory
+            lines.push(line.context("read error")?);
+        }
+        let data_str = lines.join("\n");
+        let mut src: SimplePatternEvaluator = serde_json::from_str(&data_str)?;
+
+        std::mem::swap(self, &mut src);
+
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct TrainableSPE {
+    main: SimplePatternEvaluator,
+    v: SimplePatternEvaluator,
+    m: SimplePatternEvaluator,
+    lr: f32,
+}
+
+impl TrainableSPE {
+    pub fn new(lr: f32) -> Self {
+        TrainableSPE {
+            main: SimplePatternEvaluator::new(),
+            v: SimplePatternEvaluator::new(),
+            m: SimplePatternEvaluator::new(),
+            lr: lr,
+        }
+    }
+
+    pub fn from(e: SimplePatternEvaluator, lr: f32) -> Self {
+        TrainableSPE {
+            main: e,
+            v: SimplePatternEvaluator::new(),
+            m: SimplePatternEvaluator::new(),
+            lr: lr,
+        }
+    }
+}
+
+impl Trainable for TrainableSPE {
+    fn update(&mut self, b: &Board, delta: f32) {
+        let (att, def) = b.get_att_def();
+        let bigh_idxs = SimplePatternEvaluator::get_bigh_idx(att, def);
+        let pi3x4_idxs = SimplePatternEvaluator::get_piller3x4_idx(att, def);
+        let bcorner_idxs = SimplePatternEvaluator::get_bottom_corner_idx(att, def);
+        let p4x4_idxs = SimplePatternEvaluator::get_piller4x4_idx(att, def);
+        let val = self.main.evaluate_board(b);
+
+        let dv = val * (1.0 - val);
+        let delta = self.lr * delta * dv;
+        // for i in bigh_idxs {
+        //     self.main.big_h[i] += delta;
+        // }
+        // for i in pi3x4_idxs {
+        //     self.main.piller_3x4[i] += delta;
+        // }
+        // for i in bcorner_idxs {
+        //     self.main.bottom_corner[i] += delta;
+        // }
+        for i in p4x4_idxs {
+            self.main.p4x4[i] += delta;
+        }
+    }
+
+    fn get_val(&self, b: &Board) -> f32 {
+        self.main.evaluate_board(b)
+    }
+
+    fn save(&self, file: String) -> Result<()> {
+        self.main.save(file)
+    }
+    fn load(&mut self, file: String) -> Result<()> {
+        self.main.load(file)
+    }
+    fn eval(&mut self) {}
+    fn train(&mut self) {}
+}
+
+impl EvaluatorF for TrainableSPE {
+    fn eval_func_f32(&self, b: &Board) -> f32 {
+        return self.main.evaluate_board(b).clamp(0.0, 1.0);
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub struct BucketLineEvaluator {
     evals: Vec<SimplLineEvaluator>,
 }

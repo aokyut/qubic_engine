@@ -1,5 +1,8 @@
 use proconio::input;
-use qubic_engine::ai::line::{BucketLineEvaluator, SimplLineEvaluator, TrainableBLE, TrainableSLE};
+use qubic_engine::ai::line::{
+    BucketLineEvaluator, SimplLineEvaluator, SimplePatternEvaluator, TrainableBLE, TrainableSLE,
+    TrainableSPE,
+};
 use qubic_engine::ai::line_nn::{
     MMEvaluator, NNLineEvaluator, NNLineEvaluator_, TrainableNLE, TrainableNLE_,
 };
@@ -65,9 +68,9 @@ fn main() {
 
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 29);
     l7_.hashmap = true;
-    l7_.timelimit = 1000;
-    l7_.min_depth = 7;
-    let l7_ = MateWrapperActor::new(Box::new(l7_));
+    l7_.timelimit = 1;
+    l7_.min_depth = 5;
+    // let l7_ = MateWrapperActor::new(Box::new(l7_));
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
     let po2 = PlayoutEvaluator::new(PlayoutLevel::Actor(Box::new(m1)));
@@ -104,7 +107,7 @@ fn main() {
 
     // make_db();
     // use_aip();
-    // let result = play_actor(&ma, &na, true);
+    // let result = play_actor(&l7_, &l7_, true);
     // println!("{result:#?}");
     // return;
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
@@ -121,21 +124,6 @@ fn main() {
     // return;
     // let (a, b, c) = compare(&m2, &mm3);
 
-    // pprint_u64(0b1000010000100001100001000010000110000100001000011000010000100001);
-
-    // exp_count_2row_();
-    // println!("{}", 3 * 3 & 1)
-    // let att = 2314852547162056300;
-    // let def = 360328721413243153;
-    // let b = Board::from(att, def, Player::Black);
-    // pprint_board(&b);
-    // println!("");
-    // let a = qubic_engine::board::get_reach_mask_alpha(att, def);
-    // let b = qubic_engine::board::get_reach_mask(att, def);
-    // pprint_u64(a);
-    // println!("");
-    // pprint_u64(b);
-
     // train_with_db(
     //     false,
     //     true,
@@ -143,9 +131,9 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
-    // train_line_eval();
+    train_line_eval();
     // mpc_for_coe(7,7);
-    profile();
+    // profile();
     // beam_search();
     // test_zhash();
     // print_pmodel();
@@ -536,15 +524,43 @@ fn train_line_eval() {
     let mut pmodel = pattern::test_pattern_evaluator();
     let mut pmodel = TrainablePatternEvaluator::from_pattern_evaluator(pmodel, 0.0001, 0.9, 0.999);
 
+    let mut spe = SimplePatternEvaluator::new();
+    let mut spe_model = TrainableSPE::from(spe, 0.0005);
+
     qubic_engine::train::train_model_with_db(
-        nmodel,
+        spe_model,
         false,
         true,
         String::from("sle_tl50_.json"),
         String::from("sle_tl50_.json"),
-        String::from("sle_tl50_genCoe345_insertRandom1_4_48"),
-        String::from("sle_tl50_genCoe345_insertRandom1_4_48_test"),
+        String::from("winRate_coe5_genRandom_insertRandom1_48"),
+        String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     );
+}
+
+fn expand_untill_n(b: Board, n: usize) -> Vec<Board> {
+    use std::collections::HashSet;
+    let mut vs: Vec<Board> = Vec::new();
+    vs.push(b.clone());
+    let mut count = 1;
+    for i in 0..n {
+        let mut vs_ = Vec::new();
+        let mut m = HashSet::new();
+        for v in vs {
+            for action in v.valid_actions() {
+                let nb = v.next(action);
+                let hash = nb.hash();
+                if m.get(&hash).is_none() {
+                    m.insert(hash);
+                    vs_.push(nb);
+                }
+            }
+        }
+        vs = vs_;
+        println!("{i}:{count} -> {}({}%)", vs.len(), vs.len() * 100 / count);
+        count = vs.len();
+    }
+    return vs;
 }
 
 fn exp_count_2row_() {

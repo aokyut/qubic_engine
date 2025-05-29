@@ -736,7 +736,7 @@ pub fn train_model_with_db(
         }
         pb.finish();
 
-        if epoch % 50 == 0 {
+        if epoch % 1 == 0 {
             model.eval();
             let mut agent = NegAlphaF::new(Box::new(model.clone()), 3);
             agent.hashmap = true;
