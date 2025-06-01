@@ -13,7 +13,7 @@ use crate::ml;
 
 use super::{
     line::{self, SimplLineEvaluator},
-    EvaluatorF, Trainable,
+    EvaluatorF, LineEvaluator, LineMaskBundle, Trainable,
 };
 
 const D: usize = 2;
@@ -456,6 +456,25 @@ impl EvaluatorF for MMEvaluator {
     }
 }
 
+type BundleBitBoard = (u64, u64, u64, u64, u64, u64, u64);
+type GroupBitBoard = (
+    (BundleBitBoard, BundleBitBoard, BundleBitBoard),
+    (BundleBitBoard, BundleBitBoard, BundleBitBoard),
+);
+
+pub fn acum_count_bbb(b: BundleBitBoard) -> usize {
+    return (b.0.count_ones()
+        + b.1.count_ones()
+        + b.2.count_ones()
+        + b.3.count_ones()
+        + b.4.count_ones()
+        + b.5.count_ones()
+        + b.6.count_ones()) as usize;
+}
+pub fn acum_or_bbb(b: BundleBitBoard) -> u64 {
+    return b.0 | b.1 | b.2 | b.3 | b.4 | b.5 | b.6;
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NNLineEvaluator_ {
     pub wfl3: Vec<Vec<f32>>,
@@ -468,6 +487,7 @@ pub struct NNLineEvaluator_ {
     pub wt3nb: Vec<Vec<f32>>,
     pub wcore: Vec<Vec<f32>>,
     pub wturn: Vec<Vec<f32>>,
+    pub wbboard: Vec<Vec<f32>>,
     pub w_acum: Vec<f32>,
     pub bias: Vec<f32>,
     pub lbias: f32,
@@ -484,6 +504,7 @@ impl NNLineEvaluator_ {
     const G1: usize = WGL1_WIDTH * WGL1_WIDTH;
     const CORE_SIZE: usize = 1 << 12;
     const CORE_MAGIC: u64 = 0x201060008020200;
+    const B_SIZE: usize = 5376;
 
     pub fn get_core_idx(a: u64, d: u64) -> usize {
         let a = a & 0x0000_0660_0660_0000;
@@ -504,6 +525,7 @@ impl NNLineEvaluator_ {
         let mut tw = vec![vec![0.0; Self::D]; 12];
         let mut tn = vec![vec![0.0; Self::D]; 65];
         let mut co = vec![vec![0.0; Self::D]; Self::CORE_SIZE];
+        let mut bb = vec![vec![0.0; Self::D]; Self::B_SIZE];
 
         let mut rng = rand::thread_rng();
         let normal = Normal::new(0.0, 1.0).unwrap();
@@ -559,6 +581,12 @@ impl NNLineEvaluator_ {
                 co[i][j] = normal.sample(&mut rng);
             }
         }
+        for i in 0..Self::B_SIZE {
+            for j in 0..Self::D {
+                bb[i][j] = normal.sample(&mut rng);
+            }
+        }
+
         let mut bias = vec![0.0; Self::D];
 
         for j in 0..Self::D {
@@ -585,6 +613,7 @@ impl NNLineEvaluator_ {
             wturn: tn,
             w_acum: acum,
             wcore: co,
+            wbboard: bb,
             bias: bias,
             lbias: 0.0,
         };
@@ -601,6 +630,7 @@ impl NNLineEvaluator_ {
             wt3nw: vec![vec![0.0; Self::D]; 12],
             wt3nb: vec![vec![0.0; Self::D]; 12],
             wturn: vec![vec![0.0; Self::D]; 65],
+            wbboard: vec![vec![0.0; Self::D]; Self::B_SIZE],
             w_acum: vec![0.0; Self::D],
             bias: vec![0.0; Self::D],
             wcore: vec![vec![0.0; Self::D]; Self::CORE_SIZE],
@@ -608,9 +638,431 @@ impl NNLineEvaluator_ {
         };
     }
 
+    pub fn analyze_board(a: u64, d: u64) -> GroupBitBoard {
+        let stone = a | d;
+        let b = !stone;
+        let g = ((stone << 16) | 0xffff) & b;
+        let f = b ^ g;
+
+        let (
+            a1,
+            a2,
+            a3,
+            a4,
+            a5,
+            a6,
+            a8,
+            a9,
+            a10,
+            a11,
+            a12,
+            a13,
+            a15,
+            a16,
+            a17,
+            a19,
+            a20,
+            a21,
+            a22,
+            a24,
+            a26,
+            a30,
+            a32,
+            a33,
+            a34,
+            a36,
+            a38,
+            a39,
+            a40,
+            a42,
+            a45,
+            a48,
+            a51,
+            a57,
+            a60,
+            a63,
+        ) = (
+            a >> 1,
+            a >> 2,
+            a >> 3,
+            a >> 4,
+            a >> 5,
+            a >> 6,
+            a >> 8,
+            a >> 9,
+            a >> 10,
+            a >> 11,
+            a >> 12,
+            a >> 13,
+            a >> 15,
+            a >> 16,
+            a >> 17,
+            a >> 19,
+            a >> 20,
+            a >> 21,
+            a >> 22,
+            a >> 24,
+            a >> 26,
+            a >> 30,
+            a >> 32,
+            a >> 33,
+            a >> 34,
+            a >> 36,
+            a >> 38,
+            a >> 39,
+            a >> 40,
+            a >> 42,
+            a >> 45,
+            a >> 48,
+            a >> 51,
+            a >> 57,
+            a >> 60,
+            a >> 63,
+        );
+        let (
+            b1,
+            b2,
+            b3,
+            b4,
+            b5,
+            b6,
+            b8,
+            b9,
+            b10,
+            b11,
+            b12,
+            b13,
+            b15,
+            b16,
+            b17,
+            b19,
+            b20,
+            b21,
+            b22,
+            b24,
+            b26,
+            b30,
+            b32,
+            b33,
+            b34,
+            b36,
+            b38,
+            b39,
+            b40,
+            b42,
+            b45,
+            b48,
+            b51,
+            b57,
+            b60,
+            b63,
+        ) = (
+            b >> 1,
+            b >> 2,
+            b >> 3,
+            b >> 4,
+            b >> 5,
+            b >> 6,
+            b >> 8,
+            b >> 9,
+            b >> 10,
+            b >> 11,
+            b >> 12,
+            b >> 13,
+            b >> 15,
+            b >> 16,
+            b >> 17,
+            b >> 19,
+            b >> 20,
+            b >> 21,
+            b >> 22,
+            b >> 24,
+            b >> 26,
+            b >> 30,
+            b >> 32,
+            b >> 33,
+            b >> 34,
+            b >> 36,
+            b >> 38,
+            b >> 39,
+            b >> 40,
+            b >> 42,
+            b >> 45,
+            b >> 48,
+            b >> 51,
+            b >> 57,
+            b >> 60,
+            b >> 63,
+        );
+
+        let (x1, x2, x3) =
+            LineEvaluator::analyze_line(a, a1, a2, a3, b, b1, b2, b3, 0x1111_1111_1111_1111, 0xf);
+
+        let (y1, y2, y3) = LineEvaluator::analyze_line(
+            a,
+            a4,
+            a8,
+            a12,
+            b,
+            b4,
+            b8,
+            b12,
+            0x000f_000f_000f_000f,
+            0x1111,
+        );
+
+        let (z1, z2, z3) = LineEvaluator::analyze_line(
+            a,
+            a16,
+            a32,
+            a48,
+            b,
+            b16,
+            b32,
+            b48,
+            0xffff,
+            0x0001_0001_0001_0001,
+        );
+        let (xy1, xy2, xy3) = LineEvaluator::analyze_line(
+            a,
+            a5,
+            a10,
+            a15,
+            b,
+            b5,
+            b10,
+            b15,
+            0x0001_0001_0001_0001,
+            0x8421,
+        );
+        let (yx1, yx2, yx3) =
+            LineEvaluator::analyze_line(a, a3, a6, a9, b, b3, b6, b9, 0x0008_0008_0008_0008, 0x249);
+        let (xz1, xz2, xz3) = LineEvaluator::analyze_line(
+            a,
+            a17,
+            a34,
+            a51,
+            b,
+            b17,
+            b34,
+            b51,
+            0x1111,
+            0x0008_0004_0002_0001,
+        );
+        let (zx1, zx2, zx3) = LineEvaluator::analyze_line(
+            a,
+            a15,
+            a30,
+            a45,
+            b,
+            b15,
+            b30,
+            b45,
+            0x8888,
+            0x2000_4000_8001,
+        );
+        let (yz1, yz2, yz3) = LineEvaluator::analyze_line(
+            a,
+            a20,
+            a40,
+            a60,
+            b,
+            b20,
+            b40,
+            b60,
+            0x000f,
+            0x1000_0100_0010_0001,
+        );
+        let (zy1, zy2, zy3) = LineEvaluator::analyze_line(
+            a,
+            a12,
+            a24,
+            a36,
+            b,
+            b12,
+            b24,
+            b36,
+            0xf000,
+            0x0000_0010_0100_1001,
+        );
+
+        let xyz1d = 0x8000_0400_0020_0001 & d;
+        let (xyz11, xyz12, xyz13) = if xyz1d == 0 {
+            let xyz1_count = (0x8000_0400_0020_0001 & a).count_ones();
+            if xyz1_count > 1 {
+                if xyz1_count == 3 {
+                    (0, 0, 0x8000_0400_0020_0001 & b)
+                } else {
+                    (0, 0x8000_0400_0020_0001 & b, 0)
+                }
+            } else if xyz1_count == 1 {
+                (0x8000_0400_0020_0001 & b, 0, 0)
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        };
+        let xyz2d = 0x1000_0200_0040_0008 & d;
+        let (xyz21, xyz22, xyz23) = if xyz2d == 0 {
+            let xyz2_count = (0x1000_0200_0040_0008 & a).count_ones();
+            if xyz2_count > 1 {
+                if xyz2_count == 3 {
+                    (0, 0, 0x1000_0200_0040_0008 & b)
+                } else {
+                    (0, 0x1000_0200_0040_0008 & b, 0)
+                }
+            } else if xyz2_count == 1 {
+                (0x1000_0200_0040_0008 & b, 0, 0)
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        };
+        let xyz3d = 0x0008_0040_0200_1000 & d;
+        let (xyz31, xyz32, xyz33) = if xyz3d == 0 {
+            let xyz3_count = (0x0008_0040_0200_1000 & a).count_ones();
+            if xyz3_count > 1 {
+                if xyz3_count == 3 {
+                    (0, 0, 0x0008_0040_0200_1000 & b)
+                } else {
+                    (0, 0x0008_0040_0200_1000 & b, 0)
+                }
+            } else if xyz3_count == 1 {
+                (0x0008_0040_0200_1000 & b, 0, 0)
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        };
+        let xyz4d = 0x0001_0020_0400_8000 & d;
+        let (xyz41, xyz42, xyz43) = if xyz4d == 0 {
+            let xyz4_count = (0x0001_0020_0400_8000 & a).count_ones();
+            if xyz4_count > 1 {
+                if xyz4_count == 3 {
+                    (0, 0, 0x0001_0020_0400_8000 & b)
+                } else {
+                    (0, 0x0001_0020_0400_8000 & b, 0)
+                }
+            } else if xyz4_count == 1 {
+                (0x0001_0020_0400_8000 & b, 0, 0)
+            } else {
+                (0, 0, 0)
+            }
+        } else {
+            (0, 0, 0)
+        };
+
+        let (xy1, xy2, xy3) = (xy1 | yx1, xy2 | yx2, xy3 | yx3);
+        let (yz1, yz2, yz3) = (yz1 | zy1, yz2 | zy2, yz3 | zy3);
+        let (xz1, xz2, xz3) = (xz1 | zx1, xz2 | zx2, xz3 | zx3);
+        let (xyz1, xyz2, xyz3) = (
+            xyz11 | xyz21 | xyz31 | xyz41,
+            xyz12 | xyz22 | xyz32 | xyz42,
+            xyz13 | xyz23 | xyz33 | xyz43,
+        );
+
+        let (x1g, x2g, x3g) = (x1 & g, x2 & g, x3 & g);
+        let (x1f, x2f, x3f) = (x1 & f, x2 & f, x3 & f);
+        let (y1g, y2g, y3g) = (y1 & g, y2 & g, y3 & g);
+        let (y1f, y2f, y3f) = (y1 & f, y2 & f, y3 & f);
+        let (z1g, z2g, z3g) = (z1 & g, z2 & g, z3 & g);
+        let (z1f, z2f, z3f) = (z1 & f, z2 & f, z3 & f);
+        let (xy1g, xy2g, xy3g) = (xy1 & g, xy2 & g, xy3 & g);
+        let (xy1f, xy2f, xy3f) = (xy1 & f, xy2 & f, xy3 & f);
+        let (yz1g, yz2g, yz3g) = (yz1 & g, yz2 & g, yz3 & g);
+        let (yz1f, yz2f, yz3f) = (yz1 & f, yz2 & f, yz3 & f);
+        let (xz1g, xz2g, xz3g) = (xz1 & g, xz2 & g, xz3 & g);
+        let (xz1f, xz2f, xz3f) = (xz1 & f, xz2 & f, xz3 & f);
+        let (xyz1g, xyz2g, xyz3g) = (xyz1 & g, xyz2 & g, xyz3 & g);
+        let (xyz1f, xyz2f, xyz3f) = (xyz1 & f, xyz2 & f, xyz3 & f);
+
+        return (
+            (
+                (x1g, y1g, z1g, xy1g, yz1g, xz1g, xyz1g),
+                (x2g, y2g, z2g, xy2g, yz2g, xz2g, xyz2g),
+                (x3g, y3g, z3g, xy3g, yz3g, xz3g, xyz3g),
+            ),
+            (
+                (x1f, y1f, z1f, xy1f, yz1f, xz1f, xyz1f),
+                (x2f, y2f, z2f, xy2f, yz2f, xz2f, xyz2f),
+                (x3f, y3f, z3f, xy3f, yz3f, xz3f, xyz3f),
+            ),
+        );
+    }
+
+    pub fn get_counts(
+        ga: GroupBitBoard,
+        gd: GroupBitBoard,
+    ) -> (
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+    ) {
+        let l3_mask = acum_or_bbb(ga.1 .2) | acum_or_bbb(gd.1 .2);
+        let trap_3_num = (l3_mask & (!l3_mask << 16) & 0xffff_0000_0000).count_ones();
+
+        return (
+            acum_count_bbb(ga.1 .0),
+            acum_count_bbb(ga.1 .1),
+            acum_count_bbb(ga.1 .2),
+            acum_count_bbb(ga.0 .0),
+            acum_count_bbb(ga.0 .1),
+            acum_count_bbb(ga.0 .2),
+            acum_count_bbb(gd.1 .0),
+            acum_count_bbb(gd.1 .1),
+            acum_count_bbb(gd.1 .2),
+            acum_count_bbb(gd.0 .0),
+            acum_count_bbb(gd.0 .1),
+            acum_count_bbb(gd.0 .2),
+            trap_3_num as usize,
+        );
+    }
+
+    pub fn get_idxs(a: GroupBitBoard, d: GroupBitBoard) -> Vec<usize> {
+        let mut offset = 0;
+        let input = [
+            a.0 .0, a.0 .1, a.0 .2, a.1 .0, a.1 .1, a.1 .2, d.0 .0, d.0 .1, d.0 .2, d.1 .0, d.1 .1,
+            d.1 .2,
+        ];
+        let mut idxs = Vec::new();
+        for bits in input.iter() {
+            for mut bit in [bits.0, bits.1, bits.2, bits.3, bits.4, bits.5, bits.6] {
+                loop {
+                    if bit == 0 {
+                        break;
+                    }
+                    let onehot = bit & (bit - 1);
+                    bit ^= onehot;
+                    idxs.push(bit.trailing_zeros() as usize);
+                }
+                offset += 64;
+            }
+        }
+        return idxs;
+    }
+
     pub fn evaluate_board(&self, b: &Board) -> f32 {
+        let (att, def) = b.get_att_def();
+        let ga = Self::analyze_board(att, def);
+        let gd = Self::analyze_board(def, att);
+
         let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) =
-            line::SimplLineEvaluator::get_counts(&b);
+            Self::get_counts(ga, gd);
+        let idxs = Self::get_idxs(ga, gd);
+
         let (att, def) = b.get_att_def();
         let n_stone = (att | def).count_ones() as usize;
         let is_black = n_stone % 2 == 0;
@@ -638,6 +1090,12 @@ impl NNLineEvaluator_ {
             v[i] += core[i];
             v[i] += self.bias[i];
             v[i] += self.wturn[n_stone][i];
+        }
+
+        for idx in idxs {
+            for i in 0..Self::D {
+                v[i] += self.wbboard[idx][i];
+            }
         }
         // let val = v[0];
 
@@ -763,9 +1221,14 @@ impl Trainable for TrainableNLE_ {
         // return;
 
         self.batch_i += 1;
-        let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) =
-            line::SimplLineEvaluator::get_counts(&b);
         let (att, def) = b.get_att_def();
+        let ga = NNLineEvaluator_::analyze_board(att, def);
+        let gd = NNLineEvaluator_::analyze_board(def, att);
+
+        let (af1, af2, af3, ag1, ag2, ag3, df1, df2, df3, dg1, dg2, dg3, tn3) =
+            NNLineEvaluator_::get_counts(ga, gd);
+        let idxs = NNLineEvaluator_::get_idxs(ga, gd);
+
         let n_stone = (att | def).count_ones() as usize;
         let is_black = n_stone % 2 == 0;
 
@@ -798,6 +1261,12 @@ impl Trainable for TrainableNLE_ {
             v0[i] += self.main.wcore[core_idx][i];
             v0[i] += self.main.bias[i];
             v0[i] += self.main.wturn[n_stone][i];
+        }
+
+        for &idx in idxs.iter() {
+            for i in 0..NNLineEvaluator_::D {
+                v0[i] += self.main.wbboard[idx][i];
+            }
         }
 
         let v1 = v0.iter().map(|a| a.max(a * 0.01)).collect::<Vec<f32>>();
@@ -852,6 +1321,14 @@ impl Trainable for TrainableNLE_ {
         // self.main.w_acum = vec![1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0];
 
         // di
+
+        for &idx in idxs.iter() {
+            for i in 0..NNLineEvaluator_::D {
+                self.v.wbboard[idx][i] =
+                    self.beta * self.v.wbboard[idx][i] + (1.0 - self.beta) * di[i];
+                self.main.wbboard[idx][i] += self.v.wbboard[idx][i];
+            }
+        }
 
         for i in 0..NNLineEvaluator_::D {
             // print!("{:#?},", self.v.wfl1[f1][i]);

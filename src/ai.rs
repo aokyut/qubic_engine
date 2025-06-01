@@ -2360,10 +2360,6 @@ impl LineEvaluator {
         };
     }
 
-    // #[cfg(all(
-    //     any(target_arch = "x86_64", target_arch = "x86"),
-    //     target_feature = "avx2"
-    // ))]
     pub fn analyze_line(
         a1: u64,
         a2: u64,
@@ -2376,11 +2372,6 @@ impl LineEvaluator {
         mask: u64,
         magic: u64,
     ) -> (u64, u64, u64) {
-        use std::arch::x86_64::{
-            __m256i, _mm256_and_si256, _mm256_maskload_epi64, _mm256_maskstore_epi64,
-            _mm256_or_si256, _mm256_setzero_si256,
-        };
-
         return (
             ((b1 & b2 & b3 & a4 | b1 & b2 & a3 & b4 | b1 & a2 & b3 & b4 | a1 & b2 & b3 & b4)
                 & mask)

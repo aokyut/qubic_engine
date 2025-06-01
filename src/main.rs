@@ -528,7 +528,7 @@ fn train_line_eval() {
     let mut spe_model = TrainableSPE::from(spe, 0.0005);
 
     qubic_engine::train::train_model_with_db(
-        spe_model,
+        nmodel,
         false,
         true,
         String::from("sle_tl50_.json"),
