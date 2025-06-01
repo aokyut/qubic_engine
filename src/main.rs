@@ -117,9 +117,8 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
-    //
-    command();
     // train_line_eval();
+    command();
     // mpc_for_coe(7,7);
     // profile();
     // beam_search();
@@ -133,6 +132,7 @@ fn command() {
     use std::env;
 
     let args: Vec<String> = env::args().collect();
+    println!("{:#?}", args);
     if args[1] == "train" {
         println!("train_line_eval({}, {})", args[2], args[3]);
         train_line_eval(args[2].clone(), args[3].clone());
@@ -494,7 +494,7 @@ fn make_db() {
     create_db(Some(le), "sle_tl50_genCoe345_insertRandom1_4_48", 5);
 }
 
-fn train_line_eval(train_db_name: String, test_db_name: String) {
+fn train_line_eval(train_db: String, valid_db: String) {
     // let mut model = LineEvaluator::new();
     // let mut model = TrainableLineEvaluator::from(model, 0.001);
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
@@ -522,17 +522,14 @@ fn train_line_eval(train_db_name: String, test_db_name: String) {
     let mut pmodel = pattern::test_pattern_evaluator();
     let mut pmodel = TrainablePatternEvaluator::from_pattern_evaluator(pmodel, 0.0001, 0.9, 0.999);
 
-    let mut spe = SimplePatternEvaluator::new();
-    let mut spe_model = TrainableSPE::from(spe, 0.0005);
-
     qubic_engine::train::train_model_with_db(
         nmodel,
         false,
         true,
         String::from("sle_tl50_.json"),
         String::from("sle_tl50_.json"),
-        train_db_name,
-        test_db_name,
+        train_db,
+        valid_db,
     );
 }
 

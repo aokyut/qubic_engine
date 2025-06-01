@@ -1044,7 +1044,7 @@ impl NNLineEvaluator_ {
                     if bit == 0 {
                         break;
                     }
-                    let onehot = bit & (bit - 1);
+                    let onehot = bit & !(bit - 1);
                     bit ^= onehot;
                     idxs.push(bit.trailing_zeros() as usize);
                 }
@@ -1263,6 +1263,7 @@ impl Trainable for TrainableNLE_ {
             v0[i] += self.main.wturn[n_stone][i];
         }
 
+        // println!("idx.size:{}", idxs.len());
         for &idx in idxs.iter() {
             for i in 0..NNLineEvaluator_::D {
                 v0[i] += self.main.wbboard[idx][i];

@@ -23,7 +23,7 @@ const BATCH_NUM: usize = 1 << 10;
 pub const LAMBDA: f32 = 0.0;
 const DECAY_ALPHA: f32 = 0.92;
 const EVAL_NUM: usize = 25;
-const LOG_LOSS_N: usize = 100000;
+const LOG_LOSS_N: usize = 1000000;
 const SMOOTHING: f32 = 0.999999;
 
 #[derive(Debug, Clone)]
@@ -653,6 +653,7 @@ pub fn train_model_with_db(
 
     let mut db: BoardDB = BoardDB::new(&db_name, 0);
     let eval_db = BoardDB::new(&eval_db_name, 0);
+    println!("load db");
     let ts = db.get_all();
     let eval_ts = eval_db.get_all()[..1024].to_vec();
     let mut smoothing_loss = None;
@@ -665,7 +666,7 @@ pub fn train_model_with_db(
         // db.set_lambda(LAMBDA);
 
         let batch_num = ts.len() / BATCH_SIZE;
-        let n = BATCH_SIZE * 1000_000;
+        let n = BATCH_SIZE * 5_000_000;
         let batch_num = n / BATCH_SIZE;
 
         let pb = ProgressBar::new(batch_num as u64);
@@ -680,7 +681,6 @@ pub fn train_model_with_db(
         for t in data.iter() {
             let b = &u128_to_b(random_rot(t.board, rng.gen()));
             let val = model.get_val(b);
-
             if cfg!(feature = "slow") {
                 thread::sleep(Duration::from_micros(200));
             }
