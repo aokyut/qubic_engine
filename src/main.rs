@@ -78,20 +78,6 @@ fn main() {
     let mcts = ai::mcts::Mcts::new(10_000, 3, 5000, po);
     let mcts2 = ai::mcts::Mcts::new(10_000, 3, 5000, po2);
 
-    let mut nmodel = NNLineEvaluator_::new();
-    nmodel.load("sle_tl50_.json".to_string());
-    let mut mmodel = MMEvaluator::from(nmodel.clone());
-    let mut ma = NegAlphaF::new(Box::new(mmodel), 29);
-    ma.hashmap = true;
-    ma.timelimit = 1000;
-    ma.min_depth = 7;
-    let ma = MateWrapperActor::new(Box::new(ma));
-
-    let mut na = NegAlphaF::new(Box::new(nmodel), 29);
-    na.hashmap = true;
-    na.timelimit = 1000;
-    na.min_depth = 7;
-    let na = MateWrapperActor::new(Box::new(na));
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
 
@@ -131,7 +117,9 @@ fn main() {
     //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
     //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
     // );
-    train_line_eval();
+    //
+    command();
+    // train_line_eval();
     // mpc_for_coe(7,7);
     // profile();
     // beam_search();
@@ -139,6 +127,16 @@ fn main() {
     // print_pmodel();
     // exp_positoin_eval_get_count();
     // get_magic_number();
+}
+
+fn command() {
+    use std::env;
+
+    let args: Vec<String> = env::args().collect();
+    if args[1] == "train" {
+        println!("train_line_eval({}, {})", args[2], args[3]);
+        train_line_eval(args[2].clone(), args[3].clone());
+    }
 }
 
 fn get_magic_number() {
@@ -496,7 +494,7 @@ fn make_db() {
     create_db(Some(le), "sle_tl50_genCoe345_insertRandom1_4_48", 5);
 }
 
-fn train_line_eval() {
+fn train_line_eval(train_db_name: String, test_db_name: String) {
     // let mut model = LineEvaluator::new();
     // let mut model = TrainableLineEvaluator::from(model, 0.001);
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
@@ -533,8 +531,8 @@ fn train_line_eval() {
         true,
         String::from("sle_tl50_.json"),
         String::from("sle_tl50_.json"),
-        String::from("winRate_coe5_genRandom_insertRandom1_48"),
-        String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
+        train_db_name,
+        test_db_name,
     );
 }
 
