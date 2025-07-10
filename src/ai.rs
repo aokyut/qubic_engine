@@ -922,7 +922,12 @@ pub fn negscoutf_hash_iter(
                     action_nb_vals.push((
                         action,
                         next_board,
-                        old_val.f32_minus(1.0).get_val(),
+                        // old_val.f32_minus(1.0).get_val(),
+                        match old_val {
+                            Ex(x) => 1.0 - x,
+                            Low(x) => -x,
+                            High(x) => -x,
+                        },
                         hash,
                         (Some(old_val.inverse()), old_gen),
                     ));

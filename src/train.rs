@@ -22,7 +22,7 @@ const BATCH_SIZE: usize = 1 << 0;
 const BATCH_NUM: usize = 1 << 10;
 pub const LAMBDA: f32 = 0.0;
 const DECAY_ALPHA: f32 = 0.92;
-const EVAL_NUM: usize = 25;
+const EVAL_NUM: usize = 50;
 const LOG_LOSS_N: usize = 1000000;
 const SMOOTHING: f32 = 0.999999;
 
@@ -510,6 +510,26 @@ pub fn mse_loss(x: f32, t: f32) -> (f32, f32) {
     return (loss, -2.0 * error);
 }
 
+pub fn create_eval_board(n: usize, step: usize) -> Vec<Board> {
+    let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
+    let mcts = mcts::Mcts::new(10_000, 3, 100, po);
+    let mut bs = Vec::new();
+    let pb = ProgressBar::new(n as u64);
+    pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-"));
+
+    for _ in 0..n {
+        bs.push(n_step_board(&mcts, step));
+        pb.inc(1);
+        pb.set_message("[create_eval_board]");
+    }
+    pb.finish();
+
+    return bs;
+}
+
 pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval_db_name: String) {
     let mut model = NNUE::default();
     model.g.optimizer = Some(Box::new(optim::MomentumSGD::new(0.01, 0.9)));
@@ -633,6 +653,7 @@ pub fn train_model_with_db(
     db_name: String,
     eval_db_name: String,
 ) {
+    let test_boards = create_eval_board(50, 8);
     let test_actor1 = Agent::Minimax(3);
     let test_actor2 = Agent::Mcts(50, 500);
     let evaluator = super::ai::CoEvaluator::best();
@@ -644,6 +665,13 @@ pub fn train_model_with_db(
     l3.min_depth = 5;
     l3.timelimit = 1;
     let le = MateWrapperActor::new(Box::new(l3));
+
+    let mut l_high = NegAlphaF::new(Box::new(l.clone()), 29);
+    l_high.hashmap = true;
+    l_high.min_depth = 7;
+    l_high.timelimit = 500;
+    let lh = MateWrapperActor::new(Box::new(l_high));
+
     let mut rng = thread_rng();
     let mut max_score = 0.0;
 
@@ -750,7 +778,16 @@ pub fn train_model_with_db(
             agent.min_depth = 5;
             agent.timelimit = 1;
             let agent = MateWrapperActor::new(Box::new(agent));
-            let (e41, e42) = eval_actor(&agent, &le, EVAL_NUM, false);
+            let (mut e41, e42) = eval_actor_from_boards(&test_boards, &agent, &le, false);
+            if e41 > 0.6 {
+                let mut agent = NegAlphaF::new(Box::new(model.clone()), 29);
+                agent.hashmap = true;
+                agent.min_depth = 7;
+                agent.timelimit = 500;
+                let (e51, _) = eval_actor_from_boards(&test_boards, &agent, &lh, false);
+                e41 += e51 * 5.0;
+            }
+
             println!(
                 "[epoch:{epoch}][step:{step}][minimax(3)]:({}, {})",
                 e11, e12
@@ -769,6 +806,10 @@ pub fn train_model_with_db(
                     model.train();
                     model.save(name.clone());
                 }
+            }
+            if save {
+                model.train();
+                model.save(format!("latest-{}", name));
             }
         }
     }

@@ -1329,13 +1329,29 @@ pub fn play(a1: &Agent, a2: &Agent) -> (f32, f32) {
     }
 }
 
+pub fn n_step_board(a: &impl GetAction, step: usize) -> Board {
+    let mut b = Board::new();
+
+    for _ in 0..step {
+        let action = a.get_action(&b);
+        b = b.next(action);
+    }
+
+    return b;
+}
+
 pub fn play_actor(a1: &impl GetAction, a2: &impl GetAction, render: bool) -> (f32, f32) {
+    return play_actor_from(Board::new(), a1, a2, render);
+}
+
+pub fn play_actor_from(
+    b: Board,
+    a1: &impl GetAction,
+    a2: &impl GetAction,
+    render: bool,
+) -> (f32, f32) {
     // let mut b = Board::from(2449980224164053531, 1155210714492189764, Player::Black);
     let mut b = Board::new();
-    // b = b.next(get_random(&b));
-    // b = b.next(get_random(&b));
-    // b = b.next(0);
-    // b = b.next(15);
 
     loop {
         if render {
@@ -1458,6 +1474,37 @@ pub fn compare_agent(
     return (score1, score2, false);
 }
 
+pub fn eval_actor_from_boards(
+    bs: &Vec<Board>,
+    a1: &impl GetAction,
+    a2: &impl GetAction,
+    render: bool,
+) -> (f32, f32) {
+    use std::{thread, time::Duration};
+    let mut score1 = 0.0;
+    let mut score2 = 0.0;
+
+    let n = bs.len();
+    let pb = ProgressBar::new((n * 2) as u64);
+    pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-"));
+
+    for b in bs.iter() {
+        let (s1, s2) = play_actor_from(b.clone(), a1, a2, render);
+        score1 += s1;
+        score2 += s2;
+        pb.inc(1);
+        pb.set_message(format!("[{score1}, {score2}]"));
+        let (s2, s1) = play_actor_from(b.clone(), a2, a1, render);
+        score1 += s1;
+        score2 += s2;
+        pb.inc(1);
+        pb.set_message(format!("[{score1}, {score2}]"));
+    }
+    return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
+}
 pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bool) -> (f32, f32) {
     use std::{thread, time::Duration};
     let mut score1 = 0.0;

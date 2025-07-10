@@ -67,16 +67,14 @@ fn main() {
     l.load("simple.json".to_string());
 
     let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 29);
-    l7_.hashmap = true;
-    l7_.timelimit = 1;
+    // l7_.hashmap = true;
+    l7_.scout = true;
+    l7_.timelimit = 1000;
     l7_.min_depth = 5;
     // let l7_ = MateWrapperActor::new(Box::new(l7_));
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
-    let po2 = PlayoutEvaluator::new(PlayoutLevel::Actor(Box::new(m1)));
-
     let mcts = ai::mcts::Mcts::new(10_000, 3, 5000, po);
-    let mcts2 = ai::mcts::Mcts::new(10_000, 3, 5000, po2);
 
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
@@ -94,6 +92,7 @@ fn main() {
     // make_db();
     // use_aip();
     // let result = play_actor(&l7_, &l7_, true);
+    // exp();
     // println!("{result:#?}");
     // return;
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
@@ -120,12 +119,52 @@ fn main() {
     // train_line_eval();
     command();
     // mpc_for_coe(7,7);
-    // profile();
+    profile();
     // beam_search();
     // test_zhash();
     // print_pmodel();
     // exp_positoin_eval_get_count();
     // get_magic_number();
+}
+
+fn exp() {
+    let mut l = SimplLineEvaluator::new();
+    l.load("simple.json".to_string());
+
+    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 7);
+    l7_.hashmap = true;
+    l7_.timelimit = 100;
+    l7_.min_depth = 5;
+
+    let mut b = Board::new();
+    loop {
+        let result = mate_check_horizontal(&b);
+        if let Some((flag, _)) = result {
+            if flag {
+                println!("end");
+                break;
+            }
+        }
+
+        let mut max_action = 0;
+        let mut max = 0.0;
+        let mut queries = Vec::new();
+        for action in b.valid_actions() {
+            let nb = b.next(action);
+            let (_, val, count) = l7_.eval_with_negalpha(&nb);
+            queries.push((action, 1.0 - val, count));
+        }
+        queries.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        for query in queries {
+            println!("action:{}, val:{}, count:{}", query.0, query.1, query.2);
+        }
+        let (action, val, count) = l7_.eval_with_negalpha(&b);
+
+        println!("action -> {action}");
+        b = b.next(action);
+        pprint_board(&b);
+    }
 }
 
 fn command() {
@@ -300,7 +339,7 @@ fn profile() {
     let mut nmodel = NNLineEvaluator_::new();
     nmodel.load("sle_tl50_.json".to_string());
     // let mut nmodel = MMEvaluator::from(nmodel);
-    let mut long = NegAlphaF::new(Box::new(nmodel), 7);
+    let mut long = NegAlphaF::new(Box::new(l), 7);
     long.timelimit = 1000;
     long.min_depth = 7;
     long.scout = true;
@@ -310,8 +349,10 @@ fn profile() {
     let mut search_time: Vec<u128> = vec![0; 64];
     let mut step = 0;
     let mut is_black = true;
+    let mut rng = thread_rng();
 
     loop {
+        pprint_board(&b);
         let res = mate_check_horizontal(&b);
         if b.is_win() || b.is_draw() {
             b = Board::new();
@@ -333,9 +374,12 @@ fn profile() {
         counts[idx] += 1.0;
         search_time[idx] += t;
 
-        action = Agent::Random.get_action(&b);
-
-        let action = action2;
+        if rng.gen::<f32>() < 0.01 {
+            action = Agent::Random.get_action(&b);
+        } else {
+            action = action2;
+        }
+        println!("action:{action}");
         b = b.next(action);
         step += 1;
         if step % 1 == 0 {
