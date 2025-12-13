@@ -1,3 +1,4 @@
+mod main_utils;
 use proconio::input;
 use qubic_engine::ai::line::{
     BucketLineEvaluator, SimplLineEvaluator, SimplePatternEvaluator, TrainableBLE, TrainableSLE,
@@ -14,8 +15,8 @@ use qubic_engine::ai::{
     PlayoutLevel, PositionEvaluator, TrainableLineEvaluator,
 };
 use qubic_engine::board::{
-    count_2row_, get_random, mate_check_horizontal, play_actor, pprint_board, pprint_u64, Board,
-    GetAction,
+    count_2row_, get_2row_mask, get_random, mate_check_horizontal, play_actor, pprint_board,
+    pprint_u64, Board, GetAction, _is_win_board,
 };
 use qubic_engine::db::BoardDB;
 use qubic_engine::train::{create_db, train_with_db};
@@ -57,7 +58,6 @@ fn main() {
     // let l4 = wrapping_line_eval(l.clone(), 4);
     // let l5 = wrapping_line_eval(l.clone(), 5);
     let mut l3_ = NegAlphaF::new(Box::new(l.clone()), 1);
-    let l3_ = MateWrapperActor::new(Box::new(l3_));
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     // l5_.scout = true;
     l5_.hashmap = true;
@@ -66,18 +66,33 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 29);
+    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // l7_.hashmap = true;
     l7_.scout = true;
-    l7_.timelimit = 1000;
-    l7_.min_depth = 5;
+    l7_.timelimit = 1;
+    l7_.min_depth = 3;
     // let l7_ = MateWrapperActor::new(Box::new(l7_));
+    //
+    let mut b = BucketLineEvaluator::new();
+    b.load("bsimple.json".to_string());
+
+    let mut b7 = NegAlphaF::new(Box::new(b), 5);
+    b7.scout = true;
+    b7.timelimit = 1;
+    b7.min_depth = 3;
+
+    let b7 = MateWrapperActor::new(Box::new(b7));
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
-    let mcts = ai::mcts::Mcts::new(10_000, 3, 5000, po);
+    let mcts = ai::mcts::Mcts::new(10_000, 3, 10, po);
+    let mcts2 = ai::mcts::Mcts::new(10_000, 3, 500, l3_);
 
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
+    main_utils::test_pns();
+    return;
+    main_utils::generate_problems();
+    return;
 
     // let l6 = wrapping_line_eval(l.clone(), 6);
     // let l7 = wrapping_line_eval(l.clone(), 7);
@@ -91,40 +106,117 @@ fn main() {
 
     // make_db();
     // use_aip();
-    // let result = play_actor(&l7_, &l7_, true);
-    // exp();
+    // let result = play_actor_with_undo(&Agent::Human, &b7, true);
+    // let result = play_actor_with_undo(&b7, &Agent::Human, true);
     // println!("{result:#?}");
-    // return;
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
     // db.concat(db_);
+    // return;
 
     // explore_best_model();
 
     // let start = Instant::now();
-    // let result = eval_actor(&na, &l7_, 100, false);
+    // let result = eval_actor(&b7, &l7_, 100, true);
     // compare(&l5_, &l7_);
     // println!("time:{}", start.elapsed().as_nanos());
     // println!("{result:#?}");
     // return;
     // let (a, b, c) = compare(&m2, &mm3);
 
-    // train_with_db(
-    //     false,
-    //     true,
-    //     String::from("wr_coe3_8_5_5_ir48_4_d092"),
-    //     String::from("winRate_coe5_genRandom_insertRandom1_48"),
-    //     String::from("winRate_coe5_genRandom_insertRandom1_48_test"),
-    // );
-    // train_line_eval();
-    command();
-    // mpc_for_coe(7,7);
-    profile();
+    exp_get_reach_mask();
+    // command();
+    // mpc_for_coe(8, 4);
+    //profile();
     // beam_search();
     // test_zhash();
     // print_pmodel();
     // exp_positoin_eval_get_count();
     // get_magic_number();
+}
+
+pub struct BoardIterator<A1: GetAction, A2: GetAction> {
+    a1: A1,
+    a2: A2,
+    board: Board,
+}
+
+impl<A1: GetAction, A2: GetAction> BoardIterator<A1, A2> {
+    pub fn new(a1: A1, a2: A2) -> Self {
+        return BoardIterator {
+            a1: a1,
+            a2: a2,
+            board: Board::new(),
+        };
+    }
+
+    pub fn reset(&mut self) -> Board {
+        self.board = Board::new();
+        return self.board.clone();
+    }
+}
+
+impl<A1: GetAction, A2: GetAction> Iterator for BoardIterator<A1, A2> {
+    type Item = Board;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use qubic_engine::board::Player;
+        let action = match self.board.player {
+            Player::Black => self.a1.get_action(&self.board),
+            Player::White => self.a2.get_action(&self.board),
+        };
+        self.board = self.board.next(action);
+        return Some((self.board.clone()));
+    }
+}
+
+fn exp_prob_compare() {
+    use qubic_engine::utills::half_imcomplete_beta_func;
+    let n = 10000;
+    let step = 100;
+    let mut rng = thread_rng();
+    let mut counts = vec![0; 100];
+    let th = 0.01;
+
+    for i in 0..n {
+        let mut a = 0;
+        let mut b = 0;
+        let mut count = 0;
+
+        for j in 0..step {
+            if rng.gen::<f32>() < 0.5 {
+                a += 1;
+            } else {
+                b += 1;
+            }
+        }
+        let p = half_imcomplete_beta_func(a as f64, b as f64);
+        if p < th {
+            counts[1] += 1;
+        } else {
+            counts[0] += 1;
+        }
+
+        continue;
+        for j in 0..step {
+            if rng.gen::<f32>() < 0.5 {
+                a += 1;
+            } else {
+                b += 1;
+            }
+            let p = half_imcomplete_beta_func(a as f64, b as f64);
+            println!("({a}, {b}) {p}");
+            if p < th {
+                count += 1;
+                counts[count] += 1;
+                break;
+            }
+            counts[count] += 1;
+        }
+    }
+    println!("{:#?}", counts);
+    let p = half_imcomplete_beta_func(62.0, 38.0);
+    println!("{p}");
 }
 
 fn exp() {
@@ -328,6 +420,109 @@ fn use_ai() {
     }
 }
 
+fn get_random_board(size: usize) -> Board {
+    let mut b = Board::new();
+    for i in 0..size {
+        b = b.next(Agent::Random.get_action(&b));
+    }
+    return b;
+}
+
+fn exp_mate_profile(a1: &impl GetAction, a2: &impl GetAction) {
+    use qubic_engine::dfpn::{MateType, ProofNumberSearchStatus};
+    let mut b = Board::new();
+    let mut mcounts = vec![0; 65];
+    let mut ncounts = vec![0; 65];
+    let mut scounts = vec![0; 65];
+    let mut smax = vec![0; 65];
+    let mut tcounts = vec![0; 65];
+    let mut tmax = vec![0; 65];
+
+    let mut is_black = true;
+
+    let mut step = 0;
+
+    loop {
+        let (att, def) = b.get_att_def();
+        println!("att:{att}, def:{def}");
+        let start = Instant::now();
+        let status = qubic_engine::dfpn::proof_number_search(b.clone());
+
+        match status.typ {
+            MateType::NoMate => {}
+            _ => {
+                println!("{:#?}", status);
+            }
+        }
+        let end = start.elapsed().as_nanos();
+        let flag = match status.typ {
+            MateType::NoMate => false,
+            MateType::Three(_) => false,
+            _ => true,
+        };
+        let (att, def) = b.get_att_def();
+        let idx = (att.count_ones() + def.count_ones()) as usize;
+
+        ncounts[idx] += 1;
+
+        let reach_mask = qubic_engine::board::get_reach_mask(att, def);
+
+        if reach_mask != 0 {
+            b = get_random_board(4);
+            is_black = is_black ^ true;
+        } else if flag {
+            mcounts[idx] += 1;
+            tcounts[idx] += end;
+            scounts[idx] += status.size;
+            if tmax[idx] < end {
+                tmax[idx] = end;
+            }
+            if smax[idx] < status.size {
+                smax[idx] = status.size;
+            }
+            b = get_random_board(4);
+            step += 1;
+            // println!(
+            //     "{idx}, {}, {}, {}, {end}",
+            //     status.path_size, status.valid_nodes, status.reach_boards
+            // );
+
+            println!("");
+            for i in 0..64 {
+                if mcounts[i] == 0 {
+                    continue;
+                }
+                let n = mcounts[i];
+                println!(
+                    "[{i}]: size:~{}({}), time:~{}({}), m:{}/{}({}%)",
+                    smax[i],
+                    scounts[i] / n,
+                    tmax[i],
+                    tcounts[i] / n as u128,
+                    n,
+                    ncounts[i],
+                    100 * n / ncounts[i]
+                );
+            }
+        }
+
+        if b.is_win() || b.is_draw() {
+            b = get_random_board(4);
+            is_black = is_black ^ true;
+        }
+
+        let action;
+        if is_black {
+            action = a1.get_action(&b);
+        } else {
+            action = a2.get_action(&b);
+        }
+        println!("action:{action}");
+        b = b.next(action);
+        is_black = is_black ^ true;
+    }
+}
+
 fn profile() {
     let mut b = Board::new();
     b = b.next(0);
@@ -339,9 +534,9 @@ fn profile() {
     let mut nmodel = NNLineEvaluator_::new();
     nmodel.load("sle_tl50_.json".to_string());
     // let mut nmodel = MMEvaluator::from(nmodel);
-    let mut long = NegAlphaF::new(Box::new(l), 7);
+    let mut long = NegAlphaF::new(Box::new(l), 9);
     long.timelimit = 1000;
-    long.min_depth = 7;
+    long.min_depth = 9;
     long.scout = true;
     // long.hashmap = true;
 
@@ -359,8 +554,12 @@ fn profile() {
             is_black = is_black ^ true;
         }
         if let Some((flag, action)) = res {
-            b = Board::new();
-            is_black = is_black ^ true;
+            if flag {
+                b = Board::new();
+                is_black = is_black ^ true;
+            } else {
+                b = b.next(action);
+            }
         }
 
         let action;
@@ -413,17 +612,19 @@ fn profile() {
 
 fn mpc_for_coe(long_depth: u8, short_depth: u8) {
     let mut b = Board::new();
-    let mut l = LineEvaluator::new();
-    l.load("wR5_gR_ir1_48.leval".to_string());
-    let mut l = SimplLineEvaluator::new();
-    let _ = l.load("simple.json".to_string());
+    let mut l = BucketLineEvaluator::new();
+    l.load("bsimple.json".to_string());
 
     let mut long = NegAlphaF::new(Box::new(l.clone()), long_depth);
     let mut short = NegAlphaF::new(Box::new(l.clone()), short_depth);
 
+    let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
+    let mcts = ai::mcts::Mcts::new(10_000, 3, 100, po);
+    let mut rng = thread_rng();
+
     long.min_depth = long_depth;
     short.min_depth = short_depth;
-    long.hashmap = true;
+    long.scout = true;
     short.scout = true;
 
     let mut all_count = 0.0;
@@ -446,8 +647,13 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
             is_black = is_black ^ true;
         }
         if let Some((flag, action)) = res {
-            b = Board::new();
-            is_black = is_black ^ true;
+            if flag {
+                b = Board::new();
+                is_black = is_black ^ true;
+            } else {
+                b = b.next(action);
+                continue;
+            }
         }
 
         let action;
@@ -470,8 +676,11 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
             accuracy[idx] += 1.0;
         }
 
-        action = Agent::Random.get_action(&b);
-
+        if rng.gen::<f32>() < 0.1 {
+            action = mcts.get_action(&b);
+        } else {
+            action = action2;
+        }
         // let action = m3.get_action(&b);
         b = b.next(action);
         step += 1;
@@ -602,25 +811,98 @@ fn expand_untill_n(b: Board, n: usize) -> Vec<Board> {
     return vs;
 }
 
-fn exp_count_2row_() {
+fn exp_get_reach_mask() {
     let mut b_time = 0;
+    let mut b_time_not = 0;
     let mut a_time = 0;
-    for i in 0..100000 {
+    let mut a_time_not = 0;
+    let n = 1_000_000;
+    let mut count_n = 0;
+    let mut max_path_board = (0, 0);
+    let mut max_path = 0;
+    let mut max_reach_count_board = (0, 0);
+    let mut max_reach_count = 0;
+    let mut max_valid_count_board = (0, 0);
+    let mut max_valid_count = 0;
+    let mut reach_count = 0;
+    let mut valid_count = 0;
+    for i in 0..n {
         let mut b = Board::new();
         for j in 0..30 {
             b = b.next(Agent::Random.get_action(&b));
         }
+
         let (att, def) = b.get_att_def();
+        if _is_win_board(att) || _is_win_board(def) {
+            continue;
+        }
+        // let att = 4611686019979307469;
+        // let def = 80866198721554;
+        // b = Board::from(att, def, qubic_engine::board::Player::Black);
+        // pprint_board(&Board::from(att, def, qubic_engine::board::Player::Black));
+        //let mask_a = qubic_engine::board::mate_check(&b);
+        let mask = qubic_engine::board::get_2row_mask(att, def);
         let start = Instant::now();
-        let mask_a = qubic_engine::board::get_reach_mask_alpha(att, def);
-        a_time += start.elapsed().as_nanos();
+        let mate = qubic_engine::dfpn::proof_number_search(b.clone());
+        let a_time_ = start.elapsed().as_nanos();
+        a_time += a_time_;
+        // let a_time_ = start.elapsed().as_nanos();
+        // if mask_a.is_some() {
+        //    a_time += a_time_;
+        //    count_n += 1;
+        // } else {
+        //     a_time_not += a_time_;
+        // }
         let start = Instant::now();
-        let mask_b = qubic_engine::board::get_reach_mask(att, def);
+        // let mask_b = qubic_engine::board::mate_check_horizontal(&b);
+        let result2 = qubic_engine::dfpn::threat_space_search((att, def));
         b_time += start.elapsed().as_nanos();
-        assert_eq!(mask_a, mask_b, "[{i}]att:{att}, def:{def}");
     }
 
-    println!("{a_time}, {b_time}");
+    println!(
+        "{a_time}|{a_time_not}, {b_time}|{b_time_not}, {}/{}",
+        count_n, n
+    );
+    println!("reach/valid:{reach_count}/{valid_count}");
+    println!("max_path:[{:#?}]-{max_path},\nmax_valid_count:[{:#?}]-{max_valid_count},\nmax_reach_count:[{:#?}]-{max_reach_count}", max_path_board, max_valid_count_board, max_reach_count_board);
+}
+
+fn trase(b: Board) {
+    let mut b = b.clone();
+    loop {
+        if b.is_win() {
+            println!("end");
+            pprint_board(&b);
+            return;
+        }
+        let result = qubic_engine::board::mate_check_horizontal(&b);
+        let (att, def) = b.get_att_def();
+        // let result = qubic_engine::dfpn::threat_space_search((att, def));
+        if result.is_none() {
+            let action = qubic_engine::board::get_reach_mask(att, def);
+            println!("att->{}", action.trailing_zeros() % 16);
+            assert!(qubic_engine::board::get_reach_mask(att, def) != 0);
+            break;
+        } else {
+            // let (action) = result.unwrap();
+            let ((flag, action)) = result.unwrap();
+            // let action = (action.trailing_zeros() % 16) as u8;
+            println!("att->{action}");
+            let nb = b.next(action);
+            if nb.is_win() {
+                println!("end");
+                pprint_board(&b);
+                return;
+            }
+            let (att, def) = nb.get_att_def();
+            let action = qubic_engine::board::get_reach_mask(def, att);
+            println!("{action:x}");
+            let action = action.trailing_zeros() % 16;
+            println!("def->{action}");
+            b = nb.next(action as u8);
+            pprint_board(&b);
+        }
+    }
 }
 
 fn mcts_statistics() {

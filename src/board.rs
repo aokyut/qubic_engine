@@ -1,4 +1,6 @@
 // use std::collections::VecDeque;
+pub mod magic_number;
+
 use indicatif::{ProgressBar, ProgressStyle};
 use proconio::input;
 use rand::Rng;
@@ -404,6 +406,46 @@ pub fn count_2row(s: u64, b: u64) -> u32 {
     return x + y + z + xy + xy_ + xz + xz_ + yz + yz_ + xyz;
 }
 
+pub fn get_2row_mask(att: u64, def: u64) -> u64 {
+    let s = att;
+    let stone = att | def;
+    let b = !stone & ((stone << 16) | 0xffff);
+    let x = ((count_2row_(s, s >> 1, s >> 2, s >> 3, b, b >> 1, b >> 2, b >> 3)
+        & 0x1111_1111_1111_1111)
+        * 0xf);
+    let y = ((count_2row_(s, s >> 4, s >> 8, s >> 12, b, b >> 4, b >> 8, b >> 12)
+        & 0x000f_000f_000f_000f)
+        * 0x1111);
+    let z = (b & (s << 16) & (s << 32)) & 0xffff_0000_0000;
+    let xy = (count_2row_(s, s >> 5, s >> 10, s >> 15, b, b >> 5, b >> 10, b >> 15)
+        & 0x0001_0001_0001_0001)
+        * 0x8421;
+    let xy_ = (count_2row_(s, s >> 3, s >> 6, s >> 9, b, b >> 3, b >> 6, b >> 9)
+        & 0x0008_0008_0008_0008)
+        * 0x0249;
+    let xz = (count_2row_(s, s >> 17, s >> 34, s >> 51, b, b >> 17, b >> 34, b >> 51)
+        & 0x0000_0000_0000_1111)
+        * 0x0008_0004_0002_0001;
+    let xz_ = (count_2row_(s, s >> 15, s >> 30, s >> 45, b, b >> 15, b >> 30, b >> 45) & 0x8888)
+        * 0x0000_2000_4000_8001;
+    let yz = (count_2row_(s, s >> 20, s >> 40, s >> 60, b, b >> 20, b >> 40, b >> 60)
+        & 0x0000_0000_0000_000f)
+        * 0x1000_0100_0010_0001;
+    let yz_ = (count_2row_(s, s >> 12, s >> 24, s >> 36, b, b >> 12, b >> 24, b >> 36) & 0xf000)
+        * 0x0000_0010_0100_1001;
+    let xyz1 = count_2row_(s, s >> 21, s >> 42, s >> 63, b, b >> 21, b >> 42, b >> 63)
+        * 0x8000_0400_0020_0001;
+    let xyz2 = (count_2row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 57) & 0x0008)
+        * 0x0200_0040_0008_0001;
+    let xyz3 = (count_2row_(s, s >> 13, s >> 26, s >> 39, b, b >> 13, b >> 26, b >> 39) & 0x1000)
+        * 0x0000_0080_0400_2001;
+    let xyz4 = (count_2row_(s, s >> 11, s >> 22, s >> 33, b, b >> 11, b >> 22, b >> 33) & 0x8000)
+        * 0x0000_0002_0040_0801;
+
+    let xyz = (xyz1 | xyz2 | xyz3 | xyz4);
+    return (x | y | z | xy | xy_ | xz | xz_ | yz | yz_ | xyz) & b;
+}
+
 fn count_1row_(a1: u64, a2: u64, a3: u64, a4: u64, b1: u64, b2: u64, b3: u64, b4: u64) -> u64 {
     return a1 & b2 & b3 & b4 | b1 & a2 & b3 & b4 | b1 & b2 & a3 & b4 | b1 & b2 & b3 & a4;
 }
@@ -418,6 +460,10 @@ fn count_1row_(a1: u64, a2: u64, a3: u64, a4: u64, b1: u64, b2: u64, b3: u64, b4
 /// * a, b, c and e, f, g are masked.
 const fn _get_reach_mask(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64) -> u64 {
     return d & (b & c & (a | e) | e & f & (c | g));
+}
+
+const fn _get_reach_mask_alpha(a: u64, b: u64, c: u64, d: u64, e: u64, f: u64, g: u64) -> u64 {
+    return (b & c & (a | e) | e & f & (c | g));
 }
 
 pub fn count_1row(s: u64, b: u64) -> u32 {
@@ -533,50 +579,237 @@ pub const fn get_1row_mask(s: u64, b: u64) -> u64 {
 }
 
 pub fn get_reach_mask_alpha(a: u64, d: u64) -> u64 {
-    let b = a;
     let stone = a | d;
-    let s = !stone;
-    let blank = s & ((stone << 16) | 0xffff);
+    let blank = !(stone) & ((stone << 16) | 0xffff);
+    let x = _get_reach_mask_alpha(
+        (a >> 3) & 0x1111_1111_1111_1111,
+        (a >> 2) & 0x3333_3333_3333_3333,
+        (a >> 1) & 0x7777_7777_7777_7777,
+        blank,
+        (a << 1) & 0xeeee_eeee_eeee_eeee,
+        (a << 2) & 0xcccc_cccc_cccc_cccc,
+        (a << 3) & 0x8888_8888_8888_8888,
+    );
+    let y = _get_reach_mask_alpha(
+        (a >> 12) & 0x000f_000f_000f_000f,
+        (a >> 8) & 0x00ff_00ff_00ff_00ff,
+        (a >> 4) & 0x0fff_0fff_0fff_0fff,
+        blank,
+        (a << 4) & 0xfff0_fff0_fff0_fff0,
+        (a << 8) & 0xff00_ff00_ff00_ff00,
+        (a << 12) & 0xf000_f000_f000_f000,
+    );
+    let z = _get_reach_mask_alpha(a >> 48, a >> 32, a >> 16, blank, a << 16, a << 32, a << 48);
+    let xy = _get_reach_mask_alpha(
+        (a >> 15) & 0x0001_0001_0001_0001,
+        (a >> 10) & 0x0033_0033_0033_0033,
+        (a >> 5) & 0x0777_0777_0777_0777,
+        blank,
+        (a << 5) & 0xeee0_eee0_eee0_eee0,
+        (a << 10) & 0xcc00_cc00_cc00_cc00,
+        (a << 15) & 0x8000_8000_8000_8000,
+    );
+    let yx = _get_reach_mask_alpha(
+        (a >> 9) & 0x0008_0008_0008_0008,
+        (a >> 6) & 0x00cc_00cc_00cc_00cc,
+        (a >> 3) & 0x0eee_0eee_0eee_0eee,
+        blank,
+        (a << 3) & 0x7770_7770_7770_7770,
+        (a << 6) & 0x3300_3300_3300_3300,
+        (a << 9) & 0x1000_1000_1000_1000,
+    );
+    let xz = _get_reach_mask_alpha(
+        (a >> 51) & 0x0000_0000_0000_1111,
+        (a >> 34) & 0x0000_0000_3333_3333,
+        (a >> 17) & 0x0000_7777_7777_7777,
+        blank,
+        (a << 17) & 0xeeee_eeee_eeee_0000,
+        (a << 34) & 0xcccc_cccc_0000_0000,
+        (a << 51) & 0x8888_0000_0000_0000,
+    );
+    let zx = _get_reach_mask_alpha(
+        (a >> 45) & 0x0000_0000_0000_8888,
+        (a >> 30) & 0x0000_0000_cccc_cccc,
+        (a >> 15) & 0x0000_eeee_eeee_eeee,
+        blank,
+        (a << 15) & 0x7777_7777_7777_0000,
+        (a << 30) & 0x3333_3333_0000_0000,
+        (a << 45) & 0x1111_0000_0000_0000,
+    );
+    let yz = _get_reach_mask_alpha(
+        (a >> 60) & 0xf,
+        (a >> 40) & 0x00ff_00ff,
+        (a >> 20) & 0x0fff_0fff_0fff,
+        blank,
+        (a << 20) & 0xfff0_fff0_fff0_0000,
+        (a << 40) & 0xff00_ff00_0000_0000,
+        (a << 60) & 0xf000_0000_0000_0000,
+    );
+    let zy = _get_reach_mask_alpha(
+        (a >> 36) & 0xf000,
+        (a >> 24) & 0xff00_ff00,
+        (a >> 12) & 0xfff0_fff0_fff0,
+        blank,
+        (a << 12) & 0x0fff_0fff_0fff_0000,
+        (a << 24) & 0x00ff_00ff_0000_0000,
+        (a << 36) & 0x000f_0000_0000_0000,
+    );
 
-    let x = (count_1row_(s, s >> 1, s >> 2, s >> 3, b, b >> 1, b >> 2, b >> 3)
-        & 0x1111_1111_1111_1111)
-        * 0xf
-        & blank;
-    let y = (count_1row_(s, s >> 4, s >> 8, s >> 12, b, b >> 4, b >> 8, b >> 12)
-        & 0x000f_000f_000f_000f);
-    let y = (y * 0x1111) & blank;
-    let z = count_1row_(s, s >> 16, s >> 32, s >> 48, b, b >> 16, b >> 32, b >> 48);
-    let z = (z * 0x0001_0001_0001_0001) & blank;
-    let xy = (count_1row_(s, s >> 5, s >> 10, s >> 15, b, b >> 5, b >> 10, b >> 15)
-        & 0x0001_0001_0001_0001);
-    let xy = (xy * 0x8421) & blank;
-    let xy_ =
-        (count_1row_(s, s >> 3, s >> 6, s >> 9, b, b >> 3, b >> 6, b >> 9) & 0x0008_0008_0008_0008);
-    let xy_ = (xy_ * 0x249) & blank;
-    let xz = (count_1row_(s, s >> 17, s >> 34, s >> 51, b, b >> 17, b >> 34, b >> 51)
-        & 0x0000_0000_0000_1111);
-    let xz = (xz * 0x0008_0004_0002_0001) & blank;
-    let xz_ = (count_1row_(s, s >> 15, s >> 30, s >> 45, b, b >> 15, b >> 30, b >> 45) & 0x8888);
-    let xz_ = (xz_ * 0x0000_2000_4000_8001) & blank;
-    let yz = (count_1row_(s, s >> 20, s >> 40, s >> 60, b, b >> 20, b >> 40, b >> 60)
-        & 0x0000_0000_0000_000f);
-    let yz = (yz * 0x1000_0100_0010_0001) & blank;
-    let yz_ = (count_1row_(s, s >> 12, s >> 24, s >> 36, b, b >> 12, b >> 24, b >> 36) & 0xf000);
-    let yz_ = (yz_ * 0x0000_0010_0100_1001) & blank;
+    let xyz = _get_reach_mask_alpha(
+        (a >> 63) & 0x1,
+        (a >> 42) & 0x0033_0033,
+        (a >> 21) & 0x0777_0777_0777,
+        blank,
+        (a << 21) & 0xeee0_eee0_eee0_0000,
+        (a << 42) & 0xcc00_cc00_0000_0000,
+        (a << 63) & 0x8000_0000_0000_0000,
+    );
+    let yzx = _get_reach_mask_alpha(
+        (a >> 57) & 0x8,
+        (a >> 38) & 0x00cc_00cc,
+        (a >> 19) & 0x0eee_0eee_0eee,
+        blank,
+        (a << 19) & 0x7770_7770_7770_0000,
+        (a << 38) & 0x3300_3300_0000_0000,
+        (a << 57) & 0x1000_0000_0000_0000,
+    );
+    let xzy = _get_reach_mask_alpha(
+        (a >> 39) & 0x1000,
+        (a >> 26) & 0x3300_3300,
+        (a >> 13) & 0x7770_7770_7770,
+        blank,
+        (a << 13) & 0x0eee_0eee_0eee_0000,
+        (a << 26) & 0x00cc_00cc_0000_0000,
+        (a << 39) & 0x0008_0000_0000_0000,
+    );
+    let zyx = _get_reach_mask_alpha(
+        (a >> 33) & 0x8000,
+        (a >> 22) & 0xcc00_cc00,
+        (a >> 11) & 0xeee0_eee0_eee0,
+        blank,
+        (a << 11) & 0x0777_0777_0777_0000,
+        (a << 22) & 0x0033_0033_0000_0000,
+        (a << 33) & 0x0001_0000_0000_0000,
+    );
 
-    let xyz1 = count_1row_(s, s >> 21, s >> 42, s >> 63, b, b >> 21, b >> 42, b >> 63);
-    let xyz1 = (xyz1 * 0x8000_0400_0020_0001) & blank;
-    let xyz2 = count_1row_(s, s >> 19, s >> 38, s >> 57, b, b >> 19, b >> 38, b >> 57) & 0x0008;
-    let xyz2 = (xyz2 * 0x0200_0040_0008_0001) & blank;
-    let xyz3 = count_1row_(s, s >> 13, s >> 26, s >> 39, b, b >> 13, b >> 26, b >> 39) & 0x1000;
-    let xyz3 = (xyz3 * 0x0000_0080_0400_2001) & blank;
-    let xyz4 = count_1row_(s, s >> 11, s >> 22, s >> 33, b, b >> 11, b >> 22, b >> 33) & 0x8000;
-    let xyz4 = (xyz4 * 0x0000_0002_0040_0801) & blank;
+    return (x | y | z | xy | yx | xz | zx | yz | zy | xyz | yzx | xzy | zyx) & blank;
+}
 
-    // println!("flag");
-    // pprint_u64(xyz4);
+/// 置いたらリーチになる点の検出
+pub fn get_put_reach_mask(a: u64, d: u64) -> u64 {
+    let stone = a | d;
+    let blank = (!(stone) & ((stone << 16) | 0xffff)) << 16;
+    let x = _get_reach_mask(
+        (a >> 3) & 0x1111_1111_1111_1111,
+        (a >> 2) & 0x3333_3333_3333_3333,
+        (a >> 1) & 0x7777_7777_7777_7777,
+        blank,
+        (a << 1) & 0xeeee_eeee_eeee_eeee,
+        (a << 2) & 0xcccc_cccc_cccc_cccc,
+        (a << 3) & 0x8888_8888_8888_8888,
+    );
+    let y = _get_reach_mask(
+        (a >> 12) & 0x000f_000f_000f_000f,
+        (a >> 8) & 0x00ff_00ff_00ff_00ff,
+        (a >> 4) & 0x0fff_0fff_0fff_0fff,
+        blank,
+        (a << 4) & 0xfff0_fff0_fff0_fff0,
+        (a << 8) & 0xff00_ff00_ff00_ff00,
+        (a << 12) & 0xf000_f000_f000_f000,
+    );
+    let z = _get_reach_mask(a >> 48, a >> 32, a >> 16, blank, a << 16, a << 32, a << 48);
+    let xy = _get_reach_mask(
+        (a >> 15) & 0x0001_0001_0001_0001,
+        (a >> 10) & 0x0033_0033_0033_0033,
+        (a >> 5) & 0x0777_0777_0777_0777,
+        blank,
+        (a << 5) & 0xeee0_eee0_eee0_eee0,
+        (a << 10) & 0xcc00_cc00_cc00_cc00,
+        (a << 15) & 0x8000_8000_8000_8000,
+    );
+    let yx = _get_reach_mask(
+        (a >> 9) & 0x0008_0008_0008_0008,
+        (a >> 6) & 0x00cc_00cc_00cc_00cc,
+        (a >> 3) & 0x0eee_0eee_0eee_0eee,
+        blank,
+        (a << 3) & 0x7770_7770_7770_7770,
+        (a << 6) & 0x3300_3300_3300_3300,
+        (a << 9) & 0x1000_1000_1000_1000,
+    );
+    let xz = _get_reach_mask(
+        (a >> 51) & 0x0000_0000_0000_1111,
+        (a >> 34) & 0x0000_0000_3333_3333,
+        (a >> 17) & 0x0000_7777_7777_7777,
+        blank,
+        (a << 17) & 0xeeee_eeee_eeee_0000,
+        (a << 34) & 0xcccc_cccc_0000_0000,
+        (a << 51) & 0x8888_0000_0000_0000,
+    );
+    let zx = _get_reach_mask(
+        (a >> 45) & 0x0000_0000_0000_8888,
+        (a >> 30) & 0x0000_0000_cccc_cccc,
+        (a >> 15) & 0x0000_eeee_eeee_eeee,
+        blank,
+        (a << 15) & 0x7777_7777_7777_0000,
+        (a << 30) & 0x3333_3333_0000_0000,
+        (a << 45) & 0x1111_0000_0000_0000,
+    );
+    let yz = _get_reach_mask(
+        (a >> 60) & 0xf,
+        (a >> 40) & 0x00ff_00ff,
+        (a >> 20) & 0x0fff_0fff_0fff,
+        blank,
+        (a << 20) & 0xfff0_fff0_fff0_0000,
+        (a << 40) & 0xff00_ff00_0000_0000,
+        (a << 60) & 0xf000_0000_0000_0000,
+    );
+    let zy = _get_reach_mask(
+        (a >> 36) & 0xf000,
+        (a >> 24) & 0xff00_ff00,
+        (a >> 12) & 0xfff0_fff0_fff0,
+        blank,
+        (a << 12) & 0x0fff_0fff_0fff_0000,
+        (a << 24) & 0x00ff_00ff_0000_0000,
+        (a << 36) & 0x000f_0000_0000_0000,
+    );
+    let xyz = _get_reach_mask(
+        (a >> 63) & 0x1,
+        (a >> 42) & 0x0033_0033,
+        (a >> 21) & 0x0777_0777_0777,
+        blank,
+        (a << 21) & 0xeee0_eee0_eee0_0000,
+        (a << 42) & 0xcc00_cc00_0000_0000,
+        (a << 63) & 0x8000_0000_0000_0000,
+    );
+    let yzx = _get_reach_mask(
+        (a >> 57) & 0x8,
+        (a >> 38) & 0x00cc_00cc,
+        (a >> 19) & 0x0eee_0eee_0eee,
+        blank,
+        (a << 19) & 0x7770_7770_7770_0000,
+        (a << 38) & 0x3300_3300_0000_0000,
+        (a << 57) & 0x1000_0000_0000_0000,
+    );
+    let xzy = _get_reach_mask(
+        (a >> 39) & 0x1000,
+        (a >> 26) & 0x3300_3300,
+        (a >> 13) & 0x7770_7770_7770,
+        blank,
+        (a << 13) & 0x0eee_0eee_0eee_0000,
+        (a << 26) & 0x00cc_00cc_0000_0000,
+        (a << 39) & 0x0008_0000_0000_0000,
+    );
+    let zyx = _get_reach_mask(
+        (a >> 33) & 0x8000,
+        (a >> 22) & 0xcc00_cc00,
+        (a >> 11) & 0xeee0_eee0_eee0,
+        blank,
+        (a << 11) & 0x0777_0777_0777_0000,
+        (a << 22) & 0x0033_0033_0000_0000,
+        (a << 33) & 0x0001_0000_0000_0000,
+    );
 
-    return x | y | z | xy | xy_ | yz | yz_ | xz | xz_ | xyz1 | xyz2 | xyz3 | xyz4;
+    return (x | y | z | xy | yx | xz | zx | yz | zy | xyz | xzy | yzx | zyx) >> 16;
 }
 
 pub fn get_reach_mask(a: u64, d: u64) -> u64 {
@@ -695,6 +928,9 @@ pub fn get_reach_mask(a: u64, d: u64) -> u64 {
     return x | y | z | xy | yx | xz | zx | yz | zy | xyz | xzy | yzx | zyx;
 }
 
+/**
+input:
+**/
 pub fn search_four(board: &Board) -> Option<u8> {
     let (att, def) = board.get_att_def();
     let reach_mask = get_reach_mask(att, def);
@@ -750,6 +986,9 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
                 if att_reach_mask == 0 {
                     break;
                 }
+                if att_reach_mask.count_ones() > 1 {
+                    return (true, vec![(action, def_board)]);
+                }
                 let def_action = (att_reach_mask
                     | (att_reach_mask >> 16)
                     | (att_reach_mask >> 32)
@@ -758,7 +997,12 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
 
                 next_board = def_board.next(def_action as u8);
                 let (att, def) = next_board.get_att_def();
+                let att_reach_mask = get_reach_mask(att, def);
+                if att_reach_mask != 0 {
+                    return (true, vec![(action, next_board)]);
+                }
                 reach_mask = get_reach_mask(def, att);
+                // 相手にリーチが存在しない時（静止状態）
                 if reach_mask == 0 {
                     board_vec.push((action, next_board));
                     break;
@@ -900,22 +1144,28 @@ pub fn get_random(board: &Board) -> u8 {
 pub fn pprint_board(board: &Board) {
     let mut s = String::new();
     for i in 0..4 {
+        s += " ";
         for j in 0..4 {
+            if j == 0 {
+                s += " | ";
+            }
             for k in 0..4 {
                 let idx = j * 16 + i * 4 + k;
                 if (board.black >> idx) & 1 == 1 {
-                    s += "O";
+                    s += " O ";
                 } else if (board.white >> idx) & 1 == 1 {
-                    s += "X";
+                    s += " X ";
                 } else {
-                    s += "-";
+                    s += " . ";
                 }
             }
             s += " | ";
         }
-        s += "\n"
+        if i != 3 {
+            s += "\n  |              |              |              |              |\n";
+        }
     }
-    print!("{}", s);
+    println!("{}", s);
 }
 
 fn playout(board: &Board) -> f32 {
@@ -1351,7 +1601,7 @@ pub fn play_actor_from(
     render: bool,
 ) -> (f32, f32) {
     // let mut b = Board::from(2449980224164053531, 1155210714492189764, Player::Black);
-    let mut b = Board::new();
+    let mut b = b;
 
     loop {
         if render {
@@ -1360,7 +1610,7 @@ pub fn play_actor_from(
         if b.is_black() {
             let action = a1.get_action(&b);
             if render {
-                println!("action:{action}");
+                println!("[Black] action:{action}");
             }
             b = b.next(action);
             if b.is_win() {
@@ -1371,9 +1621,69 @@ pub fn play_actor_from(
         } else {
             let action = a2.get_action(&b);
             if render {
-                println!("action:{action}");
+                println!("[White] action:{action}");
             }
             b = b.next(action);
+            if b.is_win() {
+                return (0.0, 1.0);
+            } else if b.is_draw() {
+                return (0.5, 0.5);
+            }
+        }
+    }
+}
+
+pub fn play_actor_with_undo(a1: &impl GetAction, a2: &impl GetAction, render: bool) -> (f32, f32) {
+    // let mut b = Board::from(2449980224164053531, 1155210714492189764, Player::Black);
+    let mut b = Board::new();
+
+    let mut record = Vec::new();
+
+    loop {
+        if render {
+            pprint_board(&b);
+        }
+        if b.is_black() {
+            let action = a1.get_action(&b);
+            if render {
+                println!("[Black] action:{action}");
+            }
+
+            if action == 16 {
+                if record.len() < 2 {
+                    println!("record length is less than 2");
+                    continue;
+                }
+                let _ = record.pop();
+                b = record.pop().unwrap();
+            } else {
+                record.push(b.clone());
+                b = b.next(action);
+            }
+
+            if b.is_win() {
+                return (1.0, 0.0);
+            } else if b.is_draw() {
+                return (0.5, 0.5);
+            }
+        } else {
+            let action = a2.get_action(&b);
+            if render {
+                println!("[White] action:{action}");
+            }
+
+            if action == 16 {
+                if record.len() < 2 {
+                    println!("record length is less than 2");
+                    continue;
+                }
+                let _ = record.pop();
+                b = record.pop().unwrap();
+            } else {
+                record.push(b.clone());
+                b = b.next(action);
+            }
+
             if b.is_win() {
                 return (0.0, 1.0);
             } else if b.is_draw() {

@@ -1,3 +1,6 @@
+use crate::{ai::*, board::*};
+use std::collections::HashMap;
+
 pub const DEPTH_MAP: [u8; 10] = [0, 0, 0, 1, 2, 1, 2, 3, 4, 3];
 pub const DEV_MAP: [[f32; 64]; 8] = [
     [1.0; 64],
@@ -214,4 +217,31 @@ pub const MEAN_MAP: [[f32; 64]; 8] = [
     [1.0; 64],
     [1.0; 64],
 ];
+
+pub type MpcEntry = (u8, f32, f32);
+
 pub const T: f32 = 2.0;
+
+pub const fn get_mpc_id(stone: usize, depth: u8) -> usize {
+    return ((depth as usize) << 6) | stone;
+}
+
+/*
+pub fn negscoutf_hash_mpc(
+    b: &Board,
+    depth: u8,
+    alpha: f32,
+    beta: f32,
+    gen: u8,
+    hashmmap: &mut HashMap<u128, (Fail, u8)>,
+    mpcmap: &[MpcEntry],
+    top: bool,
+    stone: usize,
+) -> (u8, Fail, i32) {
+    use Fail::*;
+    let mut count = 0;
+    let actions = b.valid_actions;
+
+    // 下限が0を下回る場合はスキップするようにする
+}
+*/

@@ -1291,10 +1291,11 @@ impl NegAlphaF {
             if cfg!(feature = "view") {
                 let val_ = ((1.0 / val.get_exval().unwrap()) - 1.0).ln() * -400.0;
                 println!(
-                    "[depth:{i}], action:{action}, val:{:#?}({}), count:{}, time:{t}",
+                    "[depth:{i}], action:{action}, val:{:#?}({}), count:{}, time:{t}, rate:{}count/ms",
                     val,
                     val_ as i32,
-                    hashmap.len()
+                    hashmap.len(),
+                    (count as u128 * 1000000) / t,
                 );
             }
             if self.min_depth > i {
