@@ -89,10 +89,10 @@ fn main() {
 
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
-    main_utils::test_pns();
-    return;
-    main_utils::generate_problems();
-    return;
+    // main_utils::test_pns();
+    // return;
+    // main_utils::generate_problems();
+    // return;
 
     // let l6 = wrapping_line_eval(l.clone(), 6);
     // let l7 = wrapping_line_eval(l.clone(), 7);
@@ -104,7 +104,7 @@ fn main() {
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha_(&b);
 
-    // make_db();
+    make_db();
     // use_aip();
     // let result = play_actor_with_undo(&Agent::Human, &b7, true);
     // let result = play_actor_with_undo(&b7, &Agent::Human, true);
@@ -744,7 +744,7 @@ fn make_db() {
     le.min_depth = 7;
     le.timelimit = 50;
 
-    create_db(Some(le), "sle_tl50_genCoe345_insertRandom1_4_48", 5);
+    create_db(Some(le), "sle_tl50_dfpn", 5);
 }
 
 fn train_line_eval(train_db: String, valid_db: String) {
@@ -828,7 +828,7 @@ fn exp_get_reach_mask() {
     let mut valid_count = 0;
     for i in 0..n {
         let mut b = Board::new();
-        for j in 0..30 {
+        for j in 0..20 {
             b = b.next(Agent::Random.get_action(&b));
         }
 
@@ -836,16 +836,13 @@ fn exp_get_reach_mask() {
         if _is_win_board(att) || _is_win_board(def) {
             continue;
         }
-        // let att = 4611686019979307469;
-        // let def = 80866198721554;
-        // b = Board::from(att, def, qubic_engine::board::Player::Black);
         // pprint_board(&Board::from(att, def, qubic_engine::board::Player::Black));
         //let mask_a = qubic_engine::board::mate_check(&b);
-        let mask = qubic_engine::board::get_2row_mask(att, def);
         let start = Instant::now();
-        let mate = qubic_engine::dfpn::proof_number_search(b.clone());
+        let result = qubic_engine::dfpn::threat_space_search_alpha((att, def));
         let a_time_ = start.elapsed().as_nanos();
         a_time += a_time_;
+        println!("result2\n\n\n");
         // let a_time_ = start.elapsed().as_nanos();
         // if mask_a.is_some() {
         //    a_time += a_time_;
@@ -857,11 +854,23 @@ fn exp_get_reach_mask() {
         // let mask_b = qubic_engine::board::mate_check_horizontal(&b);
         let result2 = qubic_engine::dfpn::threat_space_search((att, def));
         b_time += start.elapsed().as_nanos();
+        if result2.is_none() {
+            continue;
+        }
+        trase(b);
+        assert_eq!(
+            result.is_some(),
+            result2.is_some(),
+            "let att = {att}; \nlet def = {def};"
+        );
     }
 
     println!(
-        "{a_time}|{a_time_not}, {b_time}|{b_time_not}, {}/{}",
-        count_n, n
+        "{}|{a_time_not}, {}|{b_time_not}, {}/{}",
+        a_time / n,
+        b_time / n,
+        count_n,
+        n
     );
     println!("reach/valid:{reach_count}/{valid_count}");
     println!("max_path:[{:#?}]-{max_path},\nmax_valid_count:[{:#?}]-{max_valid_count},\nmax_reach_count:[{:#?}]-{max_reach_count}", max_path_board, max_valid_count_board, max_reach_count_board);
@@ -875,20 +884,19 @@ fn trase(b: Board) {
             pprint_board(&b);
             return;
         }
-        let result = qubic_engine::board::mate_check_horizontal(&b);
         let (att, def) = b.get_att_def();
-        // let result = qubic_engine::dfpn::threat_space_search((att, def));
+        let result = qubic_engine::board::mate_check_horizontal(&b);
         if result.is_none() {
             let action = qubic_engine::board::get_reach_mask(att, def);
             println!("att->{}", action.trailing_zeros() % 16);
             assert!(qubic_engine::board::get_reach_mask(att, def) != 0);
             break;
         } else {
-            // let (action) = result.unwrap();
-            let ((flag, action)) = result.unwrap();
+            let (flag, action) = result.unwrap();
+            // let action = result.unwrap().trailing_zeros() % 16;
             // let action = (action.trailing_zeros() % 16) as u8;
             println!("att->{action}");
-            let nb = b.next(action);
+            let nb = b.next(action as u8);
             if nb.is_win() {
                 println!("end");
                 pprint_board(&b);

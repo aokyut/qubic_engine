@@ -1,7 +1,12 @@
 #[allow(warnings)]
 use crate::db::BoardDB;
 
-use super::{ai::*, board::*, ml::*};
+use super::{
+    ai::*,
+    board::*,
+    dfpn::{proof_number_search, threat_space_search, MateType},
+    ml::*,
+};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
@@ -171,12 +176,14 @@ fn play_with_eval(
         }
 
         let b_ = b.next(action);
-        let end = mate_check_horizontal(&b);
-        if let Some((flag, _)) = end {
-            if flag {
-                reward = 1;
-                break;
-            }
+        let end = proof_number_search(b.clone());
+        if let MateType::Three(_) = end.typ {
+            reward = 1;
+            break;
+        }
+        if let MateType::Two(_) = end.typ {
+            reward = 1;
+            break;
         }
         if b_.is_win() {
             reward = 1;

@@ -80,41 +80,129 @@ impl Iterator for MaskActionIterator {
     }
 }
 
-pub fn tss_expand_alpha((att, def): UBoard) -> (bool, Vec<(Action, UBoard)>) {
+const TSS_MOVE_MASK: [u64; 64] = [
+    0x9009950d953f953f,
+    0x200a2206222f222f,
+    0x40054406444f444f,
+    0x90099a0b9acf9acf,
+    0x109001d011f111f1,
+    0xa0a00660a6f3a6f3,
+    0x5050066056fc56fc,
+    0x809008b088f888f8,
+    0x09010d101f111f11,
+    0x0a0a06603f6a3f6a,
+    0x05050660cf65cf65,
+    0x09080b808f888f88,
+    0x9009d059f359f359,
+    0xa0026022f222f222,
+    0x50046044f444f444,
+    0x9009b0a9fca9fca9,
+    0x0001953f953f953f,
+    0x000b222f222f222f,
+    0x000d444f444f444f,
+    0x00089acf9acf9acf,
+    0x101111f111f111f1,
+    0xa0b3a6f3a6f3a6f3,
+    0x50dc56fc56fc56fc,
+    0x808888f888f888f8,
+    0x11011f111f111f11,
+    0x3b0a3f6a3f6a3f6a,
+    0xcd05cf65cf65cf65,
+    0x88088f888f888f88,
+    0x1000f359f359f359,
+    0xb000f222f222f222,
+    0xd000f444f444f444,
+    0x8000fca9fca9fca9,
+    0x953f953f953f9009,
+    0x222f222f222f200e,
+    0x444f444f444f4007,
+    0x9acf9acf9acf9009,
+    0x11f111f111f11190,
+    0xa6f3a6f3a6f3a6e0,
+    0x56fc56fc56fc5670,
+    0x88f888f888f88890,
+    0x1f111f111f110911,
+    0x3f6a3f6a3f6a0e6a,
+    0xcf65cf65cf650765,
+    0x8f888f888f880988,
+    0xf359f359f3599009,
+    0xf222f222f222e002,
+    0xf444f444f4447004,
+    0xfca9fca9fca99009,
+    0x953f953f0537950d,
+    0x222f222f02222202,
+    0x444f444f04444404,
+    0x9acf9acf0ace9a0b,
+    0x11f111f1007000d0,
+    0xa6f3a6f300200020,
+    0x56fc56fc00400040,
+    0x88f888f800e000b0,
+    0x1f111f1107000d00,
+    0x3f6a3f6a02000200,
+    0xcf65cf6504000400,
+    0x8f888f880e000b00,
+    0xf359f3597350d059,
+    0xf222f22222202022,
+    0xf444f44444404044,
+    0xfca9fca9eca0b0a9,
+];
+
+pub fn tss_expand_alpha((att, def): UBoard, mask: u64) -> (bool, Vec<((Action, Action), UBoard)>) {
     let mut board_vec = Vec::new();
-    let def_reach_mask = get_reach_mask(def, att);
-    if def_reach_mask.count_ones() > 1 {
-        return (false, vec![]);
-    }
-    let action_mask = if def_reach_mask != 0 {
-        def_reach_mask & (get_2row_mask(att, def) | get_put_reach_mask(att, def))
-    } else {
-        get_2row_mask(att, def) | get_put_reach_mask(att, def)
-    };
+    let action_mask = mask & (get_2row_mask(att, def) | get_put_reach_mask(att, def));
+
     for (act, n_att) in MaskActionIterator::new(att, action_mask) {
-        // println!("->{}", act.trailing_zeros() % 16);
-        // pprint_uboard((n_att, def));
         let def_reach_mask = get_reach_mask(def, n_att);
-        // 次の手番で相手が４を作れる時
         if def_reach_mask != 0 {
-            // println!("次の手番で相手が４を作れちゃう");
-            // pprint_u64(def_reach_mask);
             continue;
         }
 
-        let reach_mask = get_reach_mask(n_att, def);
-        if reach_mask.count_ones() > 1 {
-            return (true, vec![(act, (n_att, def))]);
+        let reach_mask_ = get_reach_mask(n_att, def);
+        if reach_mask_.count_ones() > 1 {
+            return (true, vec![((act, act), (n_att, def))]);
         }
-        // reach_mask.count_ones() == 1
-        let n_def = (!reach_mask + 1) & reach_mask | def;
+        // reach_mask.count_ones() = 1
+        assert_eq!(reach_mask_.count_ones(), 1);
+        let n_def = reach_mask_ | def;
         let n_reach_mask = get_reach_mask(n_att, n_def);
 
         if n_reach_mask != 0 {
-            return (true, vec![(act, (n_att, n_def))]);
+            return (true, vec![((act, act), (n_att, n_def))]);
         }
 
-        board_vec.push((act, (n_att, n_def)));
+        let mut reach_mask = get_reach_mask(n_def, n_att);
+        if reach_mask != 0 {
+            let (mut att, mut def) = (n_att, n_def);
+            loop {
+                if reach_mask.count_ones() > 1 {
+                    break;
+                }
+
+                let n_att = reach_mask | att;
+                let att_reach_mask = get_reach_mask(n_att, def);
+                if att_reach_mask == 0 {
+                    break;
+                }
+                if att_reach_mask.count_ones() > 1 {
+                    return (true, vec![((act, act), (n_att, def))]);
+                }
+                let n_def = att_reach_mask | def;
+
+                let n_reach_mask = get_reach_mask(n_att, n_def);
+                if n_reach_mask != 0 {
+                    return (true, vec![((act, act), (n_att, n_def))]);
+                }
+                let reach_mask_ = get_reach_mask(n_def, n_att);
+                if reach_mask_ == 0 {
+                    board_vec.push(((reach_mask, att_reach_mask), (n_att, n_def)));
+                    break;
+                }
+                reach_mask = reach_mask_;
+                (att, def) = (n_att, n_def);
+            }
+        } else {
+            board_vec.push(((act, reach_mask_), (n_att, n_def)))
+        }
     }
 
     return (false, board_vec);
@@ -124,13 +212,8 @@ pub fn tss_expand((att, def): UBoard) -> (bool, Vec<(Action, UBoard)>) {
     let mut board_vec = Vec::new();
     let action_mask = get_2row_mask(att, def) | get_put_reach_mask(att, def);
     for (act, n_att) in MaskActionIterator::new(att, action_mask) {
-        // println!("->{}", act.trailing_zeros() % 16);
-        // pprint_uboard((n_att, def));
         let def_reach_mask = get_reach_mask(def, n_att);
-        // 次の手番で相手が４を作れる時
         if def_reach_mask != 0 {
-            // println!("次の手番で相手が４を作れちゃう");
-            // pprint_u64(def_reach_mask);
             continue;
         }
 
@@ -138,7 +221,6 @@ pub fn tss_expand((att, def): UBoard) -> (bool, Vec<(Action, UBoard)>) {
         if reach_mask.count_ones() > 1 {
             return (true, vec![(act, (n_att, def))]);
         }
-        // reach_mask.count_ones() == 1
         let n_def = (!reach_mask + 1) & reach_mask | def;
         let n_reach_mask = get_reach_mask(n_att, n_def);
 
@@ -148,31 +230,23 @@ pub fn tss_expand((att, def): UBoard) -> (bool, Vec<(Action, UBoard)>) {
 
         let mut reach_mask = get_reach_mask(n_def, n_att);
         if reach_mask != 0 {
-            // println!("flag1");
-            // pprint_u64(reach_mask);
             let (mut att, mut def) = (n_att, n_def);
             loop {
                 if reach_mask.count_ones() > 1 {
                     break;
                 }
                 let n_att = (!reach_mask).wrapping_add(1) & reach_mask | att;
-                // println!("warikomi->");
-                // pprint_uboard((n_att, def));
                 let att_reach_mask = get_reach_mask(n_att, def);
                 if att_reach_mask == 0 {
                     break;
                 }
                 if att_reach_mask.count_ones() > 1 {
-                    // println!("flag2");
                     return (true, vec![(act, (n_att, def))]);
                 }
                 let n_def = (!att_reach_mask + 1) & att_reach_mask | def;
-                // println!("warikomi2->");
-                // pprint_uboard((n_att, n_def));
 
                 let n_reach_mask = get_reach_mask(n_att, n_def);
                 if n_reach_mask != 0 {
-                    // println!("flag2");
                     return (true, vec![(act, (n_att, n_def))]);
                 }
                 reach_mask = get_reach_mask(n_def, n_att);
@@ -182,7 +256,6 @@ pub fn tss_expand((att, def): UBoard) -> (bool, Vec<(Action, UBoard)>) {
                 (att, def) = (n_att, n_def);
             }
         } else {
-            // println!("push back!");
             board_vec.push((act, (n_att, n_def)))
         }
     }
@@ -235,17 +308,19 @@ pub fn threat_space_search_alpha((att, def): UBoard) -> Option<(u64, Status)> {
     assert!(get_reach_mask(att, def) == 0);
 
     let mut hash = HashSet::new();
-    let mut expands: VecDeque<(u64, UBoard)>;
-    let (end_flag, root_expands) = tss_expand((att, def));
+    let mut expands: VecDeque<(u64, (u64, u64), UBoard)> = VecDeque::new();
+    let (end_flag, root_expands) = tss_expand_alpha((att, def), !0);
     if end_flag {
         let (n_att, n_def) = root_expands[0].1;
         return Some((
-            root_expands[0].0,
+            root_expands[0].0 .0,
             Status::from(0, 0, count_diff(n_att, n_def, att, def), n_att, n_def),
         ));
     }
 
-    expands = root_expands.into_iter().collect();
+    for ((att_act, def_act), board) in root_expands {
+        expands.push_back((att_act, (att_act, def_act), board));
+    }
 
     let mut count_reach_board = 0;
     let mut count_valid_board = 0;
@@ -254,15 +329,22 @@ pub fn threat_space_search_alpha((att, def): UBoard) -> Option<(u64, Status)> {
         if expands.len() == 0 {
             break;
         }
-        let (act, tar_board) = expands.pop_front().unwrap();
+        let (root_act, (act, def_act), tar_board) = expands.pop_front().unwrap();
         if hash.get(&tar_board).is_some() {
             continue;
         }
 
-        // println!("expand: att:{}, def:{}", tar_board.0, tar_board.1);
+        // println!(
+        //     "expand: att:{}, def:{}, [{}]",
+        //     tar_board.0,
+        //     tar_board.1,
+        //     (tar_board.0 | tar_board.1).count_ones()
+        // );
         // pprint_uboard(tar_board);
 
-        let (end_flag, new_nodes) = tss_expand(tar_board);
+        let mask = TSS_MOVE_MASK[act.trailing_zeros() as usize]
+            | TSS_MOVE_MASK[def_act.trailing_zeros() as usize];
+        let (end_flag, new_nodes) = tss_expand_alpha(tar_board, mask);
 
         count_reach_board += get_reach_boards(tar_board.0, tar_board.1).len();
         count_valid_board += get_valid_boards(tar_board.0, tar_board.1).len();
@@ -280,10 +362,10 @@ pub fn threat_space_search_alpha((att, def): UBoard) -> Option<(u64, Status)> {
             ));
         }
         hash.insert(tar_board);
-        for (_, new_board) in new_nodes {
+        for ((att_act, def_act), new_board) in new_nodes {
             // println!("->");
             // pprint_uboard(new_board);
-            expands.push_back((act, new_board));
+            expands.push_back((root_act, (att_act, def_act), new_board));
         }
     }
 
@@ -327,7 +409,12 @@ pub fn threat_space_search((att, def): UBoard) -> Option<u64> {
             continue;
         }
 
-        // println!("expand: att:{}, def:{}", tar_board.0, tar_board.1);
+        // println!(
+        //     "expand: att:{}, def:{}, [{}]",
+        //     tar_board.0,
+        //     tar_board.1,
+        //     (tar_board.0 | tar_board.1).count_ones()
+        // );
         // pprint_uboard(tar_board);
 
         let (end_flag, new_nodes) = tss_expand(tar_board);
