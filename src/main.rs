@@ -89,10 +89,6 @@ fn main() {
 
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
-    main_utils::test_pns();
-    return;
-    main_utils::generate_problems();
-    return;
 
     // let l6 = wrapping_line_eval(l.clone(), 6);
     // let l7 = wrapping_line_eval(l.clone(), 7);
@@ -841,9 +837,8 @@ fn exp_get_reach_mask() {
         // b = Board::from(att, def, qubic_engine::board::Player::Black);
         // pprint_board(&Board::from(att, def, qubic_engine::board::Player::Black));
         //let mask_a = qubic_engine::board::mate_check(&b);
-        let mask = qubic_engine::board::get_2row_mask(att, def);
         let start = Instant::now();
-        let mate = qubic_engine::dfpn::proof_number_search(b.clone());
+        let mate = qubic_engine::board::mate_check_horizontal(&b);
         let a_time_ = start.elapsed().as_nanos();
         a_time += a_time_;
         // let a_time_ = start.elapsed().as_nanos();

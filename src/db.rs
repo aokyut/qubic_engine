@@ -5,10 +5,7 @@ use sqlite::{open, Connection};
 use crate::ai::u2vec;
 use crate::board::Board;
 use crate::train;
-use crate::{
-    ml::{create_batch, Tensor},
-    train::Transition,
-};
+use crate::train::Transition;
 
 pub struct BoardDB {
     conn: Connection,
