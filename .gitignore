@@ -9,3 +9,4 @@ mcoe*
 *.svg
 *.json
 util.py
+.DS_Store
