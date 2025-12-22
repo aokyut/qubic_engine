@@ -5,27 +5,24 @@ pub mod line;
 pub mod line_nn;
 pub mod mcts;
 pub mod mpc;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod pattern;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod position;
 pub mod timeout;
 pub mod zhashmap;
 
+use super::board::{Board, GetAction};
+use super::ml::{Graph, Tensor};
 use crate::board::{
     self, count_1row, count_2row, count_3row, get_random, get_reach_mask, mate_check_horizontal,
     pprint_board,
 };
-use crate::train::Transition;
-
-use super::board::{Board, GetAction};
-use super::ml::{Graph, Tensor};
 // use ort::{Environment, GraphOptimizationLevel, Session, SessionBuilder};
 use anyhow::{Ok, Result};
 use rand::Rng;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
-use std::arch::x86_64::{
-    _mm256_blend_epi32, _mm256_setr_epi64x, _mm256_setzero_ps, _mm256_storeu_si256,
-};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ptr::NonNull;
@@ -2394,40 +2391,6 @@ impl LineEvaluator {
                 * magic,
         );
     }
-
-    // #[cfg(not(all(
-    //     any(target_arch = "x86_64", target_arch = "x86"),
-    //     target_feature = "avx2"
-    // )))]
-    // pub fn analyze_line(
-    //     a1: u64,
-    //     a2: u64,
-    //     a3: u64,
-    //     a4: u64,
-    //     b1: u64,
-    //     b2: u64,
-    //     b3: u64,
-    //     b4: u64,
-    //     mask: u64,
-    //     magic: u64,
-    // ) -> (u64, u64, u64) {
-    //     return (
-    //         ((b1 & b2 & b3 & a4 | b1 & b2 & a3 & b4 | b1 & a2 & b3 & b4 | a1 & b2 & b3 & b4)
-    //             & mask)
-    //             * magic,
-    //         ((a1 & a2 & b3 & b4
-    //             | a1 & b2 & a3 & b4
-    //             | a1 & b2 & b3 & a4
-    //             | b1 & a2 & a3 & b4
-    //             | b1 & a2 & b3 & a4
-    //             | b1 & b2 & a3 & a4)
-    //             & mask)
-    //             * magic,
-    //         ((a1 & a2 & a3 & b4 | a1 & a2 & b3 & a4 | a1 & b2 & a3 & a4 | b1 & a2 & a3 & a4)
-    //             & mask)
-    //             * magic,
-    //     );
-    // }
 
     pub fn analyze_board(
         a: u64,

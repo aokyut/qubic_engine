@@ -4,9 +4,7 @@ use qubic_engine::ai::line::{
     BucketLineEvaluator, SimplLineEvaluator, SimplePatternEvaluator, TrainableBLE, TrainableSLE,
     TrainableSPE,
 };
-use qubic_engine::ai::line_nn::{
-    MMEvaluator, NNLineEvaluator, NNLineEvaluator_, TrainableNLE, TrainableNLE_,
-};
+use qubic_engine::ai::line_nn::{NNLineEvaluator, NNLineEvaluator_, TrainableNLE, TrainableNLE_};
 use qubic_engine::ai::pattern::TrainablePatternEvaluator;
 use qubic_engine::ai::position::{PositionMaskEvaluator, TrainablePME};
 use qubic_engine::ai::zhashmap::test_zhash;
