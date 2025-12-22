@@ -2,7 +2,7 @@
 name = "qubic_engine"
 license = "MIT"
 author = ["epaperamic@gmail.com"]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "qubic engine"
 repository = "https://github.com/aokyut/qubic_engine"
@@ -19,7 +19,12 @@ rand = "0.8.5"
 rand_distr = "0.4.3"
 serde = { version = "= 1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sqlite = "0.36.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# sqlite を使わない実装
 
 [features]
 default = []

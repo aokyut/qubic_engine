@@ -18,7 +18,6 @@ use crate::train::Transition;
 
 use super::board::{Board, GetAction};
 use super::ml::{Graph, Tensor};
-// use ndarray::{s, CowArray};
 // use ort::{Environment, GraphOptimizationLevel, Session, SessionBuilder};
 use anyhow::{Ok, Result};
 use rand::Rng;
