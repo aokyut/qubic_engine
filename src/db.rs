@@ -1,5 +1,3 @@
-use rand::rngs::ThreadRng;
-use rand::Rng;
 use sqlite::{open, Connection};
 
 use crate::ai::u2vec;
@@ -8,13 +6,13 @@ use crate::train;
 use crate::{
     ml::{create_batch, Tensor},
     train::Transition,
+    utills::rand::get_random_usize,
 };
 
 pub struct BoardDB {
     conn: Connection,
     batch_size: usize,
     pub batch_num: usize,
-    rng: ThreadRng,
     lambda: f32,
 }
 
@@ -32,12 +30,10 @@ impl BoardDB {
         ";
 
         conn.execute(query).unwrap();
-        let rng = rand::thread_rng();
         let mut db = BoardDB {
             conn: conn,
             batch_size: batch_size,
             batch_num: 0,
-            rng: rng,
             lambda: 0.0,
         };
 
@@ -247,7 +243,7 @@ impl Iterator for BoardDB {
                     res = 0.5;
                 }
                 // println!("res:{res}, val:{}", t.t_val);
-                let rot_b = random_rot(t.board, self.rng.gen());
+                let rot_b = random_rot(t.board, get_random_usize());
                 board.push(Tensor::new(u2vec(rot_b), vec![128, 1]));
                 result.push(Tensor::new(
                     vec![res * train::LAMBDA + (1.0 - train::LAMBDA) * t.t_val],

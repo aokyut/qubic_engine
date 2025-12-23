@@ -3,23 +3,16 @@ pub mod ops;
 pub mod optim;
 pub mod params;
 
+use crate::utills::rand::*;
 use anyhow::Result;
-use rand::Rng;
-use rand_distr::{Distribution, Normal};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::ops::{Add, AddAssign};
 use std::path::PathBuf;
 
 pub fn xiver_vec(n: usize, size: usize) -> Vec<f32> {
-    let mut rng = rand::thread_rng();
     let sigma = (1.0 / n as f32).sqrt();
-    let normal = Normal::new(0.0, sigma).unwrap();
-    let mut ans = Vec::new();
-
-    for _ in 0..size {
-        ans.push(normal.sample(&mut rng));
-    }
+    let ans = get_random_normal(size, 0.0, sigma);
 
     return ans;
 }
@@ -102,11 +95,7 @@ impl Tensor {
     }
 
     fn create_random_array(size: usize) -> Vec<f32> {
-        let mut rng = rand::thread_rng();
-        let mut data = Vec::new();
-        for i in 0..size {
-            data.push(rng.gen());
-        }
+        let data = get_random_normal(size, 0.0, 1.0);
 
         return data;
     }

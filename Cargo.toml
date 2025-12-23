@@ -12,19 +12,21 @@ keywords = ["engine", "game"]
 
 [dependencies]
 anyhow = "1.0.89"
-indicatif = "0.17.8"
 ndarray = "0.16.1"
 proconio = "0.5.0"
-rand = "0.8.5"
-rand_distr = "0.4.3"
 serde = { version = "= 1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sqlite = "0.36.1"
+rand = "0.8.5"
+rand_distr = "0.4.3"
+indicatif = "0.17.8"
 
+# wasm時
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# sqlite を使わない実装
+fastrand = "2.3.0"
+
 
 [features]
 default = []

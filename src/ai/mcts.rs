@@ -1,6 +1,6 @@
 use super::EvaluatorF;
 use crate::board::{Board, GetAction};
-use rand::Rng;
+use crate::utills::rand::get_random_usize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -206,9 +206,8 @@ impl Mcts {
         if cfg!(feature = "view") {
             println!("total_time:{}ms, {}μs", t / 1000, t);
         }
-        let mut rng = rand::thread_rng();
         return (
-            max_actions[rng.gen::<usize>() % max_actions.len()],
+            max_actions[get_random_usize() % max_actions.len()],
             max_score,
         );
     }

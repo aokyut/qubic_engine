@@ -1,9 +1,8 @@
 // use std::collections::VecDeque;
 pub mod magic_number;
 
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::utills::rand;
 use proconio::input;
-use rand::Rng;
 use std::fmt;
 use std::{
     cell::RefCell,
@@ -155,7 +154,6 @@ impl Board {
     }
 
     pub fn minimax_action(&self, depth: u8) -> u8 {
-        let mut rng = rand::thread_rng();
         if depth == 1 {
             let actions = self.valid_actions();
             for action in actions.iter() {
@@ -166,7 +164,7 @@ impl Board {
                     return *action;
                 }
             }
-            return actions[rng.gen::<usize>() % actions.len()];
+            return actions[rand::get_random_usize() % actions.len()];
         } else {
             let mut actions: Vec<u8> = Vec::new();
             let mut max_val: i8 = -2;
@@ -191,7 +189,7 @@ impl Board {
             }
 
             // println!("actions:{:#?}, val:{}", actions, max_val);
-            return actions[rng.gen::<usize>() % actions.len()];
+            return actions[rand::get_random_usize() % actions.len()];
         }
     }
 
@@ -1136,9 +1134,8 @@ pub fn pprint_u64(bit: u64) {
 }
 
 pub fn get_random(board: &Board) -> u8 {
-    let mut rng = rand::thread_rng();
     let actions = board.valid_actions();
-    return actions[rng.gen::<usize>() % actions.len()];
+    return actions[rand::get_random_usize() % actions.len()];
 }
 
 pub fn pprint_board(board: &Board) {
@@ -1482,8 +1479,7 @@ pub fn mcts_action(board: &Board, n: usize, ex_n: usize) -> u8 {
             max_actions.push(score.action);
         }
     }
-    let mut rng = rand::thread_rng();
-    return max_actions[rng.gen::<usize>() % max_actions.len()];
+    return max_actions[rand::get_random_usize() % max_actions.len()];
     // return max_action;
 }
 
@@ -1745,42 +1741,27 @@ pub fn compare_agent(
     let mut score1 = 0.0;
     let mut score2 = 0.0;
 
-    let pb = ProgressBar::new((n * 2) as u64);
-    pb.set_style(ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
-            .unwrap()
-            .progress_chars("#>-"));
-
     let mut p = 0.5;
     for _ in 0..n {
         let (s1, s2) = play_actor(a1, a2, render);
         score1 += s1;
         score2 += s2;
-        pb.inc(1);
-        pb.set_message(format!(
+        println!(
             "acum:[{score1}, {score2}], p:[{p:.6}:{:.6}][{s1}, {s2}]",
             1.0 - p
-        ));
+        );
         // println!("game black: {}, s1:{}, s2:{}", i, s1, s2);
         let (s2, s1) = play_actor(a2, a1, render);
         score1 += s1;
         score2 += s2;
-        pb.inc(1);
         p = half_imcomplete_beta_func(score1.floor() as f64, score2.floor() as f64);
-        pb.set_message(format!(
-            "acum:[{score1}, {score2}], p:[{p:.6}:{:.6}][{s1}, {s2}]",
-            1.0 - p
-        ));
 
         // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);
 
         if p < th || p > (1.0 - th) {
-            pb.finish();
             return (score1, score2, true);
-            break;
         }
     }
-    pb.finish();
     return (score1, score2, false);
 }
 
@@ -1790,41 +1771,25 @@ pub fn eval_actor_from_boards(
     a2: &impl GetAction,
     render: bool,
 ) -> (f32, f32) {
-    use std::{thread, time::Duration};
     let mut score1 = 0.0;
     let mut score2 = 0.0;
 
     let n = bs.len();
-    let pb = ProgressBar::new((n * 2) as u64);
-    pb.set_style(ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
-            .unwrap()
-            .progress_chars("#>-"));
-
     for b in bs.iter() {
         let (s1, s2) = play_actor_from(b.clone(), a1, a2, render);
         score1 += s1;
         score2 += s2;
-        pb.inc(1);
-        pb.set_message(format!("[{score1}, {score2}]"));
+        println!("[{score1}, {score2}]");
         let (s2, s1) = play_actor_from(b.clone(), a2, a1, render);
         score1 += s1;
         score2 += s2;
-        pb.inc(1);
-        pb.set_message(format!("[{score1}, {score2}]"));
+        println!("[{score1}, {score2}]");
     }
     return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
 }
 pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bool) -> (f32, f32) {
-    use std::{thread, time::Duration};
     let mut score1 = 0.0;
     let mut score2 = 0.0;
-
-    let pb = ProgressBar::new((n * 2) as u64);
-    pb.set_style(ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
-            .unwrap()
-            .progress_chars("#>-"));
 
     for i in 0..n {
         // thread::sleep(Duration::from_millis(200));
@@ -1832,15 +1797,13 @@ pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bo
         // println!("[{}/{}]black: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
-        pb.inc(1);
-        pb.set_message(format!("[{score1}, {score2}]"));
+        println!("[{score1}, {score2}]");
         // println!("game black: {}, s1:{}, s2:{}", i, s1, s2);
         let (s2, s1) = play_actor(a2, a1, render);
         // println!("[{}/{}]white: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
-        pb.inc(1);
-        pb.set_message(format!("[{score1}, {score2}]"));
+        println!("[{score1}, {score2}]");
         // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);
     }
     return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);

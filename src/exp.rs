@@ -1,7 +1,9 @@
-use crate::board::{get_random, mate_check_horizontal, Board};
+use crate::{
+    board::{get_random, mate_check_horizontal, Board},
+    utills::rand::get_random_usize,
+};
 
 use super::board;
-use rand::Rng;
 use std::{collections::binary_heap::Iter, thread, time};
 
 const K: f32 = 16.0;
@@ -74,11 +76,10 @@ impl Rating {
     }
 
     pub fn matching(&mut self) -> (usize, usize) {
-        let mut rng = rand::thread_rng();
         let size = self.agents.len();
         loop {
-            let idx1 = rng.gen::<usize>() % size;
-            let idx2 = (idx1 + 1 + (rng.gen::<usize>() % (size - 1))) % size;
+            let idx1 = get_random_usize() % size;
+            let idx2 = (idx1 + 1 + (get_random_usize() % (size - 1))) % size;
             if !self.isfix[idx1] | !self.isfix[idx2] {
                 return (idx1, idx2);
             }
@@ -86,11 +87,7 @@ impl Rating {
     }
 
     pub fn play(&mut self) {
-        // let mut rng = rand::thread_rng();
-        // let size = self.agents.len();
         let (idx1, idx2) = self.matching();
-        // let idx1 = rng.gen::<usize>() % size;
-        // let idx2 = (idx1 + 1 + (rng.gen::<usize>() % (size - 1))) % size;
         let a1 = &self.agents[idx1];
         let a2 = &self.agents[idx2];
         let rate1 = self.rates[idx1];

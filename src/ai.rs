@@ -2,6 +2,7 @@
 #![feature(ptr_internals)]
 #[allow(warnings)]
 pub mod line;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod line_nn;
 pub mod mcts;
 pub mod mpc;
@@ -10,7 +11,6 @@ pub mod pattern;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod position;
 pub mod timeout;
-pub mod zhashmap;
 
 use super::board::{Board, GetAction};
 use super::ml::{Graph, Tensor};
@@ -18,9 +18,9 @@ use crate::board::{
     self, count_1row, count_2row, count_3row, get_random, get_reach_mask, mate_check_horizontal,
     pprint_board,
 };
+use crate::utills::rand::get_random_usize;
 // use ort::{Environment, GraphOptimizationLevel, Session, SessionBuilder};
 use anyhow::{Ok, Result};
-use rand::Rng;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -148,9 +148,8 @@ pub fn negalpha(
             }
         }
     }
-    let mut rng = rand::thread_rng();
     return (
-        max_actions[rng.gen::<usize>() % max_actions.len()],
+        max_actions[get_random_usize() % max_actions.len()],
         max_val,
         count,
     );
@@ -232,9 +231,8 @@ pub fn negalphaf(
             }
         }
     }
-    let mut rng = rand::thread_rng();
     return (
-        max_actions[rng.gen::<usize>() % max_actions.len()],
+        max_actions[get_random_usize() % max_actions.len()],
         max_val,
         count,
     );
@@ -549,13 +547,12 @@ pub fn negalphaf_hash(
             }
         }
     }
-    let mut rng = rand::thread_rng();
     if max_actions.len() == 0 {
         return (201, Low(alpha), count);
     }
 
     return (
-        max_actions[rng.gen::<usize>() % max_actions.len()],
+        max_actions[get_random_usize() % max_actions.len()],
         Ex(max_val),
         count,
     );
@@ -842,13 +839,12 @@ pub fn negalphaf_hash_iter(
             }
         }
     }
-    let mut rng = rand::thread_rng();
     if max_actions.len() == 0 {
         return (201, Low(alpha), count);
     }
 
     return (
-        max_actions[rng.gen::<usize>() % max_actions.len()],
+        max_actions[get_random_usize() % max_actions.len()],
         Ex(max_val),
         count,
     );
@@ -1164,13 +1160,12 @@ pub fn negscoutf_hash_iter(
             }
         }
     }
-    let mut rng = rand::thread_rng();
     if max_actions.len() == 0 {
         return (201, Low(alpha), count);
     }
 
     return (
-        max_actions[rng.gen::<usize>() % max_actions.len()],
+        max_actions[get_random_usize() % max_actions.len()],
         Ex(max_val),
         count,
     );
@@ -1232,26 +1227,6 @@ impl NegAlphaF {
             timelimit: 1000,
             min_depth: 1,
         };
-    }
-
-    pub fn eval_with_negalpha_zhash(&self, b: &Board) -> (u8, f32, i32) {
-        use zhashmap::{get_hash, negalphaf_zhash, ZHashMap};
-        let mut hashmap = ZHashMap::new(12);
-        let bboard = b2u128(b);
-        let bhash = hashmap.get_hash(b2u128(b));
-
-        let (action, val, count) = negalphaf_zhash(
-            None,
-            b,
-            (bboard, bhash),
-            self.depth,
-            -2.0,
-            2.0,
-            &mut hashmap,
-            &self.evaluator,
-        );
-
-        return (action, val.get_exval().unwrap(), count);
     }
 
     pub fn eval_with_negscout_(&self, b: &Board) -> (u8, f32, i32) {
@@ -4051,9 +4026,7 @@ impl RandomEvaluator {
 
 impl Evaluator for RandomEvaluator {
     fn eval_func(&self, b: &Board) -> i32 {
-        let mut rng = rand::thread_rng();
-        let u: usize = rng.gen();
-        return (u % 1300) as i32;
+        return (get_random_usize() % 1300) as i32;
     }
 }
 
