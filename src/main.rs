@@ -73,10 +73,10 @@ fn main() {
     let mut b = BucketLineEvaluator::new();
     b.load("bsimple.json".to_string());
 
-    let mut b7 = NegAlphaF::new(Box::new(b), 5);
+    let mut b7 = NegAlphaF::new(Box::new(b), 29);
     b7.scout = true;
-    b7.timelimit = 1;
-    b7.min_depth = 3;
+    b7.timelimit = 1000;
+    b7.min_depth = 7;
 
     let b7 = MateWrapperActor::new(Box::new(b7));
 
@@ -86,9 +86,10 @@ fn main() {
 
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
+    main_utils::bench_problems("pns100.json");
     // main_utils::test_pns();
-    // return;
     // main_utils::generate_problems();
+    return;
     // return;
 
     // let l6 = wrapping_line_eval(l.clone(), 6);
@@ -101,9 +102,9 @@ fn main() {
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha_(&b);
 
-    make_db();
+    // make_db();
     // use_aip();
-    // let result = play_actor_with_undo(&Agent::Human, &b7, true);
+    // let result = play_actor_with_undo(&b7, &b7, true);
     // let result = play_actor_with_undo(&b7, &Agent::Human, true);
     // println!("{result:#?}");
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
@@ -813,7 +814,7 @@ fn exp_get_reach_mask() {
     let mut b_time_not = 0;
     let mut a_time = 0;
     let mut a_time_not = 0;
-    let n = 1_000_000;
+    let n = 10_000;
     let mut count_n = 0;
     let mut max_path_board = (0, 0);
     let mut max_path = 0;
@@ -833,13 +834,20 @@ fn exp_get_reach_mask() {
         if _is_win_board(att) || _is_win_board(def) {
             continue;
         }
+        // let att = 1621180469;
+        // let def = 36029484230554048;
+        let att = 142936612800336;
+        let def = 144119622629763082;
+        b = Board::from(att, def, qubic_engine::board::Player::Black);
+        pprint_board(&b);
         // pprint_board(&Board::from(att, def, qubic_engine::board::Player::Black));
         //let mask_a = qubic_engine::board::mate_check(&b);
         let start = Instant::now();
-        let result = qubic_engine::dfpn::threat_space_search_alpha((att, def));
+        let result = qubic_engine::dfpn::threat_space_search_horizontal((att, def));
+
+        println!("\n\nnext");
         let a_time_ = start.elapsed().as_nanos();
         a_time += a_time_;
-        println!("result2\n\n\n");
         // let a_time_ = start.elapsed().as_nanos();
         // if mask_a.is_some() {
         //    a_time += a_time_;
@@ -850,11 +858,10 @@ fn exp_get_reach_mask() {
         let start = Instant::now();
         // let mask_b = qubic_engine::board::mate_check_horizontal(&b);
         let result2 = qubic_engine::dfpn::threat_space_search((att, def));
+        // let result2 = mate_check_horizontal(&b);
         b_time += start.elapsed().as_nanos();
-        if result2.is_none() {
-            continue;
-        }
-        trase(b);
+        // println!("{:#?}", result);
+        // trase(b);
         assert_eq!(
             result.is_some(),
             result2.is_some(),
@@ -877,12 +884,13 @@ fn trase(b: Board) {
     let mut b = b.clone();
     loop {
         if b.is_win() {
-            println!("end");
+            println!("enemy win end");
             pprint_board(&b);
             return;
         }
         let (att, def) = b.get_att_def();
         let result = qubic_engine::board::mate_check_horizontal(&b);
+        println!("result:{:#?}", result);
         if result.is_none() {
             let action = qubic_engine::board::get_reach_mask(att, def);
             println!("att->{}", action.trailing_zeros() % 16);
@@ -905,7 +913,9 @@ fn trase(b: Board) {
             let action = action.trailing_zeros() % 16;
             println!("def->{action}");
             b = nb.next(action as u8);
+            let (att, def) = b.get_att_def();
             pprint_board(&b);
+            println!("att:{att}, def:{def}");
         }
     }
 }

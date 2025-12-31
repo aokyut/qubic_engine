@@ -959,6 +959,7 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
         // reach_maskの場所を把握して返す
         let num = reach_mask.count_ones();
         if num > 1 {
+            println!("flag1");
             return (true, vec![(action, board.clone())]);
         }
         let mut next_board = def_board.next(def_action as u8);
@@ -966,6 +967,10 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
         let att_reach_mask = get_reach_mask(att, def);
 
         if att_reach_mask != 0 {
+            println!("flag2");
+            pprint_board(&next_board);
+            pprint_u64(att_reach_mask);
+            pprint_u64(get_reach_mask(def, att));
             return (true, vec![(action, next_board)]);
         }
 
@@ -984,7 +989,12 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
                 if att_reach_mask == 0 {
                     break;
                 }
+                let def_reach_mask = get_reach_mask(att, def);
+                if def_reach_mask != 0 {
+                    break;
+                }
                 if att_reach_mask.count_ones() > 1 {
+                    println!("flag3");
                     return (true, vec![(action, def_board)]);
                 }
                 let def_action = (att_reach_mask
@@ -997,6 +1007,7 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
                 let (att, def) = next_board.get_att_def();
                 let att_reach_mask = get_reach_mask(att, def);
                 if att_reach_mask != 0 {
+                    println!("flag4");
                     return (true, vec![(action, next_board)]);
                 }
                 reach_mask = get_reach_mask(def, att);
@@ -1099,6 +1110,8 @@ pub fn mate_check_horizontal(board: &Board) -> Option<(bool, u8)> {
         if hash.get(&tar_board).is_some() {
             continue;
         }
+        println!("expand");
+        pprint_board(&tar_board);
 
         let (end_flag, new_nodes) = mate_expand(&tar_board);
         count += 1;
@@ -1107,6 +1120,8 @@ pub fn mate_check_horizontal(board: &Board) -> Option<(bool, u8)> {
         }
         hash.insert(tar_board);
         for (_, next_board) in new_nodes {
+            println!("->");
+            pprint_board(&next_board);
             expands.push_back((action, next_board));
         }
     }
@@ -1162,7 +1177,7 @@ pub fn pprint_board(board: &Board) {
             s += "\n  |              |              |              |              |\n";
         }
     }
-    println!("{}", s);
+    println!("\n{}", s);
 }
 
 fn playout(board: &Board) -> f32 {

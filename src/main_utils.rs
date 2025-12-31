@@ -10,7 +10,8 @@ use std::thread::sleep;
 use std::time::{self, Instant};
 
 pub fn read_board_from_json(file_name: &str) -> Vec<(u64, u64)> {
-    let deserialized: Vec<(u64, u64)> = serde_json::from_str(&file_name).unwrap();
+    let input_fn = fs::read_to_string(file_name).expect("JSON Read Failed.");
+    let deserialized: Vec<(u64, u64)> = serde_json::from_str(&input_fn).unwrap();
     return deserialized;
 }
 
@@ -60,11 +61,22 @@ impl<A1: GetAction, A2: GetAction> Iterator for GameRecordIterator<A1, A2> {
 
 pub fn test_pns() {
     use qubic_engine::board::pprint_board;
-    let att = 0x000000020043a163;
-    let def = 0x0002006004201e88;
+    let problems = read_board_from_json("pns100.json");
+    let (att, def) = problems[75];
     let mut b = Board::from(att, def, Player::Black);
+    let b = b.next(11);
+    let b = b.next(9);
+    let b = b.next(3);
+    let b = b.next(0);
+    let b = b.next(0);
+    let b = b.next(5);
+
+    // let b = b.next(4);
     println!("att:{att:>016x}, def:{def:>016x}");
+    let start = Instant::now();
     let status = proof_number_search(b.clone());
+    let t = start.elapsed().as_nanos();
+    println!("time:{}.{}", t / 1000_000, t % 1000_000);
 
     pprint_board(&b);
 
@@ -80,6 +92,27 @@ pub fn test_pns() {
     println!("{:#?}", la.eval_with_negalpha(&b));
 }
 
+pub fn bench_problems(file: &str) {
+    let mut t = 0;
+    let problems = read_board_from_json(file);
+    for (i, (att, def)) in problems.iter().enumerate() {
+        println!("start[{i}]->");
+        let b = Board::from(*att, *def, Player::Black);
+        let start = Instant::now();
+        let ans = proof_number_search(b.clone());
+        let time = start.elapsed().as_nanos();
+        println!("idx:{i}, time:{time}, size:{}", ans.size);
+        t += time;
+        let flag = match ans.typ {
+            MateType::Two(_) => true,
+            _ => false,
+        };
+        assert!(flag, "{:#?}", ans.typ);
+    }
+
+    println!("time:{}.{}", t / 1_000_000, t % 1_000_000);
+}
+
 pub fn generate_problems() {
     println!("att, def, stone, time, size, type, val");
     let mut l = ai::line::SimplLineEvaluator::new();
@@ -91,7 +124,6 @@ pub fn generate_problems() {
     la.min_depth = 5;
 
     let mut problems = vec![];
-    let mut problems_no_tss = vec![];
 
     loop {
         let po = ai::PlayoutEvaluator::new(ai::PlayoutLevel::Defence4);
@@ -103,9 +135,8 @@ pub fn generate_problems() {
         let mut l1 = ai::NegAlphaF::new(Box::new(l.clone()), 5);
         let mut l2 = ai::NegAlphaF::new(Box::new(l.clone()), 5);
         for board in GameRecordIterator::new(board::Agent::Random, board::Agent::Random) {
-            if problems.len() == 10000 {
-                write_board_to_json(problems, "tss10000.json");
-                write_board_to_json(problems_no_tss, "no_tss10000.json");
+            if problems.len() == 100 {
+                write_board_to_json(problems, "pns100.json");
                 return;
             }
 
@@ -118,24 +149,29 @@ pub fn generate_problems() {
 
             assert_eq!(stone2 & stone1, stone2, "att:{att:>016x}, def:{def:016x}");
             // println!("{att:>016x}, {def:>016x}");
-            let start = Instant::now();
-            let res = dfpn::threat_space_search_alpha((att, def));
-            let time = start.elapsed().as_nanos();
-            if let Some((a, b)) = res {
-                if time < 10_000 || problems.len() >= 10000 {
-                    continue;
-                }
-                println!("{att:>016x}, {def:>016x}, {time}, {}", b.path_size);
-                problems.push((att, def));
-                break;
-            } else {
-                if time < 100_000 || problems_no_tss.len() >= 10000 {
-                    continue;
-                }
-                println!("{att:>016x}, {def:>016x}, {time}, no_mate");
-                problems_no_tss.push((att, def));
-                continue;
-            }
+            // let start = Instant::now();
+            // let res = dfpn::threat_space_search_alpha((att, def));
+            // let time = start.elapsed().as_nanos();
+            // if let Some((a, b)) = res {
+            //     if time < 10_000 || problems.len() >= 10000 {
+            //         continue;
+            //     }
+            //     println!("{att:>016x}, {def:>016x}, {time}, {}", b.path_size);
+            //     problems.push((att, def));
+            //     break;
+            // } else {
+            //     if time < 100_000 || problems_no_tss.len() >= 10000 {
+            //         continue;
+            //     }
+            //     println!("{att:>016x}, {def:>016x}, {time}, no_mate");
+            //     problems_no_tss.push((att, def));
+            //     continue;
+            // }
+
+            println!(
+                "att:{att:>016x}, def:{def:>016x}, stone:{}",
+                stone.count_ones()
+            );
             let start = Instant::now();
             let res = proof_number_search(board.clone());
             let time = start.elapsed().as_nanos();
@@ -150,12 +186,18 @@ pub fn generate_problems() {
                 MateType::Three(_) => "three",
             };
 
-            if flag == "no" {
+            if flag == "no" && res.size <= 1000 {
                 continue;
+            }
+            if flag == "two" && res.size <= 10 {
+                continue;
+            }
+            if flag == "two" {
+                problems.push((att, def));
             }
 
             println!(
-                "{att:>016x}, {def:>016x}, {}, {}.{:>06}, {}, {}, {}",
+                "[generate_problems] {att:>016x}, {def:>016x}, {}, {}.{:>06}, {}, {}, {}",
                 (att | def).count_ones(),
                 time / 1000_000,
                 time % 1000_000,
