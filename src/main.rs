@@ -86,10 +86,10 @@ fn main() {
 
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
-    main_utils::bench_problems("pns100.json");
+    // main_utils::bench_problems("pns100.json");
     // main_utils::test_pns();
     // main_utils::generate_problems();
-    return;
+    // return;
     // return;
 
     // let l6 = wrapping_line_eval(l.clone(), 6);
@@ -102,7 +102,7 @@ fn main() {
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha_(&b);
 
-    // make_db();
+    make_db();
     // use_aip();
     // let result = play_actor_with_undo(&b7, &b7, true);
     // let result = play_actor_with_undo(&b7, &Agent::Human, true);

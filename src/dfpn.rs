@@ -600,6 +600,7 @@ pub fn proof_number_search_att(
     matetype: MateType,
     depth: usize,
     hashmap: &mut HashMap<UBoard, (Option<Vec<UBoard>>, Pn, Dn, MateType)>,
+    max_node: usize,
 ) {
     // ノードを展開していない場合
     let no_child = {
@@ -641,7 +642,7 @@ pub fn proof_number_search_att(
                     let (pn, dn) = if depth == 0 {
                         fix_pns((n_att, def), false, 2)
                     } else {
-                        (mate_thread_size / 4.0, 1.0)
+                        (mate_thread_size / 16.0, 1.0)
                     };
                     // println!("call fix_pns: {}/{}", pn, dn);
                     entry.insert((None, pn, dn, MateType::NoMate));
@@ -654,6 +655,9 @@ pub fn proof_number_search_att(
 
     loop {
         // cal pn, dn
+        if max_node < hashmap.len() {
+            return;
+        }
         if cfg!(feature = "view") {
             println!("[att:{depth}]cal pn, dn");
             pprint_uboard((att, def));
@@ -713,6 +717,7 @@ pub fn proof_number_search_att(
             MateType::NoMate,
             depth + 1,
             hashmap,
+            max_node,
         );
     }
 }
@@ -724,6 +729,7 @@ pub fn proof_number_search_def(
     matetype: MateType,
     depth: usize,
     hashmap: &mut HashMap<UBoard, (Option<Vec<UBoard>>, Pn, Dn, MateType)>,
+    max_node: usize,
 ) {
     // ノードを展開していない場合
     let no_child = {
@@ -764,6 +770,9 @@ pub fn proof_number_search_def(
     }
 
     loop {
+        if max_node < hashmap.len() {
+            return;
+        }
         if cfg!(feature = "view") {
             println!("[def:{depth}] cal pn, dn");
             pprint_uboard((att, def));
@@ -822,6 +831,7 @@ pub fn proof_number_search_def(
             MateType::NoMate,
             depth + 1,
             hashmap,
+            max_node,
         );
     }
 }
@@ -867,15 +877,18 @@ pub fn proof_number_search(b: Board) -> ProofNumberSearchStatus {
         MateType::NoMate,
         0,
         &mut hashmap,
+        50_000,
     );
     let action_mask = get_valid_action_mask(att, def);
     for (action, n_att) in MaskActionIterator::new(att, action_mask) {
         if let Some((_, pn, _, _)) = hashmap.get(&(n_att, def)) {
-            println!(
-                "action:{}, size:{}",
-                action.trailing_zeros() % 16,
-                child_len(&hashmap, &(n_att, def))
-            );
+            if cfg!(feature = "view") {
+                println!(
+                    "action:{}, size:{}",
+                    action.trailing_zeros() % 16,
+                    child_len(&hashmap, &(n_att, def))
+                );
+            }
             if *pn == 0.0 {
                 return ProofNumberSearchStatus {
                     size: hashmap.len(),
