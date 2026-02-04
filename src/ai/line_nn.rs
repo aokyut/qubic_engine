@@ -1,7 +1,5 @@
-use crate::{
-    board::Board,
-    ml::{funcs::ReLU, params::Linear, xiver_vec, Graph, Node, Tensor},
-};
+use crate::board::Board;
+use minimum_ml::ml::{funcs::ReLU, params::Linear, Graph, Node, Tensor, xiver_vec};
 use anyhow::Result;
 use ndarray::{
     self as nd, array, concatenate, s, Array, Array0, Array2, ArrayViewMut1, Axis, Dim, Ix,
@@ -9,7 +7,7 @@ use ndarray::{
 use rand_distr::Distribution;
 use serde::{Deserialize, Serialize};
 
-use crate::ml;
+use minimum_ml::ml as ml;
 
 use super::{
     line::{self, SimplLineEvaluator},

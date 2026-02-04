@@ -6,18 +6,21 @@ pub mod line;
 pub mod line_nn;
 pub mod mcts;
 pub mod mpc;
+pub mod neural_line;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pattern;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod position;
 pub mod timeout;
 
-use super::board::{Board, GetAction};
-use super::ml::{Graph, Tensor};
+use crate::ai::line::SimplLineEvaluator;
 use crate::board::{
     self, count_1row, count_2row, count_3row, get_random, get_reach_mask, mate_check_horizontal,
-    pprint_board,
+    pprint_board, Board, GetAction,
 };
+use minimum_ml::ml::{Graph, Tensor};
+
+pub const INPUT_SIZE: usize = 2496;
 use crate::utills::rand::get_random_usize;
 // use ort::{Environment, GraphOptimizationLevel, Session, SessionBuilder};
 use anyhow::{Ok, Result};
@@ -1514,8 +1517,8 @@ impl MLEvaluator {
     }
 
     pub fn default() -> Self {
-        use super::ml::*;
-        use super::ml::{funcs::*, optim::*, params::*};
+        use minimum_ml::ml::*;
+        use minimum_ml::ml::{funcs::*, optim::*, params::*};
         let mut g = Graph::new();
         g.optimizer = Some(Box::new(MomentumSGD::new(0.01, 0.9)));
         let i1: usize = g.push_placeholder();
@@ -1640,7 +1643,7 @@ impl MLEvaluator {
     }
 
     pub fn save(&self, s: String) {
-        self.g.save(s);
+        self.g.save(&s);
     }
 
     pub fn load(&mut self, s: String) {
@@ -1648,16 +1651,48 @@ impl MLEvaluator {
     }
 }
 
+pub fn get_feature_bundles(board: u128) -> Vec<u64> {
+    let att = board as u64;
+    let def = (board >> 64) as u64;
+    let (b1, b2, b3) = SimplLineEvaluator::analyze_board(att, def);
+
+    let mut features = Vec::new();
+    // Helper to push bundle elements
+    let push_bundle = |b: LineMaskBundle, f: &mut Vec<u64>| {
+        f.push(b.0);
+        f.push(b.1);
+        f.push(b.2);
+        f.push(b.3);
+        f.push(b.4);
+        f.push(b.5);
+        f.push(b.6);
+        f.push(b.7);
+        f.push(b.8);
+        f.push(b.9);
+        f.push(b.10);
+        f.push(b.11);
+        f.push(b.12);
+    };
+    push_bundle(b1, &mut features);
+    push_bundle(b2, &mut features);
+    push_bundle(b3, &mut features);
+    return features;
+}
+
 pub fn u2vec(board: u128) -> Vec<f32> {
-    let mut att_vec = Vec::new();
-    for i in 0..128 {
-        if (board >> i) & 1 == 1 {
-            att_vec.push(1.0);
-        } else {
-            att_vec.push(0.0);
+    let features = get_feature_bundles(board);
+    let mut vec = Vec::with_capacity(INPUT_SIZE);
+
+    for feat in features {
+        for i in 0..64 {
+            if (feat >> i) & 1 == 1 {
+                vec.push(1.0);
+            } else {
+                vec.push(0.0);
+            }
         }
     }
-    return att_vec;
+    return vec;
 }
 
 pub fn onehot_vec(n: usize, idx: usize) -> Vec<f32> {
@@ -1732,7 +1767,157 @@ pub fn u128_to_b(b: u128) -> Board {
     return board;
 }
 
-pub struct NNUE {
+/// Trait for hashing bitboards into NNUE input features
+/// Allows different feature extraction strategies to be used with NNUE
+pub trait NNUEHash {
+    /// Returns the number of input features (size of input vector)
+    fn feature_count() -> usize;
+
+    /// Extracts raw bitboard features from a board position
+    /// Returns a vector of u64 bitboards representing different features
+    fn extract_features(board: u128) -> Vec<u64>;
+
+    /// Converts a board position into an input vector for the neural network
+    fn to_input_vec(board: u128) -> Vec<f32>;
+
+    /// Computes the difference vector for incremental evaluation
+    /// Given two board positions and precomputed base vectors, returns the delta
+    fn compute_diff(from: u128, to: u128, base_vecs: &Vec<Vec<f32>>) -> Vec<f32>;
+}
+
+/// Bundle-based hash using LineMaskBundle features
+/// This is the default and most feature-rich approach
+pub struct BundleHash;
+
+impl NNUEHash for BundleHash {
+    fn feature_count() -> usize {
+        INPUT_SIZE // 39 bundles * 64 bits = 2496
+    }
+
+    fn extract_features(board: u128) -> Vec<u64> {
+        get_feature_bundles(board)
+    }
+
+    fn to_input_vec(board: u128) -> Vec<f32> {
+        u2vec(board)
+    }
+
+    fn compute_diff(from: u128, to: u128, base_vecs: &Vec<Vec<f32>>) -> Vec<f32> {
+        let feat_from = Self::extract_features(from);
+        let feat_to = Self::extract_features(to);
+
+        let w1_size = base_vecs[0].len();
+        let mut minus_vec = vec![0.0; w1_size];
+        let mut plus_vec = vec![0.0; w1_size];
+
+        for k in 0..feat_from.len() {
+            let fa = feat_from[k];
+            let fb = feat_to[k];
+            // Bits present in from but not in to (removed)
+            let mut minus = fa & !fb;
+            // Bits present in to but not in from (added)
+            let mut plus = fb & !fa;
+
+            while minus != 0 {
+                let i = minus.trailing_zeros();
+                minus &= minus - 1;
+                let global_idx = k * 64 + i as usize;
+                for j in 0..w1_size {
+                    minus_vec[j] += base_vecs[global_idx][j];
+                }
+            }
+
+            while plus != 0 {
+                let i = plus.trailing_zeros();
+                plus &= plus - 1;
+                let global_idx = k * 64 + i as usize;
+                for j in 0..w1_size {
+                    plus_vec[j] += base_vecs[global_idx][j];
+                }
+            }
+        }
+
+        for i in 0..w1_size {
+            plus_vec[i] -= minus_vec[i];
+        }
+
+        plus_vec
+    }
+}
+
+/// Simple hash using only attacker/defender bitboards
+/// Much simpler but less expressive than bundle-based approach
+pub struct SimpleHash;
+
+impl NNUEHash for SimpleHash {
+    fn feature_count() -> usize {
+        128 // 2 bitboards * 64 bits
+    }
+
+    fn extract_features(board: u128) -> Vec<u64> {
+        let att = board as u64;
+        let def = (board >> 64) as u64;
+        vec![att, def]
+    }
+
+    fn to_input_vec(board: u128) -> Vec<f32> {
+        let features = Self::extract_features(board);
+        let mut vec = Vec::with_capacity(Self::feature_count());
+
+        for feat in features {
+            for i in 0..64 {
+                if (feat >> i) & 1 == 1 {
+                    vec.push(1.0);
+                } else {
+                    vec.push(0.0);
+                }
+            }
+        }
+        vec
+    }
+
+    fn compute_diff(from: u128, to: u128, base_vecs: &Vec<Vec<f32>>) -> Vec<f32> {
+        let feat_from = Self::extract_features(from);
+        let feat_to = Self::extract_features(to);
+
+        let w1_size = base_vecs[0].len();
+        let mut minus_vec = vec![0.0; w1_size];
+        let mut plus_vec = vec![0.0; w1_size];
+
+        for k in 0..feat_from.len() {
+            let fa = feat_from[k];
+            let fb = feat_to[k];
+            let mut minus = fa & !fb;
+            let mut plus = fb & !fa;
+
+            while minus != 0 {
+                let i = minus.trailing_zeros();
+                minus &= minus - 1;
+                let global_idx = k * 64 + i as usize;
+                for j in 0..w1_size {
+                    minus_vec[j] += base_vecs[global_idx][j];
+                }
+            }
+
+            while plus != 0 {
+                let i = plus.trailing_zeros();
+                plus &= plus - 1;
+                let global_idx = k * 64 + i as usize;
+                for j in 0..w1_size {
+                    plus_vec[j] += base_vecs[global_idx][j];
+                }
+            }
+        }
+
+        for i in 0..w1_size {
+            plus_vec[i] -= minus_vec[i];
+        }
+
+        plus_vec
+    }
+}
+
+pub struct NNUE<H: NNUEHash = BundleHash> {
     pub g: Graph,
     loss: usize,
     g_out: usize,
@@ -1741,10 +1926,11 @@ pub struct NNUE {
     pub w1: usize,
     pub w1_size: usize,
     base_vec: Vec<Vec<f32>>,
-    depth: usize,
+    pub depth: usize,
+    _hash: std::marker::PhantomData<H>,
 }
 
-impl NNUE {
+impl<H: NNUEHash> NNUE<H> {
     pub fn new(g: Graph) -> Self {
         return NNUE {
             g: g,
@@ -1756,44 +1942,51 @@ impl NNUE {
             w1_size: 0,
             base_vec: Vec::new(),
             depth: 0,
+            _hash: std::marker::PhantomData,
         };
     }
 
     pub fn default() -> Self {
-        use super::ml::*;
-        use super::ml::{funcs::*, optim::*, params::*};
+        use minimum_ml::ml::*;
+        use minimum_ml::ml::{funcs::*, optim::*, params::*};
+        use minimum_ml::quantize::{
+            funcs::{Dequantize, QReLU, Quantize},
+            params::QuantizedLinear,
+        };
+        use minimum_ml::sequential;
 
         let w1_size = 256;
-        let middle_size = 32;
+        let middle1_size = 32;
+        let middle2_size = 32;
 
         let mut g = Graph::new();
-        g.optimizer = Some(Box::new(MomentumSGD::new(0.01, 0.9)));
+        g.optimizer = Some(Box::new(Adam::new(0.001, 0.9, 0.999)));
         let i1: usize = g.push_placeholder();
         let i2: usize = g.push_placeholder();
         // let t = g.push_placeholder();
 
-        let w1 = MM::auto(128, w1_size);
+        let w1 = MM::auto(H::feature_count(), w1_size);
         let w1 = g.add_layer(vec![i1], Box::new(w1));
 
         let l1 = Bias::auto(w1_size);
         let l1 = g.add_layer(vec![w1], Box::new(l1));
 
-        let activate = LeaklyReLU::default();
-        let relu = g.add_layer(vec![l1], Box::new(activate));
+        let sig = sequential!(
+            g,
+            l1,
+            [
+                Quantize::new(),
+                QReLU::new(),
+                QuantizedLinear::auto(w1_size, middle1_size),
+                QReLU::new(),
+                QuantizedLinear::auto(middle1_size, middle2_size),
+                QReLU::new(),
+                QuantizedLinear::auto(middle2_size, 1),
+                Dequantize::new(),
+                Sigmoid::new(1.0),
+            ]
+        );
 
-        let l2 = Linear::auto(w1_size, middle_size);
-        let l2 = g.add_layer(vec![relu], Box::new(l2));
-        let relu2 = g.add_layer(vec![l2], Box::new(LeaklyReLU::default()));
-
-        let l3 = Linear::auto(middle_size, middle_size);
-        let l3 = g.add_layer(vec![relu2], Box::new(l3));
-        let relu3 = g.add_layer(vec![l3], Box::new(LeaklyReLU::default()));
-
-        let l4 = Linear::auto(middle_size, 1);
-        let l4 = g.add_layer(vec![relu3], Box::new(l4));
-
-        // t = lambda * result + (1 - lambda) * t_in
-        let sig = g.add_layer(vec![l4], Box::new(Sigmoid::new(1.0)));
         let loss = g.add_layer(vec![sig, i2], Box::new(BinaryCrossEntropy::default()));
         // let loss = g.add_layer(vec![sig, i2], Box::new(MSE::new()));
 
@@ -1810,12 +2003,13 @@ impl NNUE {
             w1_size: w1_size,
             base_vec: Vec::new(),
             depth: 3,
+            _hash: std::marker::PhantomData,
         };
     }
 
     pub fn inference(&self, b: &Board) -> f32 {
-        let onehot = u2vec(Self::b2u128(b));
-        let onehot = Tensor::new(onehot, vec![128, 1]);
+        let onehot = H::to_input_vec(Self::b2u128(b));
+        let onehot = Tensor::new(onehot, vec![H::feature_count(), 1]);
 
         let val = self.g.inference(vec![onehot]);
 
@@ -1829,12 +2023,13 @@ impl NNUE {
 
     pub fn set_inference(&mut self) {
         self.set_before_w1();
-        for i in 0..128 {
-            let onehot = onehot_vec(128, i);
-            let onehot = Tensor::new(onehot, vec![128, 1]);
+        self.base_vec = Vec::new();
+        for i in 0..H::feature_count() {
+            let onehot = onehot_vec(H::feature_count(), i);
+            let onehot = Tensor::new(onehot, vec![1, H::feature_count()]);
 
             let val = self.g.inference(vec![onehot]);
-            self.base_vec.push(val.data);
+            self.base_vec.push(val.as_f32_slice().clone().to_vec());
         }
         // println!("{:?}", self.base_vec);
         self.set_after_w1();
@@ -1845,13 +2040,21 @@ impl NNUE {
     }
 
     pub fn eval_with_negalpha(&self, b: &Board) -> (u8, f32, i32) {
+        let (att, def) = b.get_att_def();
         let b_hash = Self::b2u128(b);
         let b_vec = self.create_diff_vec(0, b_hash);
-        // let start = Instant::now();
-        // let result = eval_actor(&m7, &m6, 10, false);
-        // let (a, b, c) = self.eval_with_negalpha_1(b, b_hash, b_vec, self.depth as u8, -2.0, 2.0);
-        let (a, b, c) =
-            self.eval_with_negalpha_(b.clone(), b_hash, b_vec, None, self.depth as u8, -2.0, 2.0);
+        let pred_def = def ^ (!def + 1);
+        let pre_b_hash = (def as u128) | ((att as u128) << 64);
+        let pred_b_vec = self.create_diff_vec(0, pre_b_hash);
+        let (a, b, c) = self.eval_with_negalpha_(
+            b.clone(),
+            b_hash,
+            b_vec,
+            Some((pre_b_hash, &pred_b_vec)),
+            self.depth as u8,
+            -2.0,
+            2.0,
+        );
         return (a, b, c);
     }
 
@@ -1905,7 +2108,7 @@ impl NNUE {
                     }
                 }
 
-                let w1 = Tensor::new(feed_vec, vec![self.w1_size, 1]);
+                let w1 = Tensor::new(feed_vec, vec![1, self.w1_size]);
 
                 let val = 1.0 - self.g.inference(vec![w1]).get_item().unwrap();
 
@@ -1950,8 +2153,8 @@ impl NNUE {
                             .collect();
                     }
                 }
-                let w1 = Tensor::new(feed_vec.clone(), vec![self.w1_size, 1]);
-
+                let w1 = Tensor::new(feed_vec.clone(), vec![1, self.w1_size]);
+                // println!("{:?}", w1);
                 let val = 1.0 - self.g.inference(vec![w1]).get_item().unwrap();
 
                 nexts.push((action, next_board, next_hash, feed_vec, val))
@@ -1993,32 +2196,7 @@ impl NNUE {
     }
 
     fn create_diff_vec(&self, a: u128, b: u128) -> Vec<f32> {
-        // a -> b を考える
-        let minus = a & !b;
-        let plus = b & !a;
-
-        let mut minus_vec = vec![0.0; self.w1_size];
-        let mut plus_vec = vec![0.0; self.w1_size];
-
-        for i in 0..128 {
-            if (minus >> i) & 1 == 1 {
-                for j in 0..self.w1_size {
-                    minus_vec[j] += self.base_vec[i][j];
-                }
-                continue;
-            }
-            if (plus >> i) & 1 == 1 {
-                for j in 0..self.w1_size {
-                    plus_vec[j] += self.base_vec[i][j];
-                }
-            }
-        }
-
-        for i in 0..self.w1_size {
-            plus_vec[i] -= minus_vec[i];
-        }
-
-        return plus_vec;
+        H::compute_diff(a, b, &self.base_vec)
     }
 
     pub fn train(&mut self) {
@@ -2042,7 +2220,7 @@ impl NNUE {
     }
 
     pub fn save(&self, s: String) {
-        self.g.save(s);
+        self.g.save(&s);
     }
 
     pub fn load(&mut self, s: String) {
@@ -2050,8 +2228,38 @@ impl NNUE {
     }
 }
 
-impl GetAction for NNUE {
+impl<H: NNUEHash> Trainable for NNUE<H> {
+    fn update(&mut self, _b: &Board, _delta: f32) {
+        // NNUE uses graph-based backpropagation, not direct delta updates
+        // This is handled by g.backward() and g.optimize()
+    }
+
+    fn get_val(&self, b: &Board) -> f32 {
+        self.inference(b)
+    }
+
+    fn save(&self, file: String) -> Result<()> {
+        self.save(file);
+        Ok(())
+    }
+
+    fn load(&mut self, file: String) -> Result<()> {
+        self.load(file);
+        Ok(())
+    }
+
+    fn eval(&mut self) {
+        self.set_inference();
+    }
+
+    fn train(&mut self) {
+        self.train();
+    }
+}
+
+impl<H: NNUEHash> GetAction for NNUE<H> {
     fn get_action(&self, b: &Board) -> u8 {
+        use crate::dfpn::*;
         let start = Instant::now();
         let (action, val, count) = self.eval_with_negalpha(b);
         let end = start.elapsed();
@@ -2071,11 +2279,22 @@ impl GetAction for NNUE {
             }
             return action;
         }
-        return action;
+        let res = proof_number_search(b.clone());
+        match res.typ {
+            MateType::NoMate => {
+                return action;
+            }
+            MateType::Two(act) => {
+                return act as u8;
+            }
+            MateType::Three(act) => {
+                return act as u8;
+            }
+        }
     }
 }
 
-impl Analyzer for NNUE {
+impl<H: NNUEHash> Analyzer for NNUE<H> {
     fn analyze_eval(&self, b: &Board) -> f32 {
         let (action, val, count) = self.eval_with_negalpha(b);
         return val;
@@ -2232,7 +2451,7 @@ pub struct LineEvaluator {
     pub bias: f32,
 }
 
-type LineMaskBundle = (
+pub type LineMaskBundle = (
     u64,
     u64,
     u64,
@@ -4127,6 +4346,7 @@ impl PlayoutEvaluator {
 
 impl EvaluatorF for PlayoutEvaluator {
     fn eval_func_f32(&self, b: &Board) -> f32 {
+        use crate::dfpn::threat_space_search_horizontal;
         let mut result = 1.0;
         let mut b = b.clone();
         loop {
@@ -4159,11 +4379,17 @@ impl EvaluatorF for PlayoutEvaluator {
                     }
                 }
                 PlayoutLevel::MateCheck => {
-                    let mate = mate_check_horizontal(&b);
-                    if let Some((_, act)) = mate {
-                        action = act;
+                    let mate = threat_space_search_horizontal(b.get_att_def());
+                    if let Some((act)) = mate {
+                        action = (act[0].trailing_zeros() % 16) as u8;
                     } else {
-                        action = get_random(&b);
+                        let (att, def) = b.get_att_def();
+                        let mask = get_reach_mask(def, att);
+                        if mask != 0 {
+                            action = (mask.trailing_zeros() % 16) as u8;
+                        } else {
+                            action = get_random(&b);
+                        }
                     }
                 }
                 PlayoutLevel::Actor(actor) => {

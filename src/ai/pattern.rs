@@ -496,15 +496,8 @@ pub fn train_with_db(
             for t in ts.iter() {
                 let b = &u128_to_b(random_rot(t.board, rng.gen()));
                 let actual = trainable_pe.eval_func_f32(b);
-                let expected;
-                if t.result == 0 {
-                    expected = 0.5;
-                } else if t.result == 1 {
-                    expected = 0.999;
-                } else {
-                    expected = 0.001;
-                }
-                let expected = t.t_val * lambda + expected * (1.0 - lambda);
+                let expected = (t.result - 0.5) * 0.998 + 0.5;
+                let expected = t.val * lambda + expected * (1.0 - lambda);
                 let delta = actual - expected;
                 let loss = delta.powi(2);
 
@@ -538,15 +531,8 @@ pub fn train_with_db(
         let mut eval_loss = 0.0;
         for t in eval_ts.iter() {
             let actual = trainable_pe.eval_func_f32(&u128_to_b(t.board));
-            let expected;
-            if t.result == 0 {
-                expected = 0.5;
-            } else if t.result == 1 {
-                expected = 0.999;
-            } else {
-                expected = 0.001;
-            }
-            let expected = t.t_val * lambda + expected * (1.0 - lambda);
+            let expected = (t.result - 0.5) * 0.998 + 0.5;
+            let expected = t.val * lambda + expected * (1.0 - lambda);
             let delta = actual - expected;
             eval_loss += delta.powi(2);
         }

@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 fn main() {
     use qubic_engine::ai::NegAlpha;
     use qubic_engine::board::*;
+    use qubic_engine::train;
 
     // let a1 = Agent::Mcts(50, 5000);
     let m1 = NegAlpha::new(Box::new(CoEvaluator::best()), 1);
@@ -73,7 +74,7 @@ fn main() {
     let mut b = BucketLineEvaluator::new();
     b.load("bsimple.json".to_string());
 
-    let mut b7 = NegAlphaF::new(Box::new(b), 29);
+    let mut b7 = NegAlphaF::new(Box::new(b.clone()), 29);
     b7.scout = true;
     b7.timelimit = 1000;
     b7.min_depth = 7;
@@ -81,12 +82,30 @@ fn main() {
     let b7 = MateWrapperActor::new(Box::new(b7));
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
-    let mcts = ai::mcts::Mcts::new(10_000, 3, 10, po);
-    let mcts2 = ai::mcts::Mcts::new(10_000, 3, 500, l3_);
+    let po2 = PlayoutEvaluator::new(PlayoutLevel::Attack4);
+    // let mcts = ai::mcts::Mcts::new(10_000, 3, 10000, po);
+    let mcts2 = ai::mcts::Mcts::new(10_000, 3, 10000, po2);
 
+    // Test NeuralLineEvaluator vs SimplLineEvaluator
+    // train_line_eval(
+    //     "sle_tl50_dfpn.db".to_string(),
+    //     "sle_tl50_dfpn_test.db".to_string(),
+    // );
+    // return;
+
+    // NNUE training (commented out for testing)
+    let mut nnue = NNUE::<ai::SimpleHash>::default();
+    train::train_nnue_with_dataloader(
+        nnue,
+        String::from("sle_tl50_dfpn.db"),
+        String::from("sle_tl50_dfpn_test.db"),
+        String::from("nnue"),
+        10,
+        32,
+    );
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
-    // main_utils::bench_problems("pns100.json");
+    // main_utils::bench_problems("pns1000_alpha.json");
     // main_utils::test_pns();
     // main_utils::generate_problems();
     // return;
@@ -102,15 +121,16 @@ fn main() {
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha_(&b);
 
-    make_db();
+    // make_db();
     // use_aip();
-    // let result = play_actor_with_undo(&b7, &b7, true);
+    // let result = play_actor_with_undo(&mcts, &b7, true);
     // let result = play_actor_with_undo(&b7, &Agent::Human, true);
     // println!("{result:#?}");
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
     // db.concat(db_);
-    // return;
+    // train_line_eval("sle_tl50_dfpn_test.db".to_string(), "sle_tl50_dfpn_test.db".to_string());
+    return;
 
     // explore_best_model();
 
@@ -122,7 +142,7 @@ fn main() {
     // return;
     // let (a, b, c) = compare(&m2, &mm3);
 
-    exp_get_reach_mask();
+    // exp_get_reach_mask();
     // command();
     // mpc_for_coe(8, 4);
     //profile();
@@ -131,6 +151,78 @@ fn main() {
     // print_pmodel();
     // exp_positoin_eval_get_count();
     // get_magic_number();
+}
+
+fn migrate_db() {
+    use indicatif::{ProgressBar, ProgressStyle};
+    use qubic_engine::db;
+    use qubic_engine::train::Transition;
+
+    let src_db = db::BoardDB::new("sle_tl50_dfpn.db", 0);
+
+    let mut new_db = db::UniqueBoardDB::new("dfpn.db");
+
+    let ts = src_db.get_all();
+    let pb = ProgressBar::new(ts.len() as u64);
+
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+        .unwrap()
+        .progress_chars("#>-"));
+
+    for t in ts {
+        let (win, lose, draw) = if t.result == 0.0 {
+            (0, 1, 0)
+        } else if t.result == 1.0 {
+            (1, 0, 0)
+        } else {
+            assert!(t.result == 0.5, "{t:#?}");
+            (0, 0, 1)
+        };
+        let att = t.board as u64;
+        let def = (t.board >> 64) as u64;
+        new_db.add(att, def, win, lose, draw, t.val);
+
+        pb.inc(1);
+    }
+}
+
+fn evaluate_vs_best(evaluator: impl ai::EvaluatorF + 'static) {
+    use qubic_engine::board::eval_actor;
+    use qubic_engine::sprt::{eval_actor_sprt, SPRT};
+
+    let mut b = SimplLineEvaluator::new();
+    b.load("simple.json".to_string());
+
+    let mut b7 = NegAlphaF::new(Box::new(b), 29);
+    b7.scout = true;
+    b7.timelimit = 100;
+    b7.min_depth = 3;
+
+    let b7 = MateWrapperActor::new(Box::new(b7));
+
+    let mut tar = NegAlphaF::new(Box::new(evaluator), 29);
+    tar.scout = true;
+    tar.timelimit = 100;
+    tar.min_depth = 3;
+    let tar = MateWrapperActor::new(Box::new(tar));
+
+    // Use SPRT for efficient evaluation
+    println!("\n=== SPRT Evaluation (detecting Elo diff >= 10) ===");
+    let sprt = SPRT::with_elo_bounds(0.0, 10.0);
+    let (sprt_result, score1, score2) = eval_actor_sprt(&tar, &b7, 200, &sprt, false);
+
+    println!("\nSPRT Result: {:#?}", sprt_result);
+    println!(
+        "Final scores: tar={:.1}%, baseline={:.1}%",
+        score1 * 100.0,
+        score2 * 100.0
+    );
+
+    // Optional: also do fixed-game evaluation for comparison
+    // println!("\n=== Fixed 100-game evaluation ===");
+    // let result = eval_actor(&tar, &b7, 100, false);
+    // println!("Fixed result: {result:#?}");
 }
 
 pub struct BoardIterator<A1: GetAction, A2: GetAction> {
@@ -749,8 +841,8 @@ fn train_line_eval(train_db: String, valid_db: String) {
     // let mut model = LineEvaluator::new();
     // let mut model = TrainableLineEvaluator::from(model, 0.001);
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
-    let mut model = SimplLineEvaluator::new();
-    let _ = model.load("simple.json".to_string());
+    // let mut model = SimplLineEvaluator::new();
+    // let _ = model.load("simple.json".to_string());
     // let mut bigmodel = BucketLineEvaluator::from(model);
 
     // let n = 32;
@@ -764,21 +856,18 @@ fn train_line_eval(train_db: String, valid_db: String) {
     // return;
 
     // let mut model = TrainableBLE::from(bigmodel, 0.001);
-    let mut model = TrainableSLE::from(model, 0.001);
+    // let mut model = TrainableSLE::from(model, 0.001);
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
-    let mut pmodel = PositionMaskEvaluator::new();
-    let mut pmodel = TrainablePME::from(pmodel, 0.001);
-    let mut nmodel = NNLineEvaluator_::new();
-    let mut nmodel = TrainableNLE_::from(nmodel, 0.005);
-    let mut pmodel = pattern::test_pattern_evaluator();
-    let mut pmodel = TrainablePatternEvaluator::from_pattern_evaluator(pmodel, 0.0001, 0.9, 0.999);
-
+    let mut nle = ai::neural_line::NeuralLineEvaluator::new();
+    let mut nle = ai::neural_line::TrainableNLE::from(nle, 0.001);
+    // let mut le = ai::line::SimplLineEvaluator::new();
+    // let mut le = ai::line::TrainableSLE::from(le, 0.001);
     qubic_engine::train::train_model_with_db(
-        nmodel,
+        nle,
         false,
         true,
-        String::from("sle_tl50_.json"),
-        String::from("sle_tl50_.json"),
+        String::from("sle_dfpn.json"),
+        String::from(""),
         train_db,
         valid_db,
     );

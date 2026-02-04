@@ -591,7 +591,7 @@ pub struct Linear {
 
 impl Linear {
     pub fn new(width: usize, height: usize, activation: bool) -> Self {
-        use crate::ml::xiver_vec;
+        use minimum_ml::ml::xiver_vec;
         let weight = xiver_vec(width, height * width);
         let bias = xiver_vec(1, height);
 

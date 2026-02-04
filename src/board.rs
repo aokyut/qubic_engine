@@ -256,6 +256,25 @@ impl Board {
         }
     }
 
+    pub fn normalize(att: u64, def: u64) -> (u64, u64) {
+        let mut bboard = att as u128 | ((def as u128) << 64);
+        let mut min_bboard = bboard;
+
+        for _ in 0..3 {
+            bboard = Board::rot(bboard);
+            if min_bboard > bboard {
+                min_bboard = bboard;
+            }
+            let hb = Board::hflip(bboard);
+            if min_bboard > hb {
+                min_bboard = hb;
+            }
+        }
+        let att = min_bboard as u64;
+        let def = (min_bboard >> 64) as u64;
+        return (att, def);
+    }
+
     pub fn hash(&self) -> u128 {
         let mut bitboard = self.to_u128();
         let mut min_bitboard = bitboard;
@@ -959,7 +978,6 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
         // reach_maskの場所を把握して返す
         let num = reach_mask.count_ones();
         if num > 1 {
-            println!("flag1");
             return (true, vec![(action, board.clone())]);
         }
         let mut next_board = def_board.next(def_action as u8);
@@ -967,10 +985,6 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
         let att_reach_mask = get_reach_mask(att, def);
 
         if att_reach_mask != 0 {
-            println!("flag2");
-            pprint_board(&next_board);
-            pprint_u64(att_reach_mask);
-            pprint_u64(get_reach_mask(def, att));
             return (true, vec![(action, next_board)]);
         }
 
@@ -994,7 +1008,6 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
                     break;
                 }
                 if att_reach_mask.count_ones() > 1 {
-                    println!("flag3");
                     return (true, vec![(action, def_board)]);
                 }
                 let def_action = (att_reach_mask
@@ -1007,7 +1020,6 @@ pub fn mate_expand(board: &Board) -> (bool, Vec<(u8, Board)>) {
                 let (att, def) = next_board.get_att_def();
                 let att_reach_mask = get_reach_mask(att, def);
                 if att_reach_mask != 0 {
-                    println!("flag4");
                     return (true, vec![(action, next_board)]);
                 }
                 reach_mask = get_reach_mask(def, att);
@@ -1110,8 +1122,6 @@ pub fn mate_check_horizontal(board: &Board) -> Option<(bool, u8)> {
         if hash.get(&tar_board).is_some() {
             continue;
         }
-        println!("expand");
-        pprint_board(&tar_board);
 
         let (end_flag, new_nodes) = mate_expand(&tar_board);
         count += 1;
@@ -1120,8 +1130,6 @@ pub fn mate_check_horizontal(board: &Board) -> Option<(bool, u8)> {
         }
         hash.insert(tar_board);
         for (_, next_board) in new_nodes {
-            println!("->");
-            pprint_board(&next_board);
             expands.push_back((action, next_board));
         }
     }
@@ -1786,40 +1794,117 @@ pub fn eval_actor_from_boards(
     a2: &impl GetAction,
     render: bool,
 ) -> (f32, f32) {
+    use indicatif::{ProgressBar, ProgressStyle};
+
     let mut score1 = 0.0;
     let mut score2 = 0.0;
-
     let n = bs.len();
-    for b in bs.iter() {
+
+    // Create progress bar for 2*n games
+    let pb = ProgressBar::new((2 * n) as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-")
+    );
+
+    for (i, b) in bs.iter().enumerate() {
+        // Black game: a1 plays first from this position
         let (s1, s2) = play_actor_from(b.clone(), a1, a2, render);
         score1 += s1;
         score2 += s2;
-        println!("[{score1}, {score2}]");
+        pb.inc(1);
+        pb.set_message(format!(
+            "[Position {}/{}] Black: A1={:.1}%, A2={:.1}% | Total: [{:.2}, {:.2}]",
+            i * 2 + 1,
+            2 * n,
+            score1 / ((i * 2 + 1) as f32) * 100.0,
+            score2 / ((i * 2 + 1) as f32) * 100.0,
+            score1,
+            score2
+        ));
+
+        // White game: a2 plays first from this position (swap colors)
         let (s2, s1) = play_actor_from(b.clone(), a2, a1, render);
         score1 += s1;
         score2 += s2;
-        println!("[{score1}, {score2}]");
+        pb.inc(1);
+        pb.set_message(format!(
+            "[Position {}/{}] White: A1={:.1}%, A2={:.1}% | Total: [{:.2}, {:.2}]",
+            (i + 1) * 2,
+            2 * n,
+            score1 / ((i + 1) * 2) as f32 * 100.0,
+            score2 / ((i + 1) * 2) as f32 * 100.0,
+            score1,
+            score2
+        ));
     }
-    return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
+
+    pb.finish_with_message(format!(
+        "Position evaluation complete! Final: A1={:.1}% ({:.2}), A2={:.1}% ({:.2})",
+        score1 / (2 * n) as f32 * 100.0,
+        score1,
+        score2 / (2 * n) as f32 * 100.0,
+        score2
+    ));
+
+    (score1 / (2 * n) as f32, score2 / (2 * n) as f32)
 }
 pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bool) -> (f32, f32) {
+    use indicatif::{ProgressBar, ProgressStyle};
+
     let mut score1 = 0.0;
     let mut score2 = 0.0;
 
+    // Create progress bar for 2*n games
+    let pb = ProgressBar::new((2 * n) as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
+            .unwrap()
+            .progress_chars("#>-")
+    );
+
     for i in 0..n {
-        // thread::sleep(Duration::from_millis(200));
+        // Black game: a1 plays first
         let (s1, s2) = play_actor(a1, a2, render);
-        // println!("[{}/{}]black: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
-        println!("[{score1}, {score2}]");
-        // println!("game black: {}, s1:{}, s2:{}", i, s1, s2);
+        pb.inc(1);
+        pb.set_message(format!(
+            "[Game {}/{}] Black: A1 wins={:.1}%, A2 wins={:.1}% | Total: [{:.2}, {:.2}]",
+            i * 2 + 1,
+            2 * n,
+            score1 / ((i * 2 + 1) as f32) * 100.0,
+            score2 / ((i * 2 + 1) as f32) * 100.0,
+            score1,
+            score2
+        ));
+
+        // White game: a2 plays first (swap colors)
         let (s2, s1) = play_actor(a2, a1, render);
-        // println!("[{}/{}]white: {}, {}", i, n, s1, s2);
         score1 += s1;
         score2 += s2;
-        println!("[{score1}, {score2}]");
-        // println!("game white: {}, s1:{}, s2:{}", i, s1, s2);
+        pb.inc(1);
+        pb.set_message(format!(
+            "[Game {}/{}] White: A1 wins={:.1}%, A2 wins={:.1}% | Total: [{:.2}, {:.2}]",
+            (i + 1) * 2,
+            2 * n,
+            score1 / ((i + 1) * 2) as f32 * 100.0,
+            score2 / ((i + 1) * 2) as f32 * 100.0,
+            score1,
+            score2
+        ));
     }
-    return (score1 / (2 * n) as f32, score2 / (2 * n) as f32);
+
+    pb.finish_with_message(format!(
+        "Evaluation complete! Final: A1={:.1}% ({:.2}), A2={:.1}% ({:.2})",
+        score1 / (2 * n) as f32 * 100.0,
+        score1,
+        score2 / (2 * n) as f32 * 100.0,
+        score2
+    ));
+
+    (score1 / (2 * n) as f32, score2 / (2 * n) as f32)
 }

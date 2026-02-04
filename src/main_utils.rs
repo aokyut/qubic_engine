@@ -1,7 +1,10 @@
 use qubic_engine::{
     ai,
     board::{self, Board, GetAction, Player},
-    dfpn::{self, proof_number_search, threat_space_search, MateType, ProofNumberSearchStatus},
+    dfpn::{
+        self, proof_number_search, proof_number_search_alpha, threat_space_search, MateType,
+        ProofNumberSearchStatus,
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -61,20 +64,13 @@ impl<A1: GetAction, A2: GetAction> Iterator for GameRecordIterator<A1, A2> {
 
 pub fn test_pns() {
     use qubic_engine::board::pprint_board;
-    let problems = read_board_from_json("pns100.json");
-    let (att, def) = problems[75];
+    let problems = read_board_from_json("tss1000.json");
+    let (att, def) = problems[0];
     let mut b = Board::from(att, def, Player::Black);
-    let b = b.next(11);
-    let b = b.next(9);
-    let b = b.next(3);
-    let b = b.next(0);
-    let b = b.next(0);
-    let b = b.next(5);
 
-    // let b = b.next(4);
     println!("att:{att:>016x}, def:{def:>016x}");
     let start = Instant::now();
-    let status = proof_number_search(b.clone());
+    let status = proof_number_search_alpha(b.clone(), 1000);
     let t = start.elapsed().as_nanos();
     println!("time:{}.{}", t / 1000_000, t % 1000_000);
 
@@ -95,22 +91,38 @@ pub fn test_pns() {
 pub fn bench_problems(file: &str) {
     let mut t = 0;
     let problems = read_board_from_json(file);
+    let mut c1 = 0;
+    let mut c2 = 0;
+    let mut c3 = 0;
     for (i, (att, def)) in problems.iter().enumerate() {
         println!("start[{i}]->");
         let b = Board::from(*att, *def, Player::Black);
         let start = Instant::now();
         let ans = proof_number_search(b.clone());
+        // let ans = threat_space_search_horizontal((att, def));
         let time = start.elapsed().as_nanos();
-        println!("idx:{i}, time:{time}, size:{}", ans.size);
+        println!(
+            "idx:{i}, time:{time}, size:{}, typ:{:#?}",
+            ans.size, ans.typ
+        );
         t += time;
-        let flag = match ans.typ {
-            MateType::Two(_) => true,
-            _ => false,
-        };
-        assert!(flag, "{:#?}", ans.typ);
+        match ans.typ {
+            MateType::Two(_) => {
+                c2 += 1;
+            }
+            MateType::Three(_) => {
+                c3 += 1;
+            }
+            MateType::NoMate => {
+                c1 += 1;
+            }
+        }
+
+        // assert!(flag, "{:#?}", ans.typ);
     }
 
     println!("time:{}.{}", t / 1_000_000, t % 1_000_000);
+    println!("c1:{c1}, c2:{c2}, c3:{c3}");
 }
 
 pub fn generate_problems() {
@@ -135,8 +147,8 @@ pub fn generate_problems() {
         let mut l1 = ai::NegAlphaF::new(Box::new(l.clone()), 5);
         let mut l2 = ai::NegAlphaF::new(Box::new(l.clone()), 5);
         for board in GameRecordIterator::new(board::Agent::Random, board::Agent::Random) {
-            if problems.len() == 100 {
-                write_board_to_json(problems, "pns100.json");
+            if problems.len() == 1000 {
+                write_board_to_json(problems, "pns1000_alpha.json");
                 return;
             }
 
@@ -149,9 +161,6 @@ pub fn generate_problems() {
 
             assert_eq!(stone2 & stone1, stone2, "att:{att:>016x}, def:{def:016x}");
             // println!("{att:>016x}, {def:>016x}");
-            // let start = Instant::now();
-            // let res = dfpn::threat_space_search_alpha((att, def));
-            // let time = start.elapsed().as_nanos();
             // if let Some((a, b)) = res {
             //     if time < 10_000 || problems.len() >= 10000 {
             //         continue;
@@ -173,7 +182,8 @@ pub fn generate_problems() {
                 stone.count_ones()
             );
             let start = Instant::now();
-            let res = proof_number_search(board.clone());
+            // let res = proof_number_search(board.clone());
+            let res = proof_number_search_alpha(board.clone(), 1 << 18);
             let time = start.elapsed().as_nanos();
 
             if res.size <= 1 {

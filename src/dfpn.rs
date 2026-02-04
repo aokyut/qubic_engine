@@ -456,7 +456,7 @@ pub fn threat_space_search_horizontal((att, def): UBoard) -> Option<Vec<Action>>
             let next_reach = get_reach_mask(n_att, n_def);
             if next_reach != 0 {
                 hash.insert(n_att, (att, def));
-                return Some(restoration_tssh_path(hash, att));
+                return Some(restore_tssh_path(hash, att));
             }
             let n_def_reach = get_reach_mask(n_def, n_att);
             if n_def_reach.count_ones() > 1 {
@@ -473,7 +473,7 @@ pub fn threat_space_search_horizontal((att, def): UBoard) -> Option<Vec<Action>>
 }
 
 #[inline]
-fn restoration_tssh_path(hashmap: HashMap<HalfBoard, UBoard>, last_att: HalfBoard) -> Vec<Action> {
+fn restore_tssh_path(hashmap: HashMap<HalfBoard, UBoard>, last_att: HalfBoard) -> Vec<Action> {
     let (mut att, mut def) = hashmap.get(&last_att).unwrap();
     let mut actions = vec![att ^ last_att];
     while let Some((prev_att, prev_def)) = hashmap.get(&att) {
@@ -482,6 +482,11 @@ fn restoration_tssh_path(hashmap: HashMap<HalfBoard, UBoard>, last_att: HalfBoar
         (att, def) = (*prev_att, *prev_def);
     }
     return actions;
+}
+
+#[inline]
+fn check_threat_thread((att, def): UBoard, mate: Vec<Action>) -> bool {
+    return true;
 }
 
 pub fn get_reach_boards(att: u64, def: u64) -> Vec<(Action, HalfBoard)> {
@@ -844,7 +849,7 @@ pub struct ProofNumberSearchStatus {
 
 pub type PnsHashMap = HashMap<UBoard, (Option<Vec<UBoard>>, f32, f32, MateType)>;
 
-pub fn child_len(hmap: &PnsHashMap, b: &UBoard) -> usize {
+pub fn child_len<T>(hmap: &HashMap<UBoard, T>, b: &UBoard) -> usize {
     let (att, def) = *b;
     let mut count = 0;
     for (c_att, c_def) in hmap.keys() {
@@ -877,7 +882,431 @@ pub fn proof_number_search(b: Board) -> ProofNumberSearchStatus {
         MateType::NoMate,
         0,
         &mut hashmap,
-        50_000,
+        10_000,
+    );
+    let action_mask = get_valid_action_mask(att, def);
+    for (action, n_att) in MaskActionIterator::new(att, action_mask) {
+        if let Some((_, pn, _, _)) = hashmap.get(&(n_att, def)) {
+            if cfg!(feature = "view") {
+                println!(
+                    "action:{}, size:{}",
+                    action.trailing_zeros() % 16,
+                    child_len(&hashmap, &(n_att, def))
+                );
+            }
+            if *pn == 0.0 {
+                return ProofNumberSearchStatus {
+                    size: hashmap.len(),
+                    typ: MateType::Two((action.trailing_zeros() % 16) as u64),
+                };
+            }
+        }
+    }
+    return ProofNumberSearchStatus {
+        size: hashmap.len(),
+        typ: MateType::NoMate,
+    };
+}
+
+#[derive(Clone, Debug)]
+pub enum AttackType {
+    Three(Action),
+    No,
+}
+
+#[inline]
+fn most_right_one(b: u64) -> u64 {
+    return (!b + 1) & b;
+}
+
+pub fn proof_number_search_att_alpha(
+    (att, def): UBoard,
+    th_pn: Pn,
+    th_dn: Dn,
+    matetype: MateType,
+    depth: usize,
+    hashmap: &mut HashMap<UBoard, (Option<Vec<UBoard>>, Pn, Dn, AttackType)>,
+    max_node: usize,
+) {
+    // ノードを展開していない場合
+    let (no_child, attack_type) = {
+        let node = hashmap.get(&(att, def)).unwrap();
+
+        if cfg!(feature = "view") {
+            println!(
+                "[pns_att] th_pn:{}, th_dn:{}, pn:{}, dn:{}, size:{}, att:{att}, def:{def}",
+                th_pn,
+                th_dn,
+                node.1,
+                node.2,
+                hashmap.len()
+            );
+        }
+        (node.0.is_none(), node.3.clone())
+    };
+    if no_child {
+        // TODO: このリーチを取る必要があるか精査する
+        let reach = get_reach_mask(att, def);
+        if reach != 0 {
+            // 自分の手番でリーチがあるときは即詰み
+            hashmap.insert((att, def), (None, 0.0, f32::INFINITY, AttackType::No));
+            return;
+        }
+        let mut valid_boards = Vec::new();
+        let no_enemy_three = !get_put_reach_mask(def, att);
+        let row2_reach = get_2row_mask(att, def) & no_enemy_three;
+        let put_reach = get_put_reach_mask(att, def) & no_enemy_three;
+
+        let rp_reach = row2_reach & put_reach;
+        let three_mask = row2_reach | put_reach;
+
+        match attack_type {
+            AttackType::Three(defencive_action) => {
+                if rp_reach & defencive_action != 0 {
+                    hashmap.insert((att, def), (None, 0.0, f32::INFINITY, AttackType::No));
+                    return;
+                } else if three_mask & defencive_action != 0 {
+                    let n_att = att | defencive_action;
+                    let reach_mask = get_reach_mask(n_att, def);
+                    let n_def_action = most_right_one(reach_mask);
+                    if n_def_action != reach_mask {
+                        // 二つ以上のリーチがある
+                        // AttackTypeが与えられる時点で置きリーチが存在しないことが保証される
+                        hashmap.insert((att, def), (None, 0.0, f32::INFINITY, AttackType::No));
+                        hashmap.insert((n_att, def), (None, 0.0, f32::INFINITY, AttackType::No));
+                        return;
+                    }
+                    hashmap.entry((n_att, def)).or_insert((
+                        None,
+                        1.0,
+                        1.0,
+                        AttackType::Three(n_def_action),
+                    ));
+                    valid_boards.push((n_att, def));
+                } else {
+                    let n_att = att | defencive_action;
+                    hashmap
+                        .entry((n_att, def))
+                        .or_insert((None, 1.0, 1.0, AttackType::No));
+                    valid_boards.push((n_att, def));
+                }
+            }
+            AttackType::No => {
+                if rp_reach != 0 {
+                    // 相手のリーチが無い＆二連と置きリーチが重なっている
+                    hashmap.insert((att, def), (None, 0.0, f32::INFINITY, AttackType::No));
+                    let n_att = att | most_right_one(rp_reach);
+                    hashmap.insert((n_att, def), (None, 0.0, f32::INFINITY, AttackType::No));
+                    return;
+                }
+                let valid = get_valid_action_mask(att, def) & !three_mask & no_enemy_three;
+
+                for (action, n_att) in MaskActionIterator::new(att, three_mask) {
+                    let reach_mask = get_reach_mask(n_att, def);
+                    let defencive_action = most_right_one(reach_mask);
+                    if defencive_action != reach_mask {
+                        // 二つ以上のリーチが存在する -> 即詰み
+                        hashmap.insert((att, def), (None, 0.0, f32::INFINITY, AttackType::No));
+                        hashmap.insert((n_att, def), (None, 0.0, f32::INFINITY, AttackType::No));
+                        return;
+                    }
+
+                    hashmap.entry((n_att, def)).or_insert((
+                        None,
+                        1.0,
+                        1.0,
+                        AttackType::Three(defencive_action),
+                    ));
+                    valid_boards.push((n_att, def));
+                }
+                for (action, n_att) in MaskActionIterator::new(att, valid) {
+                    hashmap
+                        .entry((n_att, def))
+                        .or_insert((None, 1.0, 1.0, AttackType::No));
+                    valid_boards.push((n_att, def));
+                }
+            }
+        }
+        hashmap.insert((att, def), (Some(valid_boards), 1.0, 1.0, attack_type));
+    }
+
+    loop {
+        // cal pn, dn
+        if max_node < hashmap.len() {
+            return;
+        }
+        if cfg!(feature = "view") {
+            println!("[att:{depth}]cal pn, dn");
+            pprint_uboard((att, def));
+        }
+
+        let mut pn = f32::INFINITY;
+        let mut th_pn_next = f32::INFINITY;
+        let mut next_boards = None;
+        let mut next_dn = 0.0;
+        let mut dn = 0.0;
+        {
+            let node = hashmap.get(&(att, def)).unwrap();
+            let (children, attack_type) = (node.0.clone().unwrap(), node.3.clone());
+            for &(n_att, def) in children.iter() {
+                let &(_, ch_pn, ch_dn, _) = hashmap.get(&(n_att, def)).unwrap();
+                if cfg!(feature = "view") {
+                    println!(
+                        "action:{}, ch_pn:{ch_pn}, ch_dn:{ch_dn}",
+                        (n_att ^ att).trailing_zeros() % 16
+                    );
+                }
+                if th_pn_next > ch_pn {
+                    if pn > ch_pn {
+                        (pn, th_pn_next) = (ch_pn, pn);
+                        next_boards = Some((n_att, def));
+                        next_dn = ch_dn;
+                    } else {
+                        th_pn_next = ch_pn;
+                    }
+                }
+                dn += ch_dn;
+            }
+
+            hashmap.insert((att, def), (Some(children.clone()), pn, dn, attack_type));
+        }
+
+        if cfg!(feature = "view") {
+            println!("pn:{pn}/{th_pn}, dn:{dn}/{th_dn}, next_pn:{th_pn_next}")
+        };
+
+        if pn == f32::INFINITY || pn == 0.0 || pn > th_pn {
+            return;
+        }
+        if dn == f32::INFINITY || dn == 0.0 || dn > th_dn {
+            return;
+        }
+        if th_pn_next > th_pn {
+            th_pn_next = th_pn;
+        }
+
+        proof_number_search_def_alpha(
+            next_boards.unwrap(),
+            th_pn_next,
+            th_dn - dn + next_dn,
+            MateType::NoMate,
+            depth + 1,
+            hashmap,
+            max_node,
+        );
+    }
+}
+
+/// tssに限らず、全ての詰みを探索する。
+pub fn proof_number_search_def_alpha(
+    (att, def): UBoard,
+    th_pn: Pn,
+    th_dn: Dn,
+    matetype: MateType,
+    depth: usize,
+    hashmap: &mut HashMap<UBoard, (Option<Vec<UBoard>>, Pn, Dn, AttackType)>,
+    max_node: usize,
+) {
+    // ノードを展開していない場合
+    let (no_child, attack_type) = {
+        let node = hashmap.get(&(att, def)).unwrap();
+        if cfg!(feature = "view") {
+            println!(
+                "[pns_def] th_pn:{}, th_dn:{}, pn:{}, dn:{}, size:{}, att:{att}, def:{def}",
+                th_pn,
+                th_dn,
+                node.1,
+                node.2,
+                hashmap.len()
+            );
+        }
+        (node.0.is_none(), node.3.clone())
+    };
+    // println!("def:{depth}({attack_type:#?})");
+    if no_child {
+        let reach = get_reach_mask(def, att);
+        if reach != 0 {
+            hashmap.insert((att, def), (None, f32::INFINITY, 0.0, AttackType::No));
+            return;
+        }
+        let mut valid_boards = Vec::new();
+        let no_enemy_three = !get_put_reach_mask(att, def);
+        let row2_reach = get_2row_mask(def, att) & no_enemy_three;
+        let put_reach = get_put_reach_mask(def, att) & no_enemy_three;
+
+        let rp_reach = row2_reach & put_reach;
+        let three_mask = row2_reach | put_reach;
+
+        // pprint_uboard((att, def));
+        // println!("three_mask");
+        // pprint_u64(three_mask);
+        // println!("rp_reach");
+        // pprint_u64(rp_reach);
+        // println!("no_enemy_three");
+        // pprint_u64(no_enemy_three);
+
+        match attack_type {
+            AttackType::Three(defencive_action) => {
+                if rp_reach & defencive_action != 0 {
+                    hashmap.insert((att, def), (None, f32::INFINITY, 0.0, AttackType::No));
+                    return;
+                } else if three_mask & defencive_action != 0 {
+                    let n_def = def | defencive_action;
+                    let reach_mask = get_reach_mask(n_def, att);
+                    let n_att_action = most_right_one(reach_mask);
+                    if n_att_action != reach_mask {
+                        hashmap.insert((att, def), (None, f32::INFINITY, 0.0, AttackType::No));
+                        return;
+                    }
+                    hashmap.entry((att, n_def)).or_insert((
+                        None,
+                        1.0,
+                        1.0,
+                        AttackType::Three(n_att_action),
+                    ));
+                    valid_boards.push((att, n_def));
+                } else {
+                    let n_def = def | defencive_action;
+                    hashmap
+                        .entry((att, n_def))
+                        .or_insert((None, 1.0, 1.0, AttackType::No));
+                    valid_boards.push((att, n_def));
+                }
+            }
+            AttackType::No => {
+                if rp_reach != 0 {
+                    hashmap.insert((att, def), (None, f32::INFINITY, 0.0, AttackType::No));
+                    return;
+                }
+                let valid = (get_valid_action_mask(def, att) & !three_mask) & no_enemy_three;
+
+                for (action, n_def) in MaskActionIterator::new(def, three_mask) {
+                    let reach_mask = get_reach_mask(n_def, att);
+                    let defencive_action = most_right_one(reach_mask);
+                    if defencive_action != reach_mask {
+                        hashmap.insert((att, def), (None, f32::INFINITY, 0.0, AttackType::No));
+                        return;
+                    }
+
+                    hashmap.entry((att, n_def)).or_insert((
+                        None,
+                        1.0,
+                        1.0,
+                        AttackType::Three(defencive_action),
+                    ));
+                    valid_boards.push((att, n_def));
+                }
+
+                for (action, n_def) in MaskActionIterator::new(def, valid) {
+                    hashmap
+                        .entry((att, n_def))
+                        .or_insert((None, 1.0, 1.0, AttackType::No));
+                    valid_boards.push((att, n_def));
+                }
+            }
+        }
+
+        hashmap.insert((att, def), (Some(valid_boards), 1.0, 1.0, attack_type));
+    }
+
+    loop {
+        if max_node < hashmap.len() {
+            return;
+        }
+        if cfg!(feature = "view") {
+            println!("[def:{depth}] cal pn, dn");
+            pprint_uboard((att, def));
+        }
+        // cal pn, dn
+        let mut pn = 0.0;
+        let mut next_boards = None;
+        let mut next_pn = 0.0;
+        let mut dn = f32::INFINITY;
+        let mut th_dn_next = f32::INFINITY;
+        {
+            let node = hashmap.get(&(att, def)).unwrap();
+            let (children, attack_type) = { (node.0.clone().unwrap(), node.3.clone()) };
+            for &(att, n_def) in children.iter() {
+                let &(_, ch_pn, ch_dn, _) = hashmap.get(&(att, n_def)).unwrap();
+                if cfg!(feature = "view") {
+                    println!(
+                        "action:{}, ch_pn:{ch_pn}, ch_dn:{ch_dn}",
+                        (n_def ^ def).trailing_zeros() % 16
+                    );
+                }
+                if th_dn_next > ch_dn {
+                    if dn > ch_dn {
+                        (dn, th_dn_next) = (ch_dn, dn);
+                        next_boards = Some((att, n_def));
+                        next_pn = ch_pn;
+                    } else {
+                        th_dn_next = dn;
+                    }
+                }
+                pn += ch_pn;
+            }
+
+            hashmap.insert((att, def), (Some(children.clone()), pn, dn, attack_type));
+        }
+
+        if cfg!(feature = "view") {
+            println!("[def] pn:{pn}/{th_pn}, dn:{dn}/{th_dn}, next_dn:{th_dn_next}")
+        };
+        if pn == f32::INFINITY || pn == 0.0 || pn > th_pn {
+            return;
+        }
+        if dn == f32::INFINITY || dn == 0.0 || dn > th_dn {
+            return;
+        }
+
+        if th_dn < th_dn_next {
+            th_dn_next = th_dn;
+        }
+        proof_number_search_att_alpha(
+            next_boards.unwrap(),
+            th_pn - pn + next_pn,
+            th_dn_next,
+            MateType::NoMate,
+            depth + 1,
+            hashmap,
+            max_node,
+        );
+    }
+}
+
+pub fn proof_number_search_alpha(b: Board, th: usize) -> ProofNumberSearchStatus {
+    let (att, def) = b.get_att_def();
+    // let res = threat_space_search((att, def));
+    // if let Some(action) = res {
+    //     // println!("this has threat mate");
+    //     return ProofNumberSearchStatus {
+    //         size: 0,
+    //         typ: MateType::Three((action.trailing_zeros() % 16) as u64),
+    //     };
+    // }
+
+    let mut hashmap = HashMap::new();
+
+    let reach = get_reach_mask(def, att);
+    if reach.count_ones() > 1 {
+        return ProofNumberSearchStatus {
+            size: 0,
+            typ: MateType::NoMate,
+        };
+    } else if reach.count_ones() == 1 {
+        hashmap.insert((att, def), (None, 1.0, 1.0, AttackType::Three(reach)));
+    } else {
+        hashmap.insert((att, def), (None, 1.0, 1.0, AttackType::No));
+    }
+
+    proof_number_search_att_alpha(
+        (att, def),
+        f32::INFINITY,
+        f32::INFINITY,
+        MateType::NoMate,
+        0,
+        &mut hashmap,
+        th,
     );
     let action_mask = get_valid_action_mask(att, def);
     for (action, n_att) in MaskActionIterator::new(att, action_mask) {
