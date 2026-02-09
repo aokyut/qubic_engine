@@ -20,6 +20,7 @@ use qubic_engine::train::{create_db, train_with_db};
 use qubic_engine::{
     ai::{CoEvaluator, NegAlpha, NNUE},
     board::{compare_agent, Agent},
+    sprt,
 };
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
@@ -76,10 +77,10 @@ fn main() {
 
     let mut b7 = NegAlphaF::new(Box::new(b.clone()), 29);
     b7.scout = true;
-    b7.timelimit = 1000;
-    b7.min_depth = 7;
+    b7.timelimit = 1;
+    b7.min_depth = 5;
 
-    let b7 = MateWrapperActor::new(Box::new(b7));
+    // let b7 = MateWrapperActor::new(Box::new(b7));
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
     let po2 = PlayoutEvaluator::new(PlayoutLevel::Attack4);
@@ -91,18 +92,25 @@ fn main() {
     //     "sle_tl50_dfpn.db".to_string(),
     //     "sle_tl50_dfpn_test.db".to_string(),
     // );
+    // exp_sprt();
     // return;
 
     // NNUE training (commented out for testing)
-    let mut nnue = NNUE::<ai::SimpleHash>::default();
-    train::train_nnue_with_dataloader(
-        nnue,
-        String::from("sle_tl50_dfpn.db"),
-        String::from("sle_tl50_dfpn_test.db"),
-        String::from("nnue"),
-        10,
-        32,
+    train::create_stepback_db(
+        &Some(b7),
+        "stepback.db",
+        6,
+        0.99,
     );
+    // let mut nnue = NNUE::<ai::SimpleHash>::default();
+    // train::train_nnue_with_dataloader(
+    //     nnue,
+    //     String::from("sle_tl50_dfpn.db"),
+    //     String::from("sle_tl50_dfpn_test.db"),
+    //     String::from("nnue"),
+    //     10,
+    //     32,
+    // );
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
     // main_utils::bench_problems("pns1000_alpha.json");
@@ -153,39 +161,26 @@ fn main() {
     // get_magic_number();
 }
 
-fn migrate_db() {
-    use indicatif::{ProgressBar, ProgressStyle};
-    use qubic_engine::db;
-    use qubic_engine::train::Transition;
+fn exp_sprt() {
+    let mut l = SimplLineEvaluator::new();
+    l.load("simple.json".to_string());
+    let mut b7 = NegAlphaF::new(Box::new(l.clone()), 29);
+    b7.scout = true;
+    b7.timelimit = 10;
+    b7.min_depth = 3;
+    let b7 = MateWrapperActor::new(Box::new(b7));
 
-    let src_db = db::BoardDB::new("sle_tl50_dfpn.db", 0);
+    let mut tar = NegAlphaF::new(Box::new(l.clone()), 29);
+    tar.scout = true;
+    tar.timelimit = 100;
+    tar.min_depth = 3;
+    let tar = MateWrapperActor::new(Box::new(tar));
 
-    let mut new_db = db::UniqueBoardDB::new("dfpn.db");
-
-    let ts = src_db.get_all();
-    let pb = ProgressBar::new(ts.len() as u64);
-
-    pb.set_style(ProgressStyle::default_bar()
-        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
-        .unwrap()
-        .progress_chars("#>-"));
-
-    for t in ts {
-        let (win, lose, draw) = if t.result == 0.0 {
-            (0, 1, 0)
-        } else if t.result == 1.0 {
-            (1, 0, 0)
-        } else {
-            assert!(t.result == 0.5, "{t:#?}");
-            (0, 0, 1)
-        };
-        let att = t.board as u64;
-        let def = (t.board >> 64) as u64;
-        new_db.add(att, def, win, lose, draw, t.val);
-
-        pb.inc(1);
-    }
+    let sprt = sprt::SPRT::with_elo_bounds(0.0, 10.0);
+    let result = sprt::eval_actor_sprt(&b7, &Agent::Random, 100, &sprt, false);
+    println!("{result:#?}");
 }
+
 
 fn evaluate_vs_best(evaluator: impl ai::EvaluatorF + 'static) {
     use qubic_engine::board::eval_actor;

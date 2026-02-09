@@ -49,6 +49,14 @@ impl Transition {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct StepbackTransition {
+    pub board: u128,
+    pub result: f32,
+    pub val: f32,
+    pub frontstep: u64,
+}
+
 pub fn create_db(load_model: Option<impl EvalAndActF>, db_name: &str, depth: usize) {
     use super::db;
     let board_db: db::BoardDB = db::BoardDB::new(db_name, 1);
@@ -727,10 +735,20 @@ pub fn train(load: bool, save: bool, name: String, depth: usize) {
 }
 
 pub fn bce_loss(x: f32, t: f32) -> (f32, f32) {
-    let loss = -t * (x + 0.000001).ln() - (1.0 - t) * (1.000001 - x).ln()
-        + t * (t + 0.000001).ln()
-        + (1.0 - t) * (1.000001 - t).ln();
-    let dloss = (x - t) / (x * (1.0 - x) + 0.000001);
+    let x = x.clamp(1e-7, 1.0 - 1e-7);
+    let t = t.clamp(0.0, 1.0);
+    let loss = -t * x.ln() - (1.0 - t) * (1.0 - x).ln()
+        + if t > 1e-7 { t * t.ln() } else { 0.0 }
+        + if t < 1.0 - 1e-7 {
+            (1.0 - t) * (1.0 - t).ln()
+        } else {
+            0.0
+        };
+    let dloss = (x - t) / (x * (1.0 - x));
+
+    if loss.is_nan() || loss.is_infinite() || dloss.is_nan() || dloss.is_infinite() {
+        return (0.0, 0.0);
+    }
     return (loss, -dloss);
 }
 
@@ -1002,7 +1020,6 @@ pub fn train_model_with_db(
             // Create SPRT with Elo bounds (detect 10+ Elo difference)
             let sprt = SPRT::with_elo_bounds(0.0, 10.0);
 
-            // Evaluate vs minimax(3) with SPRT
             let mut agent = NegAlphaF::new(Box::new(model.clone()), 3);
             agent.hashmap = true;
             agent.min_depth = 3;
@@ -1278,4 +1295,122 @@ pub fn train_nnue_with_dataloader<H: NNUEHash>(
         let _ = logger.flush();
         println!("TensorBoard logs saved. View with: tensorboard --logdir=runs");
     }
+}
+
+pub fn create_stepback_db(
+    model: &Option<impl EvalAndActF>,
+    db_name: &str,
+    random_start: usize,
+    greedy_rate: f32,
+) {
+    use super::db;
+    let board_db = db::StepbackBoardDB::new(db_name, DECAY_ALPHA, LAMBDA);
+    let mut count = 0;
+    let start = time::Instant::now();
+
+    loop {
+        let ts = play_stepback(model, random_start, greedy_rate);
+        count += ts.len() as u64;
+        if ts.len() == 0 {
+            continue;
+        }
+        println!(
+            "count:{count}({}), {}count/sec, {}count/hour",
+            ts.len(),
+            count / (1 + start.elapsed().as_secs()),
+            3600 * count / (1 + start.elapsed().as_secs())
+        );
+
+        for (t, backstep) in ts {
+            let att = t.board as u64;
+            let def = (t.board >> 64) as u64;
+            board_db.add(att, def, t.result, backstep, t.frontstep, t.val);
+        }
+    }
+}
+
+fn play_stepback(
+    model: &Option<impl EvalAndActF>,
+    random_start: usize,
+    greedy_rate: f32,
+) -> Vec<(StepbackTransition, u64)> {
+    let mut b = Board::new();
+    let mut transitions = Vec::new();
+    let mut reward = 0;
+    let mut turn = 0;
+    let mut rng = rand::thread_rng();
+
+    loop {
+        let action;
+        let mut valf: f32 = 0.5;
+
+        // Random start phase
+        if turn < random_start {
+            action = get_random(&b);
+        } else {
+            // Greedy or random
+            if rng.gen::<f32>() < greedy_rate && model.is_some() {
+                let (a, v) = model.as_ref().unwrap().eval_and_act(&b);
+                action = a;
+                valf = v;
+
+                transitions.push(StepbackTransition {
+                    board: b2u128(&b),
+                    result: 0.0,
+                    val: valf,
+                    frontstep: turn as u64,
+                });
+            } else {
+                action = get_random(&b);
+                if let Some(m) = model {
+                    (_, valf) = m.eval_and_act(&b);
+                }
+                transitions = Vec::new();
+            }
+        }
+
+        let b_ = b.next(action);
+
+        // Check for mate
+        let end = proof_number_search(b.clone());
+        if let MateType::Three(_) = end.typ {
+            reward = 1;
+            break;
+        }
+        if let MateType::Two(_) = end.typ {
+            reward = 1;
+            break;
+        }
+
+        // Check for win/draw
+        if b_.is_win() {
+            reward = 1;
+            break;
+        } else if b_.is_draw() {
+            reward = 0;
+            break;
+        }
+
+        b = b_;
+        turn += 1;
+    }
+
+    // Apply TD(λ) logic and calculate backstep
+    let size = transitions.len();
+    let mut results = Vec::new();
+
+    let is_mate = reward == 1;
+
+    for i in 0..size {
+        let idx = size - i - 1;
+        transitions[idx].result = ((reward as f32) + 1.0) * 0.5;
+
+        let backstep = if is_mate { i as u64 } else { 0 };
+        results.push((transitions[idx].clone(), backstep));
+
+        reward *= -1;
+    }
+    results.reverse();
+
+    results
 }

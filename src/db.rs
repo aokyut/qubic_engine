@@ -14,33 +14,39 @@ pub struct BoardData {
     pub label: Tensor,
 }
 
-pub struct UniqueBoardDB {
+pub struct StepbackBoardDB {
     conn: Connection,
+    stepback_alpha: f32,
+    lambda: f32,
 }
 
-impl UniqueBoardDB {
-    pub fn new(s: &str) -> Self {
+impl StepbackBoardDB {
+    pub fn new(s: &str, stepback_alpha: f32, lambda: f32) -> Self {
         let conn = open(s).unwrap();
 
         let query = "
-            create table if not exists unique_board_record (
+            create table if not exists stepback_board_record (
                 att integer,
                 def integer,
-                win integer,
-                lose integer,
-                draw integer,
-                val real,
-                unique(att, def)
+                result real,
+                backstep integer,
+                frontstep integer,
+                val real
             )
         ";
 
         conn.execute(query).unwrap();
-        let mut db = UniqueBoardDB { conn: conn };
+        let mut db = StepbackBoardDB {
+            conn: conn,
+            stepback_alpha: stepback_alpha,
+            lambda: lambda,
+        };
+
         return db;
     }
 
     pub fn get_count(&self) -> usize {
-        let query = "SELECT COUNT(*) FROM unique_board_record";
+        let query = "SELECT COUNT(*) FROM stepback_board_record";
 
         let mut count = 0;
         self.conn
@@ -58,58 +64,41 @@ impl UniqueBoardDB {
         return self.get_count();
     }
 
-    pub fn add(&self, att: u64, def: u64, win: u64, lose: u64, draw: u64, val: f32) {
+    pub fn add(&self, att: u64, def: u64, result: f32, backstep: u64, frontstep: u64, val: f32) {
         let (unique_att, unique_def) = Board::normalize(att, def);
 
         let query = format!(
             "
-            insert into unique_board_record(att, def, win, lose, draw, val)
+            insert into stepback_board_record(att, def, result, backstep, frontstep, val)
             values({}, {}, {}, {}, {}, {})
-            on conflict(att, def)
-            do update set 
-                win = win + {},
-                lose = lose + {},
-                draw = draw + {}
         ",
-            unique_att as i64,
-            unique_def as i64,
-            win as i64,
-            lose as i64,
-            draw as i64,
-            val,
-            win as i64,
-            lose as i64,
-            draw as i64
+            unique_att as i64, unique_def as i64, result, backstep as i64, frontstep as i64, val,
         );
 
         self.conn.execute(query).unwrap();
     }
 
-    pub fn get_all(&self) -> Vec<Transition> {
+    pub fn get_all(&self) -> Vec<(u64, u64, f32, u64, u64, f32)> {
         let query = format!(
             "
-                select att, def, win, lose, draw, val from unique_board_record",
+                select att, def, result, backstep, frontstep, val from stepback_board_record",
         );
 
         let mut ts = Vec::new();
 
         self.conn
             .iterate(query, |pairs| {
-                let row = pairs.get(0..4).unwrap();
+                let row = pairs.get(0..6).unwrap();
                 let att: i64 = row[0].1.unwrap().parse().unwrap();
                 let att = att as u64;
                 let def: i64 = row[1].1.unwrap().parse().unwrap();
                 let def = def as u64;
-                let win = row[2].1.unwrap().parse::<i64>().unwrap() as f32;
-                let lose = row[3].1.unwrap().parse::<i64>().unwrap() as f32;
-                let draw = row[4].1.unwrap().parse::<i64>().unwrap() as f32;
+                let result: f32 = row[2].1.unwrap().parse().unwrap();
+                let backstep = row[3].1.unwrap().parse::<i64>().unwrap() as u64;
+                let frontstep = row[4].1.unwrap().parse::<i64>().unwrap() as u64;
                 let val: f32 = row[5].1.unwrap().parse().unwrap();
 
-                ts.push(Transition {
-                    board: (att as u128) | ((def as u128) << 64),
-                    result: (win + 0.5 * draw) / (win + draw + lose),
-                    val: val,
-                });
+                ts.push((att, def, result, backstep, frontstep, val));
                 true
             })
             .unwrap();
