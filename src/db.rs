@@ -78,7 +78,7 @@ impl StepbackBoardDB {
         self.conn.execute(query).unwrap();
     }
 
-    pub fn get_all(&self) -> Vec<(u64, u64, f32, u64, u64, f32)> {
+    pub fn get_all(&self) -> Vec<Transition> {
         let query = format!(
             "
                 select att, def, result, backstep, frontstep, val from stepback_board_record",
@@ -94,11 +94,18 @@ impl StepbackBoardDB {
                 let def: i64 = row[1].1.unwrap().parse().unwrap();
                 let def = def as u64;
                 let result: f32 = row[2].1.unwrap().parse().unwrap();
-                let backstep = row[3].1.unwrap().parse::<i64>().unwrap() as u64;
+                let backstep = row[3].1.unwrap().parse::<i64>().unwrap() as i32;
                 let frontstep = row[4].1.unwrap().parse::<i64>().unwrap() as u64;
                 let val: f32 = row[5].1.unwrap().parse().unwrap();
 
-                ts.push((att, def, result, backstep, frontstep, val));
+                let scaled_result = (result - 0.5) * self.stepback_alpha.powi(backstep) + 0.5;
+                let val = scaled_result * self.lambda + val * (1.0 - self.lambda);
+
+                ts.push(Transition {
+                    board: (att as u128) | ((def as u128) << 64),
+                    result: result,
+                    val: val,
+                });
                 true
             })
             .unwrap();
@@ -335,6 +342,15 @@ impl<H: NNUEHash> BoardDataset<H> {
         println!("Loading dataset into memory...");
         let data = db.get_all();
         println!("Loaded {} records", data.len());
+        BoardDataset {
+            data,
+            _hash: PhantomData,
+        }
+    }
+
+    pub fn from_stepback_db(db_path: &str, stepback_alpha: f32, lambda: f32) -> Self {
+        let db = StepbackBoardDB::new(db_path, stepback_alpha, lambda);
+        let data = db.get_all();
         BoardDataset {
             data,
             _hash: PhantomData,

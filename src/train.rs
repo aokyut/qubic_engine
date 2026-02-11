@@ -1123,7 +1123,7 @@ pub fn train_nnue_with_dataloader<H: NNUEHash>(
     let le = MateWrapperActor::new(Box::new(l3));
 
     println!("Loading databases...");
-    let train_db: BoardDataset<H> = BoardDataset::new(&db_name, batch_size);
+    let train_db: BoardDataset<H> = BoardDataset::from_stepback_db(&db_name, 0.7943282347, 1.0);
     let eval_db_name_clone = eval_db_name.clone();
 
     let train_size = train_db.len();
@@ -1201,7 +1201,7 @@ pub fn train_nnue_with_dataloader<H: NNUEHash>(
                 let mut eval_losses = Vec::new();
 
                 let eval_db_for_eval: BoardDataset<H> =
-                    BoardDataset::new(&eval_db_name_clone, batch_size);
+                    BoardDataset::from_stepback_db(&eval_db_name_clone, 0.7943282347, 1.0);
                 let eval_size = eval_db_for_eval.len().min(1024);
                 let eval_dataloader = Dataloader::new(eval_db_for_eval, batch_size, false);
 

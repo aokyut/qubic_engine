@@ -65,11 +65,11 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 5);
+    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 29);
     // l7_.hashmap = true;
     l7_.scout = true;
     l7_.timelimit = 1;
-    l7_.min_depth = 3;
+    l7_.min_depth = 5;
     // let l7_ = MateWrapperActor::new(Box::new(l7_));
     //
     let mut b = BucketLineEvaluator::new();
@@ -96,21 +96,16 @@ fn main() {
     // return;
 
     // NNUE training (commented out for testing)
-    train::create_stepback_db(
-        &Some(b7),
-        "stepback.db",
-        6,
-        0.99,
+    // train::create_stepback_db(&Some(l7_), "stepback_test.db", 6, 0.95);
+    let mut nnue = NNUE::<ai::SimpleHash>::default();
+    train::train_nnue_with_dataloader(
+        nnue,
+        String::from("stepback_test.db"),
+        String::from("stepback_test.db"),
+        String::from("nnue"),
+        10,
+        32,
     );
-    // let mut nnue = NNUE::<ai::SimpleHash>::default();
-    // train::train_nnue_with_dataloader(
-    //     nnue,
-    //     String::from("sle_tl50_dfpn.db"),
-    //     String::from("sle_tl50_dfpn_test.db"),
-    //     String::from("nnue"),
-    //     10,
-    //     32,
-    // );
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
     // main_utils::bench_problems("pns1000_alpha.json");
@@ -180,7 +175,6 @@ fn exp_sprt() {
     let result = sprt::eval_actor_sprt(&b7, &Agent::Random, 100, &sprt, false);
     println!("{result:#?}");
 }
-
 
 fn evaluate_vs_best(evaluator: impl ai::EvaluatorF + 'static) {
     use qubic_engine::board::eval_actor;
