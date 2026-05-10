@@ -16,7 +16,7 @@ ndarray = "0.16.1"
 proconio = "0.5.0"
 serde = { version = "= 1.0.193", features = ["derive"] }
 serde_json = "1.0.108"
-minimum_ml = { version = "0.1.2", features = ["full"] }
+minimum_ml = { version = "0.1.9", features = ["full"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sqlite = "0.36.1"

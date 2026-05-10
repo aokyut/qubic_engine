@@ -1,12 +1,9 @@
 use crate::board::{
     self, get_2row_mask, get_put_reach_mask, get_reach_mask, pprint_board, pprint_u64, Board,
+    UBoard, Action, HalfBoard,
 };
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
-
-pub type UBoard = (u64, u64);
-pub type Action = u64;
-pub type HalfBoard = u64;
 
 pub struct ZobristHash {}
 
@@ -49,7 +46,7 @@ impl Player {
 }
 
 #[derive(Clone, Debug)]
-struct MaskActionIterator {
+pub struct MaskActionIterator {
     mask: u64,
     att: HalfBoard,
 }
@@ -882,7 +879,7 @@ pub fn proof_number_search(b: Board) -> ProofNumberSearchStatus {
         MateType::NoMate,
         0,
         &mut hashmap,
-        10_000,
+        1_000,
     );
     let action_mask = get_valid_action_mask(att, def);
     for (action, n_att) in MaskActionIterator::new(att, action_mask) {

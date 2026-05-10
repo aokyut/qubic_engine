@@ -1,5 +1,6 @@
+use crate::ai::line::SimplLineEvaluator;
 #[allow(warnings)]
-use crate::db::BoardDB;
+use crate::db::{BoardDB, WeightedTransition};
 
 use super::{
     ai::*,
@@ -46,6 +47,10 @@ impl Transition {
             result: 0.0,
             val: 0.0,
         };
+    }
+
+    pub fn to_weighted_transition(&self) -> WeightedTransition{
+        return WeightedTransition { board: self.board, result: self.result, val: self.val, weight: 1.0 }
     }
 }
 
@@ -510,7 +515,7 @@ fn play_and_record(agent: &NNUE) -> Vec<Transition> {
 }
 
 struct BatchIterator {
-    data: Vec<Transition>,
+    data: Vec<WeightedTransition>,
     cursor: usize,
     batch_size: usize,
     batch_num: usize,
@@ -519,7 +524,7 @@ struct BatchIterator {
 }
 
 impl BatchIterator {
-    fn new(data: Vec<Transition>, batch_size: usize, num: usize, lambda: f32) -> Self {
+    fn new(data: Vec<WeightedTransition>, batch_size: usize, num: usize, lambda: f32) -> Self {
         let rng = rand::thread_rng();
         return BatchIterator {
             data: data,
@@ -530,6 +535,19 @@ impl BatchIterator {
             lambda: lambda,
         };
     }
+    fn from_transition(data: Vec<Transition>, batch_size: usize, num: usize, lambda: f32) -> Self{
+        let data: Vec<WeightedTransition> = data.iter().map(|t| t.to_weighted_transition()).collect();
+        let rng = rand::thread_rng();
+        return BatchIterator {
+            data: data,
+            cursor: 0,
+            batch_num: num,
+            batch_size: batch_size,
+            rng: rng,
+            lambda: lambda,
+        };
+    }
+
     fn reset(&mut self) {
         self.data.shuffle(&mut self.rng);
         self.cursor = 0;
@@ -549,7 +567,7 @@ fn random_rot(b: u128, id: usize) -> u128 {
 }
 
 impl Iterator for BatchIterator {
-    type Item = (Tensor, Tensor);
+    type Item = (Tensor, Tensor, Tensor);
     fn next(&mut self) -> Option<Self::Item> {
         if self.batch_num == 0 {
             return None;
@@ -559,25 +577,31 @@ impl Iterator for BatchIterator {
             }
             let mut board = Vec::new();
             let mut result = Vec::new();
+            let mut weight = Vec::new();
 
             for t in &self.data[self.cursor..(self.cursor + self.batch_size)] {
                 // pprint_board(&u128_to_b(t.board));
-                let res = t.result;
+                // let res = t.result;
                 // println!("res:{res}, val:{}", t.t_val);
                 let rot_b = random_rot(t.board, self.rng.gen());
                 board.push(Tensor::new(u2vec(rot_b), vec![crate::ai::INPUT_SIZE]));
                 result.push(Tensor::new(
-                    vec![res * self.lambda + (1.0 - self.lambda) * t.val],
+                    vec![t.val],
                     vec![1],
                 ));
+                weight.push(Tensor::new(
+                    vec![t.weight],
+                    vec![1]
+                ))
             }
             let board = create_batch(board);
             let result = create_batch(result);
+            let weight = create_batch(weight);
             self.cursor += self.batch_size;
 
             self.batch_num -= 1;
 
-            return Some((board, result));
+            return Some((board, result, weight));
         }
     }
 }
@@ -687,7 +711,7 @@ pub fn train(load: bool, save: bool, name: String, depth: usize) {
 
         pb.finish();
 
-        let mut it = BatchIterator::new(dataset.clone(), BATCH_SIZE, BATCH_NUM, LAMBDA);
+        let mut it = BatchIterator::from_transition(dataset.clone(), BATCH_SIZE, BATCH_NUM, LAMBDA);
         it.reset();
         dataset = dataset[REPLAY_DELETE..].to_vec();
 
@@ -698,7 +722,7 @@ pub fn train(load: bool, save: bool, name: String, depth: usize) {
             .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) \n {msg}")
             .unwrap()
             .progress_chars("#>-"));
-        for (board, result) in it {
+        for (board, result,_) in it {
             i += 1;
             model.g.reset();
             let loss = model.g.forward(vec![board, result]);
@@ -832,10 +856,10 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
             .progress_chars("#>-"));
 
         data = ts.choose_multiple(&mut rng, n).cloned().collect();
-        let mut it = BatchIterator::new(data, BATCH_SIZE, batch_num, LAMBDA);
+        let mut it = BatchIterator::from_transition(data, BATCH_SIZE, batch_num, LAMBDA);
         it.reset();
 
-        for (board, result) in it {
+        for (board, result, _) in it {
             model.g.reset();
             let loss = model.g.forward(vec![board, result]);
             model.g.backward();
@@ -860,9 +884,9 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
                 let mut losses = Vec::new();
 
                 let eval_it =
-                    BatchIterator::new(ts.clone(), BATCH_SIZE, eval_ts.len() / BATCH_SIZE, LAMBDA);
+                    BatchIterator::from_transition(ts.clone(), BATCH_SIZE, eval_ts.len() / BATCH_SIZE, LAMBDA);
 
-                for (board, result) in eval_it {
+                for (board, result, _) in eval_it {
                     model.g.reset();
                     let loss = model.g.forward(vec![board, result]);
                     model.g.backward();
@@ -901,6 +925,7 @@ pub fn train_model_with_db(
     db_name: String,
     eval_db_name: String,
 ) {
+    use super::db::WeightedTransition;
     let test_boards = create_eval_board(50, 2);
     let test_actor1 = Agent::Minimax(3);
     let test_actor2 = Agent::Mcts(50, 500);
@@ -951,7 +976,7 @@ pub fn train_model_with_db(
             .unwrap()
             .progress_chars("#>-"));
 
-        let data: Vec<Transition> = ts.choose_multiple(&mut rng, n).cloned().collect();
+        let data: Vec<WeightedTransition> = ts.choose_multiple(&mut rng, n).cloned().collect();
         // let data = vec![data[0].clone(); n];
 
         for t in data.iter() {
@@ -1122,8 +1147,10 @@ pub fn train_nnue_with_dataloader<H: NNUEHash>(
     l3.timelimit = 1;
     let le = MateWrapperActor::new(Box::new(l3));
 
+    let stepback_alpha = 0.95;
+
     println!("Loading databases...");
-    let train_db: BoardDataset<H> = BoardDataset::from_stepback_db(&db_name, 0.7943282347, 1.0);
+    let train_db: BoardDataset<H> = BoardDataset::from_stepback_db(&db_name, stepback_alpha, 0.0);
     let eval_db_name_clone = eval_db_name.clone();
 
     let train_size = train_db.len();
@@ -1159,7 +1186,7 @@ pub fn train_nnue_with_dataloader<H: NNUEHash>(
             // Forward pass
             let output = nnue
                 .g
-                .forward(vec![batch_data.input.clone(), batch_data.label.clone()]);
+                .forward(vec![batch_data.input.clone(), batch_data.label.clone(), batch_data.weight.clone()]);
 
             // Extract loss value
             let loss_val = output.get_item().unwrap_or(0.0);
@@ -1201,7 +1228,7 @@ pub fn train_nnue_with_dataloader<H: NNUEHash>(
                 let mut eval_losses = Vec::new();
 
                 let eval_db_for_eval: BoardDataset<H> =
-                    BoardDataset::from_stepback_db(&eval_db_name_clone, 0.7943282347, 1.0);
+                    BoardDataset::from_stepback_db(&eval_db_name_clone, stepback_alpha, 0.0);
                 let eval_size = eval_db_for_eval.len().min(1024);
                 let eval_dataloader = Dataloader::new(eval_db_for_eval, batch_size, false);
 
@@ -1213,7 +1240,7 @@ pub fn train_nnue_with_dataloader<H: NNUEHash>(
 
                     let output = nnue
                         .g
-                        .inference(vec![batch_data.input.clone(), batch_data.label.clone()]);
+                        .inference(vec![batch_data.input.clone(), batch_data.label.clone(), batch_data.weight.clone()]);
                     let loss = output.get_item().unwrap_or(0.0);
                     eval_losses.push(loss);
                     eval_count += 1;
@@ -1302,20 +1329,34 @@ pub fn create_stepback_db(
     db_name: &str,
     random_start: usize,
     greedy_rate: f32,
+    tempature: f32,
 ) {
     use super::db;
     let board_db = db::StepbackBoardDB::new(db_name, DECAY_ALPHA, LAMBDA);
     let mut count = 0;
+    let base_count = board_db.get_count() as u64;
     let start = time::Instant::now();
+    let mut l = SimplLineEvaluator::new();
+    l.load("simple.json".to_string());
+
+    let mut l = NegAlphaF::new(Box::new(l.clone()), 5);
+    l.scout = true;
+    l.timelimit = 1;
+    l.min_depth = 5;
+    let mut rng = rand::thread_rng();
 
     loop {
-        let ts = play_stepback(model, random_start, greedy_rate);
+        let greedy_rate_instant = 1.0 - (1.0 - greedy_rate) * rng.gen::<f32>();
+        let random_start = random_start + (rng.gen::<usize>() % 12);
+        println!("greedy_rate:{}", greedy_rate_instant);
+        let ts = play_stepback(model, random_start, greedy_rate_instant, &l, tempature);
         count += ts.len() as u64;
         if ts.len() == 0 {
             continue;
         }
         println!(
-            "count:{count}({}), {}count/sec, {}count/hour",
+            "count:{}({}), {}count/sec, {}count/hour",
+            base_count + count,
             ts.len(),
             count / (1 + start.elapsed().as_secs()),
             3600 * count / (1 + start.elapsed().as_secs())
@@ -1333,6 +1374,8 @@ fn play_stepback(
     model: &Option<impl EvalAndActF>,
     random_start: usize,
     greedy_rate: f32,
+    random_model: &NegAlphaF,
+    temp: f32
 ) -> Vec<(StepbackTransition, u64)> {
     let mut b = Board::new();
     let mut transitions = Vec::new();
@@ -1345,11 +1388,17 @@ fn play_stepback(
         let mut valf: f32 = 0.5;
 
         // Random start phase
+        if b.is_draw() {
+            break;
+        }
+
         if turn < random_start {
             action = get_random(&b);
         } else {
             // Greedy or random
             if rng.gen::<f32>() < greedy_rate && model.is_some() {
+                // println!("random action");
+                // pprint_board(&b);
                 let (a, v) = model.as_ref().unwrap().eval_and_act(&b);
                 action = a;
                 valf = v;
@@ -1361,7 +1410,8 @@ fn play_stepback(
                     frontstep: turn as u64,
                 });
             } else {
-                action = get_random(&b);
+                // action = get_random(&b);
+                action = random_model.get_action_with_temp(&b, temp);
                 if let Some(m) = model {
                     (_, valf) = m.eval_and_act(&b);
                 }
@@ -1372,15 +1422,20 @@ fn play_stepback(
         let b_ = b.next(action);
 
         // Check for mate
-        let end = proof_number_search(b.clone());
-        if let MateType::Three(_) = end.typ {
+        // let end = proof_number_search(b.clone());
+        let end = threat_space_search(b.get_att_def());
+        if end.is_some(){
             reward = 1;
             break;
         }
-        if let MateType::Two(_) = end.typ {
-            reward = 1;
-            break;
-        }
+        // if let MateType::Three(_) = end.typ {
+        //     reward = 1;
+        //     break;
+        // }
+        // if let MateType::Two(_) = end.typ {
+        //     reward = 1;
+        //     break;
+        // }
 
         // Check for win/draw
         if b_.is_win() {

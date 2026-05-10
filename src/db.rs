@@ -6,22 +6,34 @@ use crate::train;
 use crate::{train::Transition, utills::rand::get_random_usize};
 use minimum_ml::dataset::{Dataset, Stackable};
 use minimum_ml::ml::Tensor;
+use std::hash::Hash;
 use std::marker::PhantomData;
+use std::collections::HashMap;
+
+#[derive(Clone, Debug)]
+pub struct WeightedTransition{
+    pub board: u128,
+    pub result: f32,
+    pub val: f32,
+    pub weight: f32
+}
 
 #[derive(Clone, Stackable)]
 pub struct BoardData {
     pub input: Tensor,
     pub label: Tensor,
+    pub weight: Tensor,
 }
 
 pub struct StepbackBoardDB {
     conn: Connection,
     stepback_alpha: f32,
     lambda: f32,
+    weight: HashMap<usize, f32>,
 }
 
 impl StepbackBoardDB {
-    pub fn new(s: &str, stepback_alpha: f32, lambda: f32) -> Self {
+    pub fn new(s: &str, stepback_alpha: f32, use_result_lambda: f32) -> Self {
         let conn = open(s).unwrap();
 
         let query = "
@@ -39,10 +51,36 @@ impl StepbackBoardDB {
         let mut db = StepbackBoardDB {
             conn: conn,
             stepback_alpha: stepback_alpha,
-            lambda: lambda,
+            lambda: use_result_lambda,
+            weight: HashMap::new()
         };
 
+        let weight = db.get_weight();
+        db.weight = weight;
+
         return db;
+    }
+
+    pub fn get_weight(&self) -> HashMap<usize, f32>{
+        let count = self.get_count() as f32;
+        let mut hashmap = HashMap::new();
+        for i in 0..100{
+            let (min, max) = ((i as f32) / 100.0, (i as f32) / 100.0 + 0.01);
+            let mut num = 0;
+            let s = format!("SELECT COUNT(*) FROM stepback_board_record where val >= {min} and val <= {max}");
+            let query = s.as_str();
+            self.conn
+            .iterate(query, |pairs| {
+                for &(name, value) in pairs.iter() {
+                    num = value.unwrap().parse().unwrap();
+                }
+                true
+            })
+            .unwrap();
+            let weight = count / (100.0 * (num + 1) as f32);
+            hashmap.insert(i, weight);
+        }
+        return hashmap;
     }
 
     pub fn get_count(&self) -> usize {
@@ -78,7 +116,7 @@ impl StepbackBoardDB {
         self.conn.execute(query).unwrap();
     }
 
-    pub fn get_all(&self) -> Vec<Transition> {
+    pub fn get_all(&self) -> Vec<WeightedTransition> {
         let query = format!(
             "
                 select att, def, result, backstep, frontstep, val from stepback_board_record",
@@ -101,10 +139,19 @@ impl StepbackBoardDB {
                 let scaled_result = (result - 0.5) * self.stepback_alpha.powi(backstep) + 0.5;
                 let val = scaled_result * self.lambda + val * (1.0 - self.lambda);
 
-                ts.push(Transition {
+                let weight_id = if val == 1.0 {
+                    99
+                }else{
+                    (val * 100.0).floor() as usize
+                };
+                let weight = *self.weight.get(&weight_id).unwrap() * (1.0 - (val - 0.5).powi(2) * 2.0);
+
+
+                ts.push(WeightedTransition {
                     board: (att as u128) | ((def as u128) << 64),
                     result: result,
                     val: val,
+                    weight: weight
                 });
                 true
             })
@@ -288,7 +335,7 @@ impl BoardDB {
         return ts;
     }
 
-    pub fn get_all(&self) -> Vec<Transition> {
+    pub fn get_all(&self) -> Vec<WeightedTransition> {
         let query = format!(
             "
                 select att, def, flag, val from board_record",
@@ -305,10 +352,11 @@ impl BoardDB {
                 let def = def as u64;
                 let flag: i32 = row[2].1.unwrap().parse().unwrap();
                 let val: f32 = row[3].1.unwrap().parse().unwrap();
-                ts.push(Transition {
+                ts.push(WeightedTransition {
                     board: (att as u128) | ((def as u128) << 64),
                     result: (flag as f32) * 0.5 + 0.5,
                     val: val,
+                    weight: 1.0
                 });
                 true
             })
@@ -332,7 +380,7 @@ pub fn random_rot(b: u128, id: usize) -> u128 {
 // BoardDataset: Wrapper around BoardDB that implements Dataset with NNUEHash support
 // Caches all data in memory for fast random access
 pub struct BoardDataset<H: NNUEHash = crate::ai::BundleHash> {
-    data: Vec<Transition>,
+    data: Vec<WeightedTransition>,
     _hash: PhantomData<H>,
 }
 
@@ -376,10 +424,14 @@ impl<H: NNUEHash> Dataset for BoardDataset<H> {
         let rot_b = random_rot(t.board, get_random_usize());
         let input = Tensor::new(H::to_input_vec(rot_b), vec![H::feature_count()]);
         let label = Tensor::new(
-            vec![res * train::LAMBDA + (1.0 - train::LAMBDA) * t.val],
+            vec![t.val],
+            vec![1],
+        );
+        let weight = Tensor::new(
+            vec![t.weight],
             vec![1],
         );
 
-        BoardData { input, label }
+        BoardData { input, label, weight }
     }
 }

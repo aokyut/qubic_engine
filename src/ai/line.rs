@@ -27,6 +27,37 @@ pub struct SimplLineEvaluator {
 }
 
 impl SimplLineEvaluator {
+    pub fn print_table(&self){
+        println!("weight float line");
+        let v = self.wfl1.clone();
+        let base = v[0];
+        for i in 0..WFL1_WIDTH{
+            for j in 0..WFL1_WIDTH{
+                let idx = i * WFL1_WIDTH + j;
+                if v[idx] == 0.0{
+                    print!("XXXXXXX, ");
+                }else{
+                    print!("{:>7.3}, ", v[idx] - base);
+                }
+            }
+            println!("");
+        }
+        println!("weight ground line");
+        let v = self.wgl1.clone();
+        let base = v[0];
+        for i in 0..WGL1_WIDTH{
+            for j in 0..WGL1_WIDTH{
+                let idx = i * WGL1_WIDTH + j;
+                if v[idx] == 0.0{
+                    print!("XXXXXXX, ");
+                }else{
+                    print!("{:>7.3}, ", v[idx] - base)
+                }
+            }
+            println!("");
+        }
+
+    }
     pub fn analyze_board(a: u64, d: u64) -> (LineMaskBundle, LineMaskBundle, LineMaskBundle) {
         let stone = a | d;
         let b = !stone;

@@ -10,3 +10,10 @@ mcoe*
 *.json
 util.py
 .DS_Store
+WSL2-Linux-Kernel/
+create_action_line_table.py
+latest-nnue/
+out2
+perf.data
+perf.data.old
+runs/

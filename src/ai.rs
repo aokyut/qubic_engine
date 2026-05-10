@@ -4,6 +4,7 @@
 pub mod line;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod line_nn;
+pub mod line_acumlator;
 pub mod mcts;
 pub mod mpc;
 pub mod neural_line;
@@ -12,6 +13,7 @@ pub mod pattern;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod position;
 pub mod timeout;
+pub mod nn;
 
 use crate::ai::line::SimplLineEvaluator;
 use crate::board::{
@@ -1241,7 +1243,9 @@ impl NegAlphaF {
         action = 0;
         val = Fail::Ex(0.0);
         count = 0;
-        for i in (1..=self.depth).step_by(2) {
+        let stone = (b.get_att_def().0 | b.get_att_def().1).count_ones() as u8;
+        let depth = (64 - stone).min(self.depth);
+        for i in (1..=depth).step_by(2) {
             let start = Instant::now();
             (action, val, count) =
                 negscoutf_hash_iter(b, i, -2.0, 2.0, i, &mut hashmap, &self.evaluator, true);
@@ -1372,6 +1376,35 @@ impl NegAlphaF {
             println!("hashmap_size: {}", hashmap.len());
         }
         return (a, b.get_exval().unwrap(), c);
+    }
+
+    pub fn get_action_with_temp(&self, b: &Board, t: f32) -> u8{
+        use rand::Rng;
+        use super::board::get_random;
+        let mut results = Vec::new();
+        let mut sum = 0.0;
+        let mut rng = rand::thread_rng();
+        for action in b.valid_actions(){
+            let nb = b.next(action);
+            let (_, e, _) = self.eval_with_negalpha(&nb);
+            let v = ((1.0 - e) / t).exp() - 0.98;
+            sum += v;
+            results.push((action, v));
+        }
+        let mut r = rng.gen::<f32>() * sum;        
+        
+        // results.sort_by(|a, b| b.1.total_cmp(&a.1));
+        // for result in results.iter(){
+        //     println!("{}:{}", result.0, result.1 / sum);
+        // }
+
+        for (idx, (action, val)) in results.iter().enumerate(){
+            r -= val;
+            if r <= 0.0{
+                return *action;
+            }
+        }
+        return get_random(&b);
     }
 }
 
@@ -1576,7 +1609,7 @@ impl MLEvaluator {
         }
 
         let onehot = [att_vec, def_vec].concat();
-        let onehot = Tensor::new(onehot, vec![128, 1]);
+        let onehot = Tensor::new(onehot, vec![1, 128]);
 
         let val = self.g.inference(vec![onehot]);
 
@@ -1923,6 +1956,7 @@ pub struct NNUE<H: NNUEHash = BundleHash> {
     g_out: usize,
     input: usize,
     t: usize,
+    w: usize,
     pub w1: usize,
     pub w1_size: usize,
     base_vec: Vec<Vec<f32>>,
@@ -1938,6 +1972,7 @@ impl<H: NNUEHash> NNUE<H> {
             g_out: 0,
             input: 0,
             t: 0,
+            w: 0,
             w1: 0,
             w1_size: 0,
             base_vec: Vec::new(),
@@ -1956,13 +1991,14 @@ impl<H: NNUEHash> NNUE<H> {
         use minimum_ml::sequential;
 
         let w1_size = 256;
-        let middle1_size = 32;
+        let middle1_size = 64;
         let middle2_size = 32;
 
         let mut g = Graph::new();
         g.optimizer = Some(Box::new(Adam::new(0.001, 0.9, 0.999)));
         let i1: usize = g.push_placeholder();
         let i2: usize = g.push_placeholder();
+        let loss_weight = g.push_placeholder();
         // let t = g.push_placeholder();
 
         let w1 = MM::auto(H::feature_count(), w1_size);
@@ -1976,7 +2012,6 @@ impl<H: NNUEHash> NNUE<H> {
             l1,
             [
                 Quantize::new(),
-                QReLU::new(),
                 QuantizedLinear::auto(w1_size, middle1_size),
                 QReLU::new(),
                 QuantizedLinear::auto(middle1_size, middle2_size),
@@ -1987,7 +2022,9 @@ impl<H: NNUEHash> NNUE<H> {
             ]
         );
 
-        let loss = g.add_layer(vec![sig, i2], Box::new(BinaryCrossEntropy::default()));
+        let bce = g.add_layer(vec![sig, i2], Box::new(BinaryCrossEntropy::new()));
+        let weighted_bce = g.add_layer(vec![bce, loss_weight], Box::new(Mul::new()));
+        let loss = g.add_layer(vec![weighted_bce], Box::new(Mean::new(None, false)));
         // let loss = g.add_layer(vec![sig, i2], Box::new(MSE::new()));
 
         g.set_target(sig);
@@ -1999,6 +2036,7 @@ impl<H: NNUEHash> NNUE<H> {
             g_out: sig,
             input: i1,
             t: i2,
+            w: loss_weight,
             w1: w1,
             w1_size: w1_size,
             base_vec: Vec::new(),
@@ -2009,7 +2047,7 @@ impl<H: NNUEHash> NNUE<H> {
 
     pub fn inference(&self, b: &Board) -> f32 {
         let onehot = H::to_input_vec(Self::b2u128(b));
-        let onehot = Tensor::new(onehot, vec![H::feature_count(), 1]);
+        let onehot = Tensor::new(onehot, vec![1, H::feature_count()]);
 
         let val = self.g.inference(vec![onehot]);
 
@@ -2177,7 +2215,7 @@ impl<H: NNUEHash> NNUE<H> {
                     1.0 - beta,
                     1.0 - alpha,
                 );
-                let val = -0.999 * (val - 0.5) + 0.5;
+                let val = 1.0 - val;
 
                 count += _count;
                 if max_val < val {
@@ -2195,12 +2233,12 @@ impl<H: NNUEHash> NNUE<H> {
         return (max_action, max_val, count);
     }
 
-    fn create_diff_vec(&self, a: u128, b: u128) -> Vec<f32> {
+    pub fn create_diff_vec(&self, a: u128, b: u128) -> Vec<f32> {
         H::compute_diff(a, b, &self.base_vec)
     }
 
     pub fn train(&mut self) {
-        self.g.set_placeholder(vec![self.input, self.t]);
+        self.g.set_placeholder(vec![self.input, self.t, self.w]);
         self.g.set_target(self.loss);
     }
 
@@ -2266,7 +2304,7 @@ impl<H: NNUEHash> GetAction for NNUE<H> {
         let hoge: Box<dyn Evaluator> = Box::new(CoEvaluator::best());
         let (action_, val_, count) = negalpha(b, 3, -MAX - 1, MAX + 1, &hoge);
         let time = end.as_nanos();
-        if cfg!(feature = "render") {
+        if cfg!(feature = "view") {
             println!(
                 "[NNUE]action:{action}-{action_}, val:{val}, val_:{val_}, count:{count}, time:{}",
                 time,

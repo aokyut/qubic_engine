@@ -15,7 +15,7 @@ use qubic_engine::board::{
     count_2row_, get_2row_mask, get_random, mate_check_horizontal, play_actor, pprint_board,
     pprint_u64, Board, GetAction, _is_win_board,
 };
-use qubic_engine::db::BoardDB;
+use qubic_engine::db::{BoardDB, BoardDataset, StepbackBoardDB};
 use qubic_engine::train::{create_db, train_with_db};
 use qubic_engine::{
     ai::{CoEvaluator, NegAlpha, NNUE},
@@ -65,11 +65,11 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut l7_ = NegAlphaF::new(Box::new(l.clone()), 29);
+    let mut l = NegAlphaF::new(Box::new(l.clone()), 3);
     // l7_.hashmap = true;
-    l7_.scout = true;
-    l7_.timelimit = 1;
-    l7_.min_depth = 5;
+    l.scout = true;
+    l.timelimit = 1;
+    l.min_depth = 3;
     // let l7_ = MateWrapperActor::new(Box::new(l7_));
     //
     let mut b = BucketLineEvaluator::new();
@@ -85,7 +85,21 @@ fn main() {
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
     let po2 = PlayoutEvaluator::new(PlayoutLevel::Attack4);
     // let mcts = ai::mcts::Mcts::new(10_000, 3, 10000, po);
-    let mcts2 = ai::mcts::Mcts::new(10_000, 3, 10000, po2);
+    let mcts2 = ai::mcts::Mcts::new(3_000, 3, 1000, po2);
+
+    // let b = Board::new().next(0).next(15).next(12);
+    // let mut action = vec![0; 16];
+
+    // for _ in 0..1000{
+    //     let a = mcts2.get_action(&b);
+    //     action[a as usize] += 1;
+    // }
+
+    // for a in 0..16{
+    //     println!("action={}:{}", a, action[a]);
+    // }
+    
+    // return;
 
     // Test NeuralLineEvaluator vs SimplLineEvaluator
     // train_line_eval(
@@ -93,26 +107,63 @@ fn main() {
     //     "sle_tl50_dfpn_test.db".to_string(),
     // );
     // exp_sprt();
-    // return;
 
+    println!("{:#?}", qubic_engine::ai::line_acumlator::REDUCTION_TABLE);
+    return;
     // NNUE training (commented out for testing)
     // train::create_stepback_db(&Some(l7_), "stepback_test.db", 6, 0.95);
-    let mut nnue = NNUE::<ai::SimpleHash>::default();
+    let mut nnue = NNUE::<ai::BundleHash>::default();
     train::train_nnue_with_dataloader(
         nnue,
-        String::from("stepback_test.db"),
-        String::from("stepback_test.db"),
+        String::from("sb_l1_tss_r4-15.db"),
+        String::from("sb_l1_tss_r4-15_test.db"),
         String::from("nnue"),
-        10,
+        100,
         32,
     );
+    // nnue.g.load(String::from("nnue_epoch20"));
+    // nnue.eval();
+    // nnue.set_inference();
+    // nnue.depth = 3;
+    // // nnue.set_inference();
+    // let train_db = StepbackBoardDB::new("sb_l1_tss_r4-15_test.db", 0.95, 0.0);
+    // let data = train_db.get_all();
+    // let mut sum = 0.0;
+    // let mut square_sum = 0.0;
+    // let mut num = data.len() as f32;
+    // let mut abs_error_sum = 0.0;
+    // let mut l_sum = 0.0;
+    // let mut l_square_sum = 0.0;
+    // for d in data{
+    //     let att = d.board as u64;
+    //     let def = (d.board >> 64) as u64;
+    //     let b = Board::from(att, def, Player::Black);
+    //     let (_, val, _) = nnue.eval_with_negalpha(&b);
+    //     let (_, l_val, _) = l.eval_with_negalpha(&b);
+    //     abs_error_sum += (val - l_val).abs();
+    //     sum += val;
+    //     square_sum += val.powi(2);
+    //     l_sum += l_val;
+    //     l_square_sum += l_val.powi(2);
+    // }
+
+    // let mean = sum / num;
+    // let var = square_sum / num - mean.powi(2);
+    
+    // let lmean = l_sum / num;
+    // let lvar = l_square_sum / num - lmean.powi(2);
+    
+    // let mae = abs_error_sum / num;
+    // println!("mean:{}, var:{}, std:{}, h_mean:{lmean}, h_var:{lvar}, h_std:{}, mae:{}", mean, var, var.sqrt(), lvar.sqrt(), mae);
+
+    // let result = eval_actor(&l, &nnue, 100, true);
+
+    // return;
     // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
     // let l5_ = MateWrapperActor::new(Box::new(l5_));
     // main_utils::bench_problems("pns1000_alpha.json");
     // main_utils::test_pns();
     // main_utils::generate_problems();
-    // return;
-    // return;
 
     // let l6 = wrapping_line_eval(l.clone(), 6);
     // let l7 = wrapping_line_eval(l.clone(), 7);
@@ -124,9 +175,14 @@ fn main() {
     // pprint_board(&b);
     // let _ = l5_.eval_with_negalpha_(&b);
 
-    // make_db();
+    let att = 8701169396846479991;
+    let def = 9745574676863071624;
+    let b = Board::from(att, def, Player::Black);
+    println!("{}", b.is_draw());
+
+    make_db();
     // use_aip();
-    // let result = play_actor_with_undo(&mcts, &b7, true);
+    // let result = play_actor_with_undo(&mcts2, &l, true);
     // let result = play_actor_with_undo(&b7, &Agent::Human, true);
     // println!("{result:#?}");
     // let db = BoardDB::new("mcoe3_insertRandom48_4_decay092", 0);
@@ -816,14 +872,17 @@ fn wrapping_line_eval(l: LineEvaluator, depth: u8) -> MateWrapperActor {
 }
 
 fn make_db() {
+    use qubic_engine::train::create_stepback_db;
     let mut l = SimplLineEvaluator::new();
     l.load("simple.json".to_string());
     let mut le = NegAlphaF::new(Box::new(l.clone()), 29);
     le.hashmap = true;
     le.min_depth = 7;
-    le.timelimit = 50;
+    le.timelimit = 10;
 
-    create_db(Some(le), "sle_tl50_dfpn", 5);
+    let model = Some(le);
+
+    create_stepback_db(&model, "sb_l1_tss_r4-15_test.db", 4, 1.0, 1.0 / 5.0);
 }
 
 fn train_line_eval(train_db: String, valid_db: String) {

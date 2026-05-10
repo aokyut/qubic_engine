@@ -55,6 +55,7 @@ impl Node {
         limit_millis: u128,
     ) -> Vec<Score> {
         let start = Instant::now();
+        let mut count = 0;
         if self.children.len() == 0 {
             self.expand();
             for (action, node) in self.children.iter() {
@@ -69,7 +70,8 @@ impl Node {
         }
         loop {
             self.evaluate(expand_n, e);
-            if start.elapsed().as_millis() > limit_millis {
+            count += 1;
+            if start.elapsed().as_millis() > limit_millis || count >= search_n{
                 break;
             }
         }

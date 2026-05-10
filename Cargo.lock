@@ -129,9 +129,9 @@ dependencies = [
 
 [[package]]
 name = "minimum_ml"
-version = "0.1.2"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14ecc02eec28511fa87a438ac629634c21b5f58cd23dda88ee1ed46fda21ee3e"
+checksum = "97f85aa11b164819f69da2d0031d6b0850ba7bc97117f33571fb80d61a1bc2f1"
 dependencies = [
  "getrandom",
  "stackable_derive",
