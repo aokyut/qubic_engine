@@ -61,6 +61,10 @@ impl StepbackBoardDB {
         return db;
     }
 
+    pub fn set_batch_num(&mut self) {
+        let count = self.get_count();
+    }
+
     pub fn get_weight(&self) -> HashMap<usize, f32>{
         let count = self.get_count() as f32;
         let mut hashmap = HashMap::new();
@@ -138,6 +142,8 @@ impl StepbackBoardDB {
 
                 let scaled_result = (result - 0.5) * self.stepback_alpha.powi(backstep) + 0.5;
                 let val = scaled_result * self.lambda + val * (1.0 - self.lambda);
+                let alpha = self.stepback_alpha.powi(backstep);
+                let val = (result - 0.5) * alpha * self.lambda + (val - 0.5) * (1.0 - alpha * self.lambda) + 0.5;
 
                 let weight_id = if val == 1.0 {
                     99

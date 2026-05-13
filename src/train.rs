@@ -1,4 +1,4 @@
-use crate::ai::line::SimplLineEvaluator;
+use crate::{ai::line::SimplLineEvaluator, db::StepbackBoardDB};
 #[allow(warnings)]
 use crate::db::{BoardDB, WeightedTransition};
 
@@ -76,9 +76,9 @@ pub fn create_db(load_model: Option<impl EvalAndActF>, db_name: &str, depth: usi
     board_db.begine();
 
     loop {
-        let random_offset: usize = rng.gen::<usize>() % RANDOM_MOVE_MAX;
+        let random_offset: usize = rng.r#gen::<usize>() % RANDOM_MOVE_MAX;
         let random_step: usize =
-            RANDOM_MOVE_MIN + (rng.gen::<usize>() % (RANDOM_MOVE_WIDTH - RANDOM_MOVE_MIN));
+            RANDOM_MOVE_MIN + (rng.r#gen::<usize>() % (RANDOM_MOVE_WIDTH - RANDOM_MOVE_MIN));
         let ts = play_with_eval(depth, random_offset, random_step, &load_model);
         count += ts.len() as u64;
         if ts.len() == 0 {
@@ -161,9 +161,9 @@ pub fn create_db_multi_agent(
     };
 
     for game_idx in 0..game_limit {
-        let random_offset: usize = rng.gen::<usize>() % RANDOM_MOVE_MAX;
+        let random_offset: usize = rng.r#gen::<usize>() % RANDOM_MOVE_MAX;
         let random_step: usize =
-            RANDOM_MOVE_MIN + (rng.gen::<usize>() % (RANDOM_MOVE_WIDTH - RANDOM_MOVE_MIN));
+            RANDOM_MOVE_MIN + (rng.r#gen::<usize>() % (RANDOM_MOVE_WIDTH - RANDOM_MOVE_MIN));
 
         let ts =
             play_with_eval_multi_agent(&agent_refs, evaluator, depth, random_offset, random_step);
@@ -232,8 +232,8 @@ fn play_with_eval_multi_agent(
     let mut rng = rand::thread_rng();
 
     // Randomly select agents for black and white
-    let black_agent_idx = rng.gen::<usize>() % agents.len();
-    let white_agent_idx = rng.gen::<usize>() % agents.len();
+    let black_agent_idx = rng.r#gen::<usize>() % agents.len();
+    let white_agent_idx = rng.r#gen::<usize>() % agents.len();
 
     loop {
         let action;
@@ -332,8 +332,8 @@ fn play_with_eval(
     let play_agent = super::board::Agent::Mcts(50, 500);
 
     let mut rng = rand::thread_rng();
-    let b_id: usize = rng.gen::<usize>() % 4;
-    let w_id: usize = rng.gen::<usize>() % 4;
+    let b_id: usize = rng.r#gen::<usize>() % 4;
+    let w_id: usize = rng.r#gen::<usize>() % 4;
 
     let evaluator = super::ai::CoEvaluator::best();
     let b_actor;
@@ -464,7 +464,7 @@ fn play_and_record(agent: &NNUE) -> Vec<Transition> {
     let neg = super::ai::NegAlpha::new(Box::new(evaluator), 3);
 
     let mut rng = thread_rng();
-    let random_step = rng.gen::<usize>() % RANDOM_MOVE_MAX;
+    let random_step = rng.r#gen::<usize>() % RANDOM_MOVE_MAX;
 
     loop {
         // pprint_board(&b);
@@ -583,7 +583,7 @@ impl Iterator for BatchIterator {
                 // pprint_board(&u128_to_b(t.board));
                 // let res = t.result;
                 // println!("res:{res}, val:{}", t.t_val);
-                let rot_b = random_rot(t.board, self.rng.gen());
+                let rot_b = random_rot(t.board, self.rng.r#gen());
                 board.push(Tensor::new(u2vec(rot_b), vec![crate::ai::INPUT_SIZE]));
                 result.push(Tensor::new(
                     vec![t.val],
@@ -952,8 +952,8 @@ pub fn train_model_with_db(
         model.load(load_name.clone());
     }
 
-    let mut db: BoardDB = BoardDB::new(&db_name, 0);
-    let eval_db: BoardDB = BoardDB::new(&eval_db_name, 0);
+    let mut db: StepbackBoardDB = StepbackBoardDB::new(&db_name, 0.95, 0.05);
+    let mut eval_db: StepbackBoardDB = StepbackBoardDB::new(&eval_db_name, 0.95, 0.05);
     println!("load db");
     let ts = db.get_all();
     let eval_ts = eval_db.get_all()[..1024].to_vec();
@@ -980,22 +980,22 @@ pub fn train_model_with_db(
         // let data = vec![data[0].clone(); n];
 
         for t in data.iter() {
-            let b = &u128_to_b(random_rot(t.board, rng.gen()));
+            let b = &u128_to_b(random_rot(t.board, rng.r#gen()));
             let val = model.get_val(b);
             if cfg!(feature = "slow") {
                 thread::sleep(Duration::from_micros(200));
             }
             // println!("val:{:#?}", bce_loss(0.5, t.t_val));
             let result = t.result;
-            let t_val = LAMBDA * result + (1.0 - LAMBDA) * t.val;
-            let (loss, delta) = bce_loss(val, t_val);
-            // let (loss, delta) = mse_loss(val, t.t_val);
+            let t_val = t.val;
+            // let (loss, delta) = bce_loss(val, t_val);
+            let (loss, delta) = mse_loss(val, t_val);
             model.update(b, delta);
             // let (loss, delta) = bce_loss(0.5, t.t_val);
             // let (loss, delta) = bce_loss(val, (t.result as f32) * 0.499 + 0.5);
             match smoothing_loss {
                 None => smoothing_loss = Some(loss),
-                Some(loss_) => smoothing_loss = Some(SMOOTHING * loss_ + (1.0 - SMOOTHING) * loss),
+                Some(loss_) => smoothing_loss = Some(0.99999 * loss_ + (1.0 - 0.99999) * loss),
             }
 
             pb.inc(1);
@@ -1346,8 +1346,8 @@ pub fn create_stepback_db(
     let mut rng = rand::thread_rng();
 
     loop {
-        let greedy_rate_instant = 1.0 - (1.0 - greedy_rate) * rng.gen::<f32>();
-        let random_start = random_start + (rng.gen::<usize>() % 12);
+        let greedy_rate_instant = 1.0 - (1.0 - greedy_rate) * rng.r#gen::<f32>();
+        let random_start = random_start + (rng.r#gen::<usize>() % 12);
         println!("greedy_rate:{}", greedy_rate_instant);
         let ts = play_stepback(model, random_start, greedy_rate_instant, &l, tempature);
         count += ts.len() as u64;
@@ -1396,7 +1396,7 @@ fn play_stepback(
             action = get_random(&b);
         } else {
             // Greedy or random
-            if rng.gen::<f32>() < greedy_rate && model.is_some() {
+            if rng.r#gen::<f32>() < greedy_rate && model.is_some() {
                 // println!("random action");
                 // pprint_board(&b);
                 let (a, v) = model.as_ref().unwrap().eval_and_act(&b);

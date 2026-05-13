@@ -190,7 +190,7 @@ impl Node for FakeQuantizedClippedReLULinear{
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 #[target_feature(enable = "avx2")]
-pub unsafe fn mul_8x4ni8_4nu8_i32(a: &[i8], b: &[u8], output: &mut[i32]){
+pub unsafe fn mul_8x4ni8_4nu8_i32(a: &[i8], b: &[u8], output: &mut[i32]){ unsafe {
     let a_ptr = a.as_ptr() as (*const i8);
     let b_ptr = b.as_ptr() as (*const i32);
 
@@ -208,12 +208,12 @@ pub unsafe fn mul_8x4ni8_4nu8_i32(a: &[i8], b: &[u8], output: &mut[i32]){
     }
 
     _mm256_storeu_epi32(output.as_mut_ptr(), acum_vec);
-}
+}}
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 #[target_feature(enable = "avx2")]
-pub unsafe fn mul_16x16nu8_16ni8_sr4(a: &[u8], b: &[i8], output: &mut[i16]){
+pub unsafe fn mul_16x16nu8_16ni8_sr4(a: &[u8], b: &[i8], output: &mut[i16]){ unsafe {
     let a_ptr = a.as_ptr() as (*const i8);
     let b_ptr = b.as_ptr() as (*const i16);
 
@@ -227,12 +227,12 @@ pub unsafe fn mul_16x16nu8_16ni8_sr4(a: &[u8], b: &[i8], output: &mut[i16]){
     }
 
     _mm256_storeu_epi16(output.as_mut_ptr(), c_vec);
-}
+}}
 
 #[cfg(target_arch="x86_64")]
 use std::arch::x86_64::*;
 #[target_feature(enable = "avx2")]
-pub unsafe fn mul_16x2nu8_2ni8(a: &[u8], b: &[i8], output: &mut[i16]){
+pub unsafe fn mul_16x2nu8_2ni8(a: &[u8], b: &[i8], output: &mut[i16]){ unsafe {
     // assert!(a.len() == b.len())
     // assert!(a.len() % 32 == 0)
 
@@ -251,4 +251,4 @@ pub unsafe fn mul_16x2nu8_2ni8(a: &[u8], b: &[i8], output: &mut[i16]){
     }
 
     _mm256_storeu_epi16(output.as_mut_ptr(), c_vec);
-}
+}}

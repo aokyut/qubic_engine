@@ -494,7 +494,7 @@ pub fn train_with_db(
 
         for _ in 0..1 {
             for t in ts.iter() {
-                let b = &u128_to_b(random_rot(t.board, rng.gen()));
+                let b = &u128_to_b(random_rot(t.board, rng.r#gen()));
                 let actual = trainable_pe.eval_func_f32(b);
                 let expected = (t.result - 0.5) * 0.998 + 0.5;
                 let expected = t.val * lambda + expected * (1.0 - lambda);

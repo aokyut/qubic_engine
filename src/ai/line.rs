@@ -7,11 +7,11 @@ use super::{
 use anyhow::{Ok, Result};
 use serde::{Deserialize, Serialize};
 
-const WFL3_WIDTH: usize = 32;
-const WGL3_WIDTH: usize = 16;
-const WL2_WIDTH: usize = 64;
-const WGL1_WIDTH: usize = 96;
-const WFL1_WIDTH: usize = 106;
+pub const WFL3_WIDTH: usize = 32;
+pub const WGL3_WIDTH: usize = 16;
+pub const WL2_WIDTH: usize = 64;
+pub const WGL1_WIDTH: usize = 96;
+pub const WFL1_WIDTH: usize = 106;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SimplLineEvaluator {
@@ -454,6 +454,24 @@ impl SimplLineEvaluator {
             a1_float, a2_float, a3_float, a1_ground, a2_ground, a3_ground, d1_float, d2_float,
             d3_float, d1_ground, d2_ground, d3_ground, trap_3_num,
         );
+    }
+
+    pub fn get_eval_from_counts(&self, af1: usize, af2: usize, af3: usize, ag1: usize, ag2: usize, ag3: usize, df1: usize, df2: usize, df3: usize, dg1: usize, dg2: usize, dg3:usize, tn3: usize, is_black: bool) -> f32{
+        let mut val = 0.0;
+
+        if is_black {
+            val += self.wt3nb[tn3];
+        } else {
+            val += self.wt3nw[tn3];
+        }
+        val += self.wfl1[af1 * WFL1_WIDTH + df1]
+            + self.wfl2[af2 * WL2_WIDTH + df2]
+            + self.wfl3[af3 * WFL3_WIDTH + df3]
+            + self.wgl1[ag1 * WGL1_WIDTH + dg1]
+            + self.wgl2[ag2 * WL2_WIDTH + dg2]
+            + self.wgl3[ag3 * WGL3_WIDTH + dg3]
+            + self.bias;
+        return 1.0 / (1.0 + (-val).exp());
     }
 
     pub fn evaluate_board(&self, b: &Board) -> f32 {

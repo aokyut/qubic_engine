@@ -17,3 +17,5 @@ out2
 perf.data
 perf.data.old
 runs/
+perf_*
+annotate_*

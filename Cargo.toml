@@ -3,7 +3,7 @@ name = "qubic_engine"
 license = "MIT"
 author = ["epaperamic@gmail.com"]
 version = "0.1.7"
-edition = "2021"
+edition = "2024"
 description = "qubic engine"
 repository = "https://github.com/aokyut/qubic_engine"
 keywords = ["engine", "game"]
@@ -35,3 +35,10 @@ render = []
 slow = []
 view = []
 view_detail = []
+
+[profile.release]
+debug = 1
+
+[profile.profiling]
+inherits = "release"
+debug = 1

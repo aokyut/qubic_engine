@@ -74,13 +74,13 @@ pub mod rand {
     use rand::{rngs::ThreadRng, Rng};
     pub fn get_random_usize() -> usize {
         let mut rng = rand::thread_rng();
-        return rng.gen::<usize>();
+        return rng.r#gen::<usize>();
     }
     pub fn get_random_usizes(size: usize) -> Vec<usize> {
         let mut v = vec![0; size];
         let mut rng = rand::thread_rng();
         for i in 0..size {
-            v[i] = rng.gen::<usize>();
+            v[i] = rng.r#gen::<usize>();
         }
         return v;
     }
@@ -102,7 +102,7 @@ pub mod rand {
     impl Iterator for RandUsizeGenerator {
         type Item = usize;
         fn next(&mut self) -> Option<usize> {
-            return Some(self.rng.gen::<usize>());
+            return Some(self.rng.r#gen::<usize>());
         }
     }
 }

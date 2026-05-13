@@ -4,6 +4,7 @@ use qubic_engine::ai::line::{
     BucketLineEvaluator, SimplLineEvaluator, SimplePatternEvaluator, TrainableBLE, TrainableSLE,
     TrainableSPE,
 };
+use qubic_engine::ai::line_acumlator::SimpleLineInfoEvaluator;
 use qubic_engine::ai::line_nn::{NNLineEvaluator, NNLineEvaluator_, TrainableNLE, TrainableNLE_};
 use qubic_engine::ai::pattern::TrainablePatternEvaluator;
 use qubic_engine::ai::position::{PositionMaskEvaluator, TrainablePME};
@@ -65,11 +66,11 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut l = NegAlphaF::new(Box::new(l.clone()), 3);
+    let mut ld = NegAlphaF::new(Box::new(l.clone()), 29);
     // l7_.hashmap = true;
-    l.scout = true;
-    l.timelimit = 1;
-    l.min_depth = 3;
+    ld.scout = true;
+    ld.timelimit = 1000;
+    ld.min_depth = 7;
     // let l7_ = MateWrapperActor::new(Box::new(l7_));
     //
     let mut b = BucketLineEvaluator::new();
@@ -77,7 +78,7 @@ fn main() {
 
     let mut b7 = NegAlphaF::new(Box::new(b.clone()), 29);
     b7.scout = true;
-    b7.timelimit = 1;
+    b7.timelimit = 1000;
     b7.min_depth = 5;
 
     // let b7 = MateWrapperActor::new(Box::new(b7));
@@ -85,7 +86,9 @@ fn main() {
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
     let po2 = PlayoutEvaluator::new(PlayoutLevel::Attack4);
     // let mcts = ai::mcts::Mcts::new(10_000, 3, 10000, po);
-    let mcts2 = ai::mcts::Mcts::new(3_000, 3, 1000, po2);
+    let mcts2 = ai::mcts::Mcts::new(100_000, 3, 1000000, po2);
+
+    // train_line_eval(String::from("sb_l1_tss_r4-15.db"), String::from("sb_l1_tss_r4-15_test.db"));
 
     // let b = Board::new().next(0).next(15).next(12);
     // let mut action = vec![0; 16];
@@ -98,9 +101,25 @@ fn main() {
     // for a in 0..16{
     //     println!("action={}:{}", a, action[a]);
     // }
-    
-    // return;
 
+    // use qubic_engine::ai::line_acumlator::*;
+
+    println!("{}, {}", qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[0], qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[64]);
+
+    let mut test_l = SimpleLineInfoEvaluator::new();
+    let _ = test_l.load("simple_line_info_evaluator.json".to_string());
+
+    test_l.print_table();
+
+    return;
+
+    let test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel::new(test_l.clone());
+
+    let _result = play_actor(&test_acum, &ld, true);
+
+    let stats = unsafe { test_acum.search_stats.get().as_ref().unwrap()};
+    println!("test_acum search stats: {:#?},\nnps:{}/{}[{}]", stats.pv_max_idx_frac, stats.pv_nodes, stats.time, 1000_000 * stats.pv_nodes / stats.time);
+    
     // Test NeuralLineEvaluator vs SimplLineEvaluator
     // train_line_eval(
     //     "sle_tl50_dfpn.db".to_string(),
@@ -108,7 +127,6 @@ fn main() {
     // );
     // exp_sprt();
 
-    println!("{:#?}", qubic_engine::ai::line_acumlator::REDUCTION_TABLE);
     return;
     // NNUE training (commented out for testing)
     // train::create_stepback_db(&Some(l7_), "stepback_test.db", 6, 0.95);
@@ -319,7 +337,7 @@ fn exp_prob_compare() {
         let mut count = 0;
 
         for j in 0..step {
-            if rng.gen::<f32>() < 0.5 {
+            if rng.r#gen::<f32>() < 0.5 {
                 a += 1;
             } else {
                 b += 1;
@@ -334,7 +352,7 @@ fn exp_prob_compare() {
 
         continue;
         for j in 0..step {
-            if rng.gen::<f32>() < 0.5 {
+            if rng.r#gen::<f32>() < 0.5 {
                 a += 1;
             } else {
                 b += 1;
@@ -412,7 +430,7 @@ fn get_magic_number() {
     let mut rng = thread_rng();
 
     for i in 0_u64..(1 << 32) {
-        let tar = rng.gen::<u64>();
+        let tar = rng.r#gen::<u64>();
         // let tar = tar as u32;
         let mut ok = true;
         // println!("tar:{tar}");
@@ -708,7 +726,7 @@ fn profile() {
         counts[idx] += 1.0;
         search_time[idx] += t;
 
-        if rng.gen::<f32>() < 0.01 {
+        if rng.r#gen::<f32>() < 0.01 {
             action = Agent::Random.get_action(&b);
         } else {
             action = action2;
@@ -811,7 +829,7 @@ fn mpc_for_coe(long_depth: u8, short_depth: u8) {
             accuracy[idx] += 1.0;
         }
 
-        if rng.gen::<f32>() < 0.1 {
+        if rng.r#gen::<f32>() < 0.1 {
             action = mcts.get_action(&b);
         } else {
             action = action2;
@@ -906,15 +924,15 @@ fn train_line_eval(train_db: String, valid_db: String) {
     // let mut model = TrainableBLE::from(bigmodel, 0.001);
     // let mut model = TrainableSLE::from(model, 0.001);
     // model.set_param(0b1_1_00_000000_000000_000000_111111_111111);
-    let mut nle = ai::neural_line::NeuralLineEvaluator::new();
-    let mut nle = ai::neural_line::TrainableNLE::from(nle, 0.001);
+    let mut slie = qubic_engine::ai::line_acumlator::SimpleLineInfoEvaluator::new();
+    let mut slie = qubic_engine::ai::line_acumlator::TrainableSLIE::from(slie, 0.001);
     // let mut le = ai::line::SimplLineEvaluator::new();
-    // let mut le = ai::line::TrainableSLE::from(le, 0.001);
+    // let mut le: TrainableSLE = ai::line::TrainableSLE::from(le, 0.001);
     qubic_engine::train::train_model_with_db(
-        nle,
+        slie,
         false,
         true,
-        String::from("sle_dfpn.json"),
+        String::from("simple_line_info_evaluator.json"),
         String::from(""),
         train_db,
         valid_db,
@@ -1083,7 +1101,7 @@ fn mcts_statistics() {
 
 fn random_i(max: i32) -> i32 {
     let mut rng = thread_rng();
-    rng.gen::<i32>() % max
+    rng.r#gen::<i32>() % max
 }
 
 fn get_random_model(max: i32) -> Agent {

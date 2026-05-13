@@ -568,7 +568,7 @@ pub fn negalphaf_hash_iter(
     depth: u8,
     alpha: f32,
     beta: f32,
-    gen: u8,
+    r#gen: u8,
     hashmap: &mut HashMap<u128, (Fail, u8)>,
     e: &Box<dyn EvaluatorF>,
     top: bool,
@@ -603,15 +603,15 @@ pub fn negalphaf_hash_iter(
                 }
                 None => {
                     if next_board.is_win() {
-                        hashmap.insert(hash, (Ex(0.0), gen));
+                        hashmap.insert(hash, (Ex(0.0), r#gen));
                         return (*action, Ex(1.0), count);
                     } else if next_board.is_draw() {
-                        hashmap.insert(hash, (Ex(0.5), gen));
+                        hashmap.insert(hash, (Ex(0.5), r#gen));
                         return (*action, Ex(0.5), count);
                     }
                     let next_val = e.eval_func_f32(next_board);
                     val = 1.0 - next_val;
-                    hashmap.insert(hash, (Ex(next_val), gen));
+                    hashmap.insert(hash, (Ex(next_val), r#gen));
                 }
             }
             if max_val < val {
@@ -654,12 +654,12 @@ pub fn negalphaf_hash_iter(
                 }
                 None => {
                     if next_board.is_win() {
-                        hashmap.insert(hash, (Ex(0.0), gen));
+                        hashmap.insert(hash, (Ex(0.0), r#gen));
                         // print_blank(5 - depth);
                         // println!("[depth:{depth}]action:{action}, win");
                         return (action, Ex(1.0), count);
                     } else if next_board.is_draw() {
-                        hashmap.insert(hash, (Ex(0.5), gen));
+                        hashmap.insert(hash, (Ex(0.5), r#gen));
                         // print_blank(5 - depth);
                         // println!("[depth:{depth}]action:{action}, draw");
                         return (action, Ex(0.5), count);
@@ -677,7 +677,7 @@ pub fn negalphaf_hash_iter(
 
         for (action, next_board, old_val, hash, (hit, old_gen)) in action_nb_vals {
             let val;
-            if old_gen == gen {
+            if old_gen == r#gen {
                 if let Some(fail_val) = hit.clone() {
                     // if depth > 2 {
                     //     println!("[{depth}]hit, {}", fail_val.to_string());
@@ -693,13 +693,13 @@ pub fn negalphaf_hash_iter(
                                     depth - 1,
                                     1.0 - beta,
                                     1.0 - new_alpha,
-                                    gen,
+                                    r#gen,
                                     hashmap,
                                     e,
                                     false,
                                 );
                                 count += _count;
-                                hashmap.insert(hash, (_val, gen));
+                                hashmap.insert(hash, (_val, r#gen));
                                 let _val = _val.inverse();
                                 if _val.is_fail_high() {
                                     return (action, High(beta), count);
@@ -726,12 +726,12 @@ pub fn negalphaf_hash_iter(
                                     depth - 1,
                                     1.0 - new_beta,
                                     1.0 - alpha,
-                                    gen,
+                                    r#gen,
                                     hashmap,
                                     e,
                                     false,
                                 );
-                                hashmap.insert(hash, (_val, gen));
+                                hashmap.insert(hash, (_val, r#gen));
                                 let _val = _val.inverse();
                                 if _val.is_fail_low() {
                                     continue;
@@ -750,12 +750,12 @@ pub fn negalphaf_hash_iter(
                         depth - 1,
                         1.0 - beta,
                         1.0 - alpha,
-                        gen,
+                        r#gen,
                         hashmap,
                         e,
                         false,
                     );
-                    hashmap.insert(hash, (_val, gen));
+                    hashmap.insert(hash, (_val, r#gen));
                     count += 1 + _count;
                     let _val = _val.inverse();
 
@@ -787,12 +787,12 @@ pub fn negalphaf_hash_iter(
                     depth - 1,
                     1.0 - beta,
                     1.0 - alpha,
-                    gen,
+                    r#gen,
                     hashmap,
                     e,
                     false,
                 );
-                hashmap.insert(hash, (_val, gen));
+                hashmap.insert(hash, (_val, r#gen));
                 count += 1 + _count;
                 let _val = _val.inverse();
 
@@ -860,7 +860,7 @@ pub fn negscoutf_hash_iter(
     depth: u8,
     alpha: f32,
     beta: f32,
-    gen: u8,
+    r#gen: u8,
     hashmap: &mut HashMap<u128, (Fail, u8)>,
     e: &Box<dyn EvaluatorF>,
     top: bool,
@@ -945,7 +945,7 @@ pub fn negscoutf_hash_iter(
             action_nb_vals.iter().enumerate()
         {
             let val;
-            if old_gen == gen {
+            if old_gen == r#gen {
                 if let Some(fail_val) = hit.clone() {
                     match fail_val {
                         High(x) => {
@@ -958,13 +958,13 @@ pub fn negscoutf_hash_iter(
                                     depth - 1,
                                     1.0 - beta,
                                     1.0 - new_alpha,
-                                    gen,
+                                    r#gen,
                                     hashmap,
                                     e,
                                     false,
                                 );
                                 count += _count;
-                                hashmap.insert(hash, (_val, gen));
+                                hashmap.insert(hash, (_val, r#gen));
                                 let _val = _val.inverse();
                                 if _val.is_fail_high() {
                                     return (action, High(beta), count);
@@ -1010,12 +1010,12 @@ pub fn negscoutf_hash_iter(
                                     depth - 1,
                                     1.0 - new_beta,
                                     1.0 - alpha,
-                                    gen,
+                                    r#gen,
                                     hashmap,
                                     e,
                                     false,
                                 );
-                                hashmap.insert(hash, (_val, gen));
+                                hashmap.insert(hash, (_val, r#gen));
                                 let _val = _val.inverse();
                                 if _val.is_fail_low() {
                                     continue;
@@ -1051,12 +1051,12 @@ pub fn negscoutf_hash_iter(
                         depth - 1,
                         1.0 - beta,
                         1.0 - alpha,
-                        gen,
+                        r#gen,
                         hashmap,
                         e,
                         false,
                     );
-                    hashmap.insert(hash, (_val, gen));
+                    hashmap.insert(hash, (_val, r#gen));
                     count += 1 + _count;
                     let _val = _val.inverse();
 
@@ -1106,12 +1106,12 @@ pub fn negscoutf_hash_iter(
                     depth - 1,
                     1.0 - beta,
                     1.0 - alpha,
-                    gen,
+                    r#gen,
                     hashmap,
                     e,
                     false,
                 );
-                hashmap.insert(hash, (_val, gen));
+                hashmap.insert(hash, (_val, r#gen));
                 count += 1 + _count;
                 let _val = _val.inverse();
 
@@ -1391,7 +1391,7 @@ impl NegAlphaF {
             sum += v;
             results.push((action, v));
         }
-        let mut r = rng.gen::<f32>() * sum;        
+        let mut r = rng.r#gen::<f32>() * sum;        
         
         // results.sort_by(|a, b| b.1.total_cmp(&a.1));
         // for result in results.iter(){

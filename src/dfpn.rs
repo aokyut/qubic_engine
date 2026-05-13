@@ -471,7 +471,7 @@ pub fn threat_space_search_horizontal((att, def): UBoard) -> Option<Vec<Action>>
 
 #[inline]
 fn restore_tssh_path(hashmap: HashMap<HalfBoard, UBoard>, last_att: HalfBoard) -> Vec<Action> {
-    let (mut att, mut def) = hashmap.get(&last_att).unwrap();
+    let &(mut att, mut def) = hashmap.get(&last_att).unwrap();
     let mut actions = vec![att ^ last_att];
     while let Some((prev_att, prev_def)) = hashmap.get(&att) {
         actions.push(prev_def ^ def);
