@@ -952,8 +952,8 @@ pub fn train_model_with_db(
         model.load(load_name.clone());
     }
 
-    let mut db: StepbackBoardDB = StepbackBoardDB::new(&db_name, 0.95, 0.05);
-    let mut eval_db: StepbackBoardDB = StepbackBoardDB::new(&eval_db_name, 0.95, 0.05);
+    let mut db: StepbackBoardDB = StepbackBoardDB::new(&db_name, 0.97, 1.0);
+    let mut eval_db: StepbackBoardDB = StepbackBoardDB::new(&eval_db_name, 0.97, 1.0);
     println!("load db");
     let ts = db.get_all();
     let eval_ts = eval_db.get_all()[..1024].to_vec();
@@ -1006,10 +1006,10 @@ pub fn train_model_with_db(
             ));
             if step % LOG_LOSS_N == 0 {
                 pb.println(format!("[loss]:{}", smoothing_loss.unwrap()));
-                println!(
-                    "[epoch:{epoch}][step:{step}][loss]:{}",
-                    smoothing_loss.unwrap()
-                );
+                // println!(
+                //     "[epoch:{epoch}][step:{step}][loss]:{}",
+                //     smoothing_loss.unwrap()
+                // );
                 let mut losses = Vec::new();
 
                 let eval_it =
@@ -1027,10 +1027,10 @@ pub fn train_model_with_db(
                     "[eval]:{}",
                     losses.iter().sum::<f32>() / size as f32
                 ));
-                println!(
-                    "[epoch:{epoch}][step:{step}][eval:{}]",
-                    losses.iter().sum::<f32>() / size as f32
-                );
+                // println!(
+                //     "[epoch:{epoch}][step:{step}][eval:{}]",
+                //     losses.iter().sum::<f32>() / size as f32
+                // );
             }
             step += 1;
         }
@@ -1328,6 +1328,7 @@ pub fn create_stepback_db(
     model: &Option<impl EvalAndActF>,
     db_name: &str,
     random_start: usize,
+    max_random_insert: usize,
     greedy_rate: f32,
     tempature: f32,
 ) {
@@ -1348,8 +1349,9 @@ pub fn create_stepback_db(
     loop {
         let greedy_rate_instant = 1.0 - (1.0 - greedy_rate) * rng.r#gen::<f32>();
         let random_start = random_start + (rng.r#gen::<usize>() % 12);
+        let random_insert_step = (rng.r#gen::<usize>() % (max_random_insert + 1));
         println!("greedy_rate:{}", greedy_rate_instant);
-        let ts = play_stepback(model, random_start, greedy_rate_instant, &l, tempature);
+        let ts = play_stepback(model, random_start, random_insert_step, greedy_rate_instant, &l, tempature);
         count += ts.len() as u64;
         if ts.len() == 0 {
             continue;
@@ -1373,6 +1375,7 @@ pub fn create_stepback_db(
 fn play_stepback(
     model: &Option<impl EvalAndActF>,
     random_start: usize,
+    random_insert_step: usize, 
     greedy_rate: f32,
     random_model: &NegAlphaF,
     temp: f32
@@ -1382,6 +1385,9 @@ fn play_stepback(
     let mut reward = 0;
     let mut turn = 0;
     let mut rng = rand::thread_rng();
+    let mut end_insert = random_insert_step == 0;
+    let mut random_insert_step = random_insert_step;
+    let mut start_insert = false;
 
     loop {
         let action;
@@ -1396,7 +1402,7 @@ fn play_stepback(
             action = get_random(&b);
         } else {
             // Greedy or random
-            if rng.r#gen::<f32>() < greedy_rate && model.is_some() {
+            if (rng.r#gen::<f32>() < greedy_rate && !start_insert || end_insert) && model.is_some()  {
                 // println!("random action");
                 // pprint_board(&b);
                 let (a, v) = model.as_ref().unwrap().eval_and_act(&b);
@@ -1410,12 +1416,18 @@ fn play_stepback(
                     frontstep: turn as u64,
                 });
             } else {
+                start_insert = true;
                 // action = get_random(&b);
                 action = random_model.get_action_with_temp(&b, temp);
                 if let Some(m) = model {
                     (_, valf) = m.eval_and_act(&b);
                 }
                 transitions = Vec::new();
+                random_insert_step -= 1;
+                if random_insert_step == 0{
+                    end_insert = true;
+                    start_insert = false;
+                }
             }
         }
 

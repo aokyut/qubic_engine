@@ -104,21 +104,17 @@ fn main() {
 
     // use qubic_engine::ai::line_acumlator::*;
 
-    println!("{}, {}", qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[0], qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[64]);
+    // println!("{}, {}", qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[0], qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[64]);
 
-    let mut test_l = SimpleLineInfoEvaluator::new();
-    let _ = test_l.load("simple_line_info_evaluator.json".to_string());
+    // let mut test_l = SimpleLineInfoEvaluator::new();
+    // let _ = test_l.load("slie_result.json".to_string());
 
-    test_l.print_table();
+    // let test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel::new(test_l.clone());
 
-    return;
+    // let _result = play_actor(&test_acum, &test_acum, true);
 
-    let test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel::new(test_l.clone());
-
-    let _result = play_actor(&test_acum, &ld, true);
-
-    let stats = unsafe { test_acum.search_stats.get().as_ref().unwrap()};
-    println!("test_acum search stats: {:#?},\nnps:{}/{}[{}]", stats.pv_max_idx_frac, stats.pv_nodes, stats.time, 1000_000 * stats.pv_nodes / stats.time);
+    // let stats = unsafe { test_acum.search_stats.get().as_ref().unwrap()};
+    // println!("test_acum search stats: {:#?},\nnps:{}/{}[{}]", stats.pv_max_idx_frac, stats.pv_nodes, stats.time, 1000_000 * stats.pv_nodes / stats.time);
     
     // Test NeuralLineEvaluator vs SimplLineEvaluator
     // train_line_eval(
@@ -127,78 +123,19 @@ fn main() {
     // );
     // exp_sprt();
 
-    return;
     // NNUE training (commented out for testing)
-    // train::create_stepback_db(&Some(l7_), "stepback_test.db", 6, 0.95);
-    let mut nnue = NNUE::<ai::BundleHash>::default();
-    train::train_nnue_with_dataloader(
-        nnue,
-        String::from("sb_l1_tss_r4-15.db"),
-        String::from("sb_l1_tss_r4-15_test.db"),
-        String::from("nnue"),
-        100,
-        32,
-    );
-    // nnue.g.load(String::from("nnue_epoch20"));
-    // nnue.eval();
-    // nnue.set_inference();
-    // nnue.depth = 3;
-    // // nnue.set_inference();
-    // let train_db = StepbackBoardDB::new("sb_l1_tss_r4-15_test.db", 0.95, 0.0);
-    // let data = train_db.get_all();
-    // let mut sum = 0.0;
-    // let mut square_sum = 0.0;
-    // let mut num = data.len() as f32;
-    // let mut abs_error_sum = 0.0;
-    // let mut l_sum = 0.0;
-    // let mut l_square_sum = 0.0;
-    // for d in data{
-    //     let att = d.board as u64;
-    //     let def = (d.board >> 64) as u64;
-    //     let b = Board::from(att, def, Player::Black);
-    //     let (_, val, _) = nnue.eval_with_negalpha(&b);
-    //     let (_, l_val, _) = l.eval_with_negalpha(&b);
-    //     abs_error_sum += (val - l_val).abs();
-    //     sum += val;
-    //     square_sum += val.powi(2);
-    //     l_sum += l_val;
-    //     l_square_sum += l_val.powi(2);
-    // }
-
-    // let mean = sum / num;
-    // let var = square_sum / num - mean.powi(2);
     
-    // let lmean = l_sum / num;
-    // let lvar = l_square_sum / num - lmean.powi(2);
-    
-    // let mae = abs_error_sum / num;
-    // println!("mean:{}, var:{}, std:{}, h_mean:{lmean}, h_var:{lvar}, h_std:{}, mae:{}", mean, var, var.sqrt(), lvar.sqrt(), mae);
+    // let mut nnue = NNUE::<ai::BundleHash>::default();
+    // train::train_nnue_with_dataloader(
+    //     nnue,
+    //     String::from("sb_l1_tss_r4-15.db"),
+    //     String::from("sb_l1_tss_r4-15_test.db"),
+    //     String::from("nnue"),
+    //     100,
+    //     32,
+    // );
 
-    // let result = eval_actor(&l, &nnue, 100, true);
-
-    // return;
-    // let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 5);
-    // let l5_ = MateWrapperActor::new(Box::new(l5_));
-    // main_utils::bench_problems("pns1000_alpha.json");
-    // main_utils::test_pns();
-    // main_utils::generate_problems();
-
-    // let l6 = wrapping_line_eval(l.clone(), 6);
-    // let l7 = wrapping_line_eval(l.clone(), 7);
-    // let l8 = wrapping_line_eval(l.clone(), 8);
-    // let test = NegAlpha::new(Box::new(PositionEvaluator::simpl_alpha(1, 0, 0, 0, 0, 0)), 3);
-    // let att = 13268249354320136724;
-    // let def = 4854231148105118187;
-    // let b = Board::from(att, def, Player::Black);
-    // pprint_board(&b);
-    // let _ = l5_.eval_with_negalpha_(&b);
-
-    let att = 8701169396846479991;
-    let def = 9745574676863071624;
-    let b = Board::from(att, def, Player::Black);
-    println!("{}", b.is_draw());
-
-    make_db();
+    // make_db();
     // use_aip();
     // let result = play_actor_with_undo(&mcts2, &l, true);
     // let result = play_actor_with_undo(&b7, &Agent::Human, true);
@@ -900,7 +837,7 @@ fn make_db() {
 
     let model = Some(le);
 
-    create_stepback_db(&model, "sb_l1_tss_r4-15_test.db", 4, 1.0, 1.0 / 5.0);
+    create_stepback_db(&model, "stepback_db/sle7-10_tss_r4-15_i4.db", 4, 4, 0.9, 1.0 / 5.0);
 }
 
 fn train_line_eval(train_db: String, valid_db: String) {
@@ -932,7 +869,7 @@ fn train_line_eval(train_db: String, valid_db: String) {
         slie,
         false,
         true,
-        String::from("simple_line_info_evaluator.json"),
+        String::from("slie_result1.json"),
         String::from(""),
         train_db,
         valid_db,
