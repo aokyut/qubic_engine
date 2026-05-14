@@ -37,7 +37,12 @@ view = []
 view_detail = []
 
 [profile.release]
-debug = 1
+opt-level = 3
+lto = "fat"        # 完全なリンク時最適化
+codegen-units = 1  # 最大限最適化（ビルド時間は増える）
+debug = false      # デバッグ情報なし
+strip = true       # シンボル削除
+panic = "abort"    # unwind不要ならabortで軽量化
 
 [profile.profiling]
 inherits = "release"

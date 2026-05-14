@@ -1322,6 +1322,7 @@ pub fn create_stepback_db(
     max_random_insert: usize,
     greedy_rate: f32,
     tempature: f32,
+    play_num: Option<isize>,
 ) {
     use super::db;
     let board_db = db::StepbackBoardDB::new(db_name, DECAY_ALPHA, LAMBDA);
@@ -1336,8 +1337,17 @@ pub fn create_stepback_db(
     l.timelimit = 1;
     l.min_depth = 5;
     let mut rng = rand::thread_rng();
+    let mut play_num = play_num.clone();
 
     loop {
+        if play_num.is_some(){
+            let n = play_num.unwrap();
+            if n <= 0{
+                break;
+            }
+            play_num = Some(n-1);
+            println!("play_num left {n}");
+        }
         let greedy_rate_instant = 1.0 - (1.0 - greedy_rate) * rng.r#gen::<f32>();
         let random_start = random_start + (rng.r#gen::<usize>() % 12);
         let random_insert_step = (rng.r#gen::<usize>() % (max_random_insert + 1));

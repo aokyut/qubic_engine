@@ -828,6 +828,19 @@ fn wrapping_line_eval(l: LineEvaluator, depth: u8) -> MateWrapperActor {
 
 fn make_db() {
     use qubic_engine::train::create_stepback_db;
+    use std::env;
+
+    let args: Vec<String> = env::args().collect();
+    println!("args:{:#?}", args);
+    let db_name = args[1].clone();
+    let play_num = if args.len() >= 3{
+        Some(args[2].clone().parse::<isize>().unwrap())
+    }else{
+        None
+    };
+
+    println!("db_name:{db_name}, play_num:{play_num:#?}");
+
     let mut l = SimplLineEvaluator::new();
     l.load("simple.json".to_string());
     let mut le = NegAlphaF::new(Box::new(l.clone()), 29);
@@ -837,7 +850,7 @@ fn make_db() {
 
     let model = Some(le);
 
-    create_stepback_db(&model, "stepback_db/sle7-1_tss_r4-15_i4_v2.db", 4, 4, 0.9, 1.0 / 10.0);
+    create_stepback_db(&model, &db_name, 4, 4, 0.9, 1.0 / 10.0, play_num);
 }
 
 fn train_line_eval(train_db: String, valid_db: String) {
