@@ -66,11 +66,11 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut ld = NegAlphaF::new(Box::new(l.clone()), 29);
+    let mut ld = NegAlphaF::new(Box::new(l.clone()), 5);
     // l7_.hashmap = true;
     ld.scout = true;
-    ld.timelimit = 1000;
-    ld.min_depth = 7;
+    ld.timelimit = 100;
+    ld.min_depth = 5;
     // let l7_ = MateWrapperActor::new(Box::new(l7_));
     //
     let mut b = BucketLineEvaluator::new();
@@ -78,7 +78,7 @@ fn main() {
 
     let mut b7 = NegAlphaF::new(Box::new(b.clone()), 29);
     b7.scout = true;
-    b7.timelimit = 1000;
+    b7.timelimit = 500;
     b7.min_depth = 5;
 
     // let b7 = MateWrapperActor::new(Box::new(b7));
@@ -87,8 +87,6 @@ fn main() {
     let po2 = PlayoutEvaluator::new(PlayoutLevel::Attack4);
     // let mcts = ai::mcts::Mcts::new(10_000, 3, 10000, po);
     let mcts2 = ai::mcts::Mcts::new(100_000, 3, 1000000, po2);
-
-    // train_line_eval(String::from("sb_l1_tss_r4-15.db"), String::from("sb_l1_tss_r4-15_test.db"));
 
     // let b = Board::new().next(0).next(15).next(12);
     // let mut action = vec![0; 16];
@@ -106,12 +104,14 @@ fn main() {
 
     // println!("{}, {}", qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[0], qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[64]);
 
-    // let mut test_l = SimpleLineInfoEvaluator::new();
+    // let mut test_l = SimpleLineInfoEvaluator::from_sle(&l);
     // let _ = test_l.load("slie_result.json".to_string());
 
-    // let test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel::new(test_l.clone());
+    // let mut test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel::new(test_l.clone());
+    // test_acum.limit = 100_000;
 
-    // let _result = play_actor(&test_acum, &test_acum, true);
+    // let _result = eval_actor(&test_acum, &ld, 10, true);
+    // return;
 
     // let stats = unsafe { test_acum.search_stats.get().as_ref().unwrap()};
     // println!("test_acum search stats: {:#?},\nnps:{}/{}[{}]", stats.pv_max_idx_frac, stats.pv_nodes, stats.time, 1000_000 * stats.pv_nodes / stats.time);
@@ -135,7 +135,7 @@ fn main() {
     //     32,
     // );
 
-    // make_db();
+    make_db();
     // use_aip();
     // let result = play_actor_with_undo(&mcts2, &l, true);
     // let result = play_actor_with_undo(&b7, &Agent::Human, true);
@@ -144,7 +144,7 @@ fn main() {
     // let db_ = BoardDB::new("mcoe3_insertRandom48_4_decay092_", 0);
     // db.concat(db_);
     // train_line_eval("sle_tl50_dfpn_test.db".to_string(), "sle_tl50_dfpn_test.db".to_string());
-    return;
+    // return;
 
     // explore_best_model();
 
@@ -832,12 +832,12 @@ fn make_db() {
     l.load("simple.json".to_string());
     let mut le = NegAlphaF::new(Box::new(l.clone()), 29);
     le.hashmap = true;
-    le.min_depth = 7;
-    le.timelimit = 10;
+    le.min_depth = 5;
+    le.timelimit = 1;
 
     let model = Some(le);
 
-    create_stepback_db(&model, "stepback_db/sle7-10_tss_r4-15_i4.db", 4, 4, 0.9, 1.0 / 5.0);
+    create_stepback_db(&model, "stepback_db/sle7-1_tss_r4-15_i4_v2.db", 4, 4, 0.9, 1.0 / 10.0);
 }
 
 fn train_line_eval(train_db: String, valid_db: String) {
@@ -869,7 +869,7 @@ fn train_line_eval(train_db: String, valid_db: String) {
         slie,
         false,
         true,
-        String::from("slie_result1.json"),
+        String::from("slie_result.json"),
         String::from(""),
         train_db,
         valid_db,

@@ -154,7 +154,7 @@ const ActionLineTable: [[u64; 7]; 64] = [
     [0xf000000000000000,0x8888000000000000,0x8000800080008000,0x8421000000000000,0x8000400020001000,0x8000080000800008,0x8000040000200001,]
 ];
 
-const REDUCTION_STRENGTH: f64 = 0.5;
+const REDUCTION_STRENGTH: f64 = 0.0;
 const APPROX_LOG: [f64; 64] = [
     0.0,0.0,0.6931471805599453,1.0986122886681098,1.3862943611198906,1.6094379124341003,1.791759469228055,1.9459101490553132,2.0794415416798357,2.1972245773362196,2.302585092994046,2.3978952727983707,2.4849066497880004,2.5649493574615367,2.6390573296152584,2.70805020110221,2.772588722239781,2.833213344056216,2.8903717578961645,2.9444389791664403,2.995732273553991,3.044522437723423,3.091042453358316,3.1354942159291497,3.1780538303479458,3.2188758248682006,3.258096538021482,3.295836866004329,3.332204510175204,3.367295829986474,3.4011973816621555,3.4339872044851463,3.4657359027997265,3.4965075614664802,3.5263605246161616,3.5553480614894135,3.58351893845611,3.6109179126442243,3.6375861597263857,3.6635616461296463,3.6888794541139363,3.713572066704308,3.7376696182833684,3.7612001156935624,3.784189633918261,3.8066624897703196,3.828641396489095,3.8501476017100584,3.871201010907891,3.8918202981106265,3.912023005428146,3.9318256327243257,3.9512437185814275,3.970291913552122,3.9889840465642745,4.007333185232471,4.02535169073515,4.04305126783455,4.060443010546419,4.07753744390572,4.0943445622221,4.110873864173311,4.127134385045092,4.143134726391533,
 ];
@@ -451,7 +451,7 @@ impl TT{
     }
 }
 
-pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEvaluator>, tt_size: u64) -> (Action, f32, SearchStats){
+pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEvaluator>, tt_size: u64, limit: u64) -> (Action, f32, SearchStats){
     let mut tt = TT::new(1 << tt_size, (1 << tt_size) - 1);
     let (att, def) = b.get_att_def();
     let lineinfo = LineInfo::from_board(b);
@@ -459,11 +459,11 @@ pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEval
     
     let (mut action, mut val) = (0, Fail::Ex(0.0));
     let t = Instant::now();
-    let limit = 1000_000; // 1秒
+    let limit = limit; // 1秒
     let depth = depth.min((64 - (att.count_ones() + def.count_ones())) as u8);
     let mut search_stats=SearchStats::new();
     for d in (3..=depth).step_by(2){
-        println!("depth:{d}");
+        // println!("depth:{d}");
         search_stats = SearchStats::new();
         let root_entry = tt.get(ZOBRIST_INIT_HASH);
         let best;
@@ -475,20 +475,20 @@ pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEval
         (action, val) = negscout_hash_lineinfo(
             (att, def), &lineinfo, 
             ZOBRIST_INIT_HASH, 0, d, d, -2.0, 2.0, None, best, &mut tt, &mut search_stats, &mut rng, e);
-        println!("lmr hit rate:{}/{}[{}%]", search_stats.lmr_researched, search_stats.lmr_applied, search_stats.lmr_researched * 100 / (1 + search_stats.lmr_applied));
-        println!("pv nodes:{}", search_stats.pv_nodes);
-        println!("val:{:#?}", val);
+        // println!("lmr hit rate:{}/{}[{}%]", search_stats.lmr_researched, search_stats.lmr_applied, search_stats.lmr_researched * 100 / (1 + search_stats.lmr_applied));
+        // println!("pv nodes:{}", search_stats.pv_nodes);
         let time = t.elapsed().as_micros();
-        println!("time:{time}μs");
-        println!("nps: {}", search_stats.pv_nodes * 1000_000 / (1 + time as u64));
-        if time > limit{
+        // println!("[negscout_hash_lineinfo, depth:{d}]action:{}, val:{:#?}, time:{time}μs", action.trailing_zeros(), val);
+        // println!("time:{time}μs");
+        // println!("nps: {}", search_stats.pv_nodes * 1000_000 / (1 + time as u64));
+        if time > limit as u128{
             // println!("pv changes: {:#?}", search_stats.pv_changes_move_idx);
             // println!("high: {:#?}", search_stats.pv_changes_move_idx_high);
             // println!("low: {:#?}", search_stats.pv_changes_move_idx_low);
             // println!("ex: {:#?}", search_stats.pv_changes_move_idx_ex);
             // println!("pv max_idx: {:#?}", search_stats.pv_max_idx_frac);
             search_stats.time = time as u64;
-            println!("{}", search_stats.history_moves.iter().sum::<u64>());
+            // println!("{}", search_stats.history_moves.iter().sum::<u64>());
             break;
         }
         if d != depth{
@@ -496,10 +496,12 @@ pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEval
         }
     }
     let time = t.elapsed().as_micros();
-    println!("time:{time}μs");
+    // println!("time:{time}μs");
 
     return (action, val.get_exval().unwrap(), search_stats);
 }
+
+const TURN_DECAY: f32 = 0.999;
 
 // ハッシュ管理
 // Late Move Reduction
@@ -546,11 +548,6 @@ pub fn negscout_hash_lineinfo(
         };
         let mut generator = action_mask2vec(valid_action_mask);
         for (action, idx) in generator{
-            if idx == 64{
-                pprint_u64(valid_action_mask);
-                pprint_uboard((att, def));
-                println!("{:#?}", action_mask2vec(valid_action_mask));
-            }
             let next_line_info = line_info.next(idx);
             let val = -e.evaluate_lineinfo(&(def, att | action), &next_line_info);
             if val > max_val{
@@ -711,7 +708,7 @@ pub fn negscout_hash_lineinfo(
                             return (action, High(-v));
                         },
                         Ex(v) => {
-                            val = -v;
+                            val = -TURN_DECAY * v;
                         }
                     }
 
@@ -742,7 +739,7 @@ pub fn negscout_hash_lineinfo(
 
 
             if let Some(pre_move_idx) = pre_move{
-                continuous_history_val = 10.0 * stats.continuous_history_moves[pre_move_idx + is_att_flag * 64][action_idx] as f32 / stats.continuous_history_counts[pre_move_idx].max(1) as f32;
+                continuous_history_val = 2.0 * stats.continuous_history_moves[pre_move_idx + is_att_flag * 64][action_idx] as f32 / stats.continuous_history_counts[pre_move_idx].max(1) as f32;
             }else{
                 continuous_history_val = 0.0;
             }
@@ -811,7 +808,7 @@ pub fn negscout_hash_lineinfo(
                     },
                     Ex(x) => {
                         stats.tt_exact_hits += 1;
-                        val = x;
+                        val = TURN_DECAY * x;
                         is_set = true;
                     }
                 }
@@ -891,15 +888,15 @@ pub fn negscout_hash_lineinfo(
                         return (action, High(-v));
                     },
                     Ex(v) => {
-                        val = -v;
+                        val = - TURN_DECAY * v;
                     }
                 }
             }
 
             // println!("depth:{depth}, action: {}, val:{val}, sort_val:{sort_val}, alpha:{alpha}, beta:{beta}, max_val:{max_val}", action.trailing_zeros() % 16);
-            if depth == max_depth{
-                println!("depth:{depth}, action: {}, val:{val}, sort_val:{sort_val}", action.trailing_zeros() % 16);
-            }
+            // if depth == max_depth{
+            //     println!("depth:{depth}, action: {}, val:{val}, sort_val:{sort_val}", action.trailing_zeros());
+            // }
 
             if max_val < val{
                 max_val = val;
@@ -971,17 +968,19 @@ pub fn negscout_hash_lineinfo(
 pub struct TestLineAcumModel{
     l: Box<dyn LineInfoEvaluator>,
     pub search_stats: UnsafeCell<SearchStats>,
+    pub limit: u64,
+    pub max_depth: u64,
 }
 
 impl TestLineAcumModel{
     pub fn new(l: SimpleLineInfoEvaluator) -> Self{
-        return Self { l: Box::new(l), search_stats: UnsafeCell::new(SearchStats::new()) };
+        return Self { l: Box::new(l), search_stats: UnsafeCell::new(SearchStats::new()), limit:1, max_depth:29};
     }
 }
 
 impl GetAction for TestLineAcumModel{
     fn get_action(&self, b: &Board) -> u8 {
-        let (action, val, stats) = call_negscout_hash_lineinfo(b, 29, &self.l, 22);
+        let (action, val, stats) = call_negscout_hash_lineinfo(b, self.max_depth as u8, &self.l, 22, self.limit);
         unsafe {
             let k = &mut *self.search_stats.get();
             k.time += stats.time;
@@ -1058,6 +1057,19 @@ impl SimpleLineInfoEvaluator {
         };
     }
 
+    pub fn from_sle(s: &SimplLineEvaluator) -> Self{
+        return SimpleLineInfoEvaluator { 
+            wfl3: s.wfl3.clone(), 
+            wgl3: s.wgl3.clone(), 
+            wfl2: s.wfl2.clone(), 
+            wgl2: s.wgl2.clone(), 
+            wfl1: s.wfl1.clone(), 
+            wgl1: s.wgl1.clone(), 
+            wt3: vec![0.0; 3 * WT3_SIZE * WT3_SIZE], 
+            bias: s.bias 
+        };
+    }
+
     pub fn get_counts(
         (att, def): &UBoard, line_info: &LineInfo
     ) -> (
@@ -1082,8 +1094,8 @@ impl SimpleLineInfoEvaluator {
         let mut tb_or = 0u64;
         let mut tw_or = 0u64;
 
-        let layer24_mask = 0xffff_0000_ffff_0000u64;
-        let layer3_mask  = 0x0000_ffff_0000_0000u64;
+        let layer24_mask = 0xffff_0000_ffff_0000u64 & float;
+        let layer3_mask  = 0x0000_ffff_0000_0000u64 & float;
 
         for i in 0..7 {
             let a0 = line_info.att.0[i];
@@ -1099,10 +1111,6 @@ impl SimpleLineInfoEvaluator {
             let vd1 = (d0 ^ d1) & !a0;
             let vd2 = (d1 ^ d2) & !a0;
             let vd3 = d2 & !a0;
-
-            println!("[{i}]g:{:0x}", va1 & ground);
-            println!("[{i}]f:{:0x}", va1 & float);
-            println!("a0:{a0:0x}, a1:{a1:0x}, d0:{d0:0x}, d1:{d1:0x}");
 
             a1g += (va1 & ground).count_ones();
             a1f += (va1 & float).count_ones();
@@ -1123,6 +1131,13 @@ impl SimpleLineInfoEvaluator {
             tw_or |= (!va3 & vd3) & layer3_mask;
         }
 
+        if tb_or == 0xffff00000000 || tw_or == 0xffff00000000{
+            pprint_uboard((*att, *def));
+            pprint_u64(*att);
+            println!("-----");
+            pprint_u64(*def);
+        }
+
         let (gg, tb, tw) = if is_black{
             let mut gg = d3_or_l24.count_ones() as usize;
             if gg != 0{
@@ -1141,25 +1156,9 @@ impl SimpleLineInfoEvaluator {
             (gg, tb, tw)
         };
 
-        let d = LineStateTracker::from_uboard(&(*att, *def), 0);
-        let counts = d.get_counts(0);
         let ans = (
             a1f as usize, a2f as usize, a3f as usize, a1g as usize, a2g as usize, a3g as usize, d1f as usize, d2f as usize, d3f as usize, d1g as usize, d2g as usize, d3g as usize, gg as usize, tb as usize, tw as usize
         );
-        pprint_uboard((*att, *def));
-
-        assert_eq!(counts.0, ans.0);
-        assert_eq!(counts.1, ans.1);
-        assert_eq!(counts.2, ans.2);
-        assert_eq!(counts.3, ans.3);
-        assert_eq!(counts.4, ans.4);
-        assert_eq!(counts.5, ans.5);
-        assert_eq!(counts.6, ans.6);
-        assert_eq!(counts.7, ans.7);
-        assert_eq!(counts.8, ans.8);
-        assert_eq!(counts.9, ans.9);
-        assert_eq!(counts.10, ans.10);
-        assert_eq!(counts.11, ans.11);
         return ans;
     }
 
@@ -1235,7 +1234,7 @@ impl LineInfoEvaluator for SimpleLineInfoEvaluator {
 
 #[derive(Clone)]
 pub struct TrainableSLIE {
-    main: SimpleLineInfoEvaluator,
+    pub main: SimpleLineInfoEvaluator,
     v: SimpleLineInfoEvaluator,
     m: SimpleLineInfoEvaluator,
     lr: f32,
@@ -1273,11 +1272,23 @@ impl Trainable for TrainableSLIE {
         let dv = val * (1.0 - val);
         let delta = self.lr * delta * dv;
         self.main.wfl1[a1 * WFL1_WIDTH + d1] += delta;
+        // self.main.wfl1[d1 * WFL1_WIDTH + a1] -= delta;
+
         self.main.wfl2[a2 * WL2_WIDTH + d2] += delta;
+        // self.main.wfl2[d2 * WL2_WIDTH + a2] -= delta;
+        
         self.main.wfl3[a3 * WFL3_WIDTH + d3] += delta;
+        // self.main.wfl3[d3 * WFL3_WIDTH + a3] -= delta;
+
         self.main.wgl1[a1_ * WGL1_WIDTH + d1_] += delta;
+        // self.main.wgl1[d1_ * WGL1_WIDTH + a1_] -= delta;
+
         self.main.wgl2[a2_ * WL2_WIDTH + d2_] += delta;
+        // self.main.wgl2[d2_ * WL2_WIDTH + a2_] -= delta;
+        
         self.main.wgl3[a3_ * WGL3_WIDTH + d3_] += delta;
+        // self.main.wgl3[d3_ * WGL3_WIDTH + a3_] -= delta;
+        
         self.main.wt3[gg * WT3_SIZE * WT3_SIZE + tb * WT3_SIZE + tw] += delta;
         self.main.bias += delta;
     }

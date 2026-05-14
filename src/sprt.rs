@@ -35,6 +35,26 @@ pub enum SPRTResult {
     Inconclusive { games: usize, llr: f32 },
 }
 
+impl SPRTResult{
+    pub fn get_games(&self) -> usize{
+        use SPRTResult::*;
+        match self{
+            Continue { games, llr } =>{
+                *games
+            },
+            H0Accepted { games, llr } => {
+                *games
+            },
+            H1Accepted { games, llr } => {
+                *games
+            },
+            Inconclusive { games, llr } => {
+                *games
+            }
+        }
+    }
+}
+
 impl SPRT {
     /// Create a new SPRT with default parameters
     /// 
@@ -110,6 +130,150 @@ impl SPRT {
         let upper = ((1.0 - self.beta) / self.alpha).ln();
         (lower, upper)
     }
+}
+
+pub fn eval_actor_sqrt_from_boards(
+    bs: &[Board],
+    a1: &impl GetAction,
+    a2: &impl GetAction,
+    sprt: &SPRT,
+    render: bool,
+) -> (SPRTResult, f32, f32){
+    use crate::board::play_actor_from;
+    use indicatif::{ProgressBar, ProgressStyle};
+
+    let mut wins = 0;
+    let mut losses = 0;
+    let mut draws = 0;
+
+    let pb = ProgressBar::new((bs.len() * 2) as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} \n {msg}")
+            .unwrap()
+            .progress_chars("#>-"),
+    );
+
+    let (lower, upper) = sprt.bounds();
+
+    for b in bs {
+        // Play one game (a1 starts)
+        let (s1, s2) = play_actor_from(b.clone(), a1, a2, render);
+
+        if s1 > s2 {
+            wins += 1;
+        } else if s2 > s1 {
+            losses += 1;
+        } else {
+            draws += 1;
+        }
+
+        // Test after each game
+        let result = sprt.test(wins, losses, draws);
+
+        let total_games = wins + losses + draws;
+        let score = (wins as f32 + 0.5 * draws as f32) / total_games as f32;
+
+        pb.inc(1);
+
+        match &result {
+            SPRTResult::Continue { llr, .. } => {
+                pb.set_message(format!(
+                    "W/L/D: {}/{}/{} | Score: {:.1}% | LLR: {:.2} [{:.2}, {:.2}]",
+                    wins,
+                    losses,
+                    draws,
+                    score * 100.0,
+                    llr,
+                    lower,
+                    upper
+                ));
+            }
+            SPRTResult::H1Accepted { llr, .. } => {
+                pb.finish_with_message(format!(
+                    "✓ H1 ACCEPTED! A1 is stronger. W/L/D: {}/{}/{} | LLR: {:.2} >= {:.2}",
+                    wins, losses, draws, llr, upper
+                ));
+                return (result, score, 1.0 - score);
+            }
+            SPRTResult::H0Accepted { llr, .. } => {
+                pb.finish_with_message(format!(
+                    "✓ H0 ACCEPTED! No significant difference. W/L/D: {}/{}/{} | LLR: {:.2} <= {:.2}",
+                    wins, losses, draws, llr, lower
+                ));
+                return (result, score, 1.0 - score);
+            }
+            _ => {}
+        }
+
+        let (s2, s1) = play_actor_from(b.clone(), a2, a1, render);
+
+        if s1 > s2 {
+            wins += 1;
+        } else if s2 > s1 {
+            losses += 1;
+        } else {
+            draws += 1;
+        }
+
+        // Test after each game
+        let result = sprt.test(wins, losses, draws);
+
+        let total_games = wins + losses + draws;
+        let score = (wins as f32 + 0.5 * draws as f32) / total_games as f32;
+
+        pb.inc(1);
+
+        match &result {
+            SPRTResult::Continue { llr, .. } => {
+                pb.set_message(format!(
+                    "W/L/D: {}/{}/{} | Score: {:.1}% | LLR: {:.2} [{:.2}, {:.2}]",
+                    wins,
+                    losses,
+                    draws,
+                    score * 100.0,
+                    llr,
+                    lower,
+                    upper
+                ));
+            }
+            SPRTResult::H1Accepted { llr, .. } => {
+                pb.finish_with_message(format!(
+                    "✓ H1 ACCEPTED! A1 is stronger. W/L/D: {}/{}/{} | LLR: {:.2} >= {:.2}",
+                    wins, losses, draws, llr, upper
+                ));
+                return (result, score, 1.0 - score);
+            }
+            SPRTResult::H0Accepted { llr, .. } => {
+                pb.finish_with_message(format!(
+                    "✓ H0 ACCEPTED! No significant difference. W/L/D: {}/{}/{} | LLR: {:.2} <= {:.2}",
+                    wins, losses, draws, llr, lower
+                ));
+                return (result, score, 1.0 - score);
+            }
+            _ => {}
+        }
+    }
+
+    // Max games reached without conclusion
+    let result = SPRTResult::Inconclusive {
+        games: wins + losses + draws,
+        llr: sprt.log_likelihood_ratio(wins, losses, draws),
+    };
+
+    let total_games = wins + losses + draws;
+    let score = (wins as f32 + 0.5 * draws as f32) / total_games as f32;
+
+    pb.finish_with_message(format!(
+        "⚠ INCONCLUSIVE after {} games. W/L/D: {}/{}/{} | Score: {:.1}%",
+        bs.len() * 2,
+        wins,
+        losses,
+        draws,
+        score * 100.0
+    ));
+
+    (result, score, 1.0 - score)
 }
 
 /// Evaluate two agents using SPRT with early termination

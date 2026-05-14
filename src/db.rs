@@ -140,8 +140,6 @@ impl StepbackBoardDB {
                 let frontstep = row[4].1.unwrap().parse::<i64>().unwrap() as u64;
                 let val: f32 = row[5].1.unwrap().parse().unwrap();
 
-                let scaled_result = (result - 0.5) * self.stepback_alpha.powi(backstep) + 0.5;
-                let val = scaled_result * self.lambda + val * (1.0 - self.lambda);
                 let alpha = self.stepback_alpha.powi(backstep);
                 let val = (result - 0.5) * alpha * self.lambda + (val - 0.5) * (1.0 - alpha * self.lambda) + 0.5;
 
@@ -150,8 +148,8 @@ impl StepbackBoardDB {
                 }else{
                     (val * 100.0).floor() as usize
                 };
-                let weight = *self.weight.get(&weight_id).unwrap() * (1.0 - (val - 0.5).powi(2) * 2.0);
-
+                // let weight = *self.weight.get(&weight_id).unwrap() * (1.0 - (val - 0.5).powi(2) * 2.0);
+                let weight = 1.0;
 
                 ts.push(WeightedTransition {
                     board: (att as u128) | ((def as u128) << 64),

@@ -1,4 +1,4 @@
-use crate::{ai::line::SimplLineEvaluator, db::StepbackBoardDB};
+use crate::{ai::line::SimplLineEvaluator, db::StepbackBoardDB, sprt::eval_actor_sqrt_from_boards};
 #[allow(warnings)]
 use crate::db::{BoardDB, WeightedTransition};
 
@@ -30,7 +30,7 @@ const BATCH_NUM: usize = 1 << 10;
 pub const LAMBDA: f32 = 0.0;
 const DECAY_ALPHA: f32 = 0.92;
 const EVAL_NUM: usize = 50;
-const LOG_LOSS_N: usize = 1000;
+const LOG_LOSS_N: usize = 100000;
 const SMOOTHING: f32 = 0.999;
 
 #[derive(Debug, Clone)]
@@ -261,10 +261,6 @@ fn play_with_eval_multi_agent(
                     val: valf,
                 });
             }
-
-            if cfg!(feature = "slow") {
-                thread::sleep(Duration::from_micros(2500));
-            }
         }
 
         let b_ = b.next(action);
@@ -305,8 +301,6 @@ fn play_with_eval_multi_agent(
         } else {
             0.0
         };
-        transitions[size - i - 1].val =
-            decay * win_rate + (1.0 - decay) * transitions[size - i - 1].val;
         reward *= -1;
         decay *= DECAY_ALPHA;
     }
@@ -393,9 +387,6 @@ fn play_with_eval(
                     result: 0.0,
                     val: valf,
                 });
-            }
-            if cfg!(feature = "slow") {
-                thread::sleep(Duration::from_micros(2500));
             }
             // action = mcts_action(&b, 500, 50);
         }
@@ -864,7 +855,6 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
             let loss = model.g.forward(vec![board, result]);
             model.g.backward();
             model.g.optimize();
-            thread::sleep(Duration::from_millis(50));
 
             let loss = loss.get_item().unwrap();
             match smoothing_loss {
@@ -891,9 +881,6 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
                     let loss = model.g.forward(vec![board, result]);
                     model.g.backward();
                     // model.g.optimize();
-                    if cfg!(feature = "slow") {
-                        thread::sleep(Duration::from_millis(50));
-                    }
                     losses.push(loss.get_item().unwrap());
                 }
                 let size = losses.len();
@@ -917,7 +904,7 @@ pub fn train_with_db(load: bool, save: bool, name: String, db_name: String, eval
 }
 
 pub fn train_model_with_db(
-    mut model: impl Trainable + EvaluatorF + Clone + 'static,
+    mut model: crate::ai::line_acumlator::TrainableSLIE,
     load: bool,
     save: bool,
     name: String,
@@ -926,7 +913,7 @@ pub fn train_model_with_db(
     eval_db_name: String,
 ) {
     use super::db::WeightedTransition;
-    let test_boards = create_eval_board(50, 2);
+    let test_boards = create_eval_board(10, 2);
     let test_actor1 = Agent::Minimax(3);
     let test_actor2 = Agent::Mcts(50, 500);
     let evaluator = super::ai::CoEvaluator::best();
@@ -935,8 +922,8 @@ pub fn train_model_with_db(
     l.load("simple.json".to_string());
     let mut l3 = NegAlphaF::new(Box::new(l.clone()), 29);
     l3.hashmap = true;
-    l3.min_depth = 5;
-    l3.timelimit = 1;
+    l3.min_depth = 7;
+    l3.timelimit = 100;
     let le = MateWrapperActor::new(Box::new(l3));
 
     let mut l_high = NegAlphaF::new(Box::new(l.clone()), 29);
@@ -952,8 +939,8 @@ pub fn train_model_with_db(
         model.load(load_name.clone());
     }
 
-    let mut db: StepbackBoardDB = StepbackBoardDB::new(&db_name, 0.97, 1.0);
-    let mut eval_db: StepbackBoardDB = StepbackBoardDB::new(&eval_db_name, 0.97, 1.0);
+    let mut db: StepbackBoardDB = StepbackBoardDB::new(&db_name, 0.97, 0.1);
+    let mut eval_db: StepbackBoardDB = StepbackBoardDB::new(&eval_db_name, 0.97, 0.1);
     println!("load db");
     let ts = db.get_all();
     let eval_ts = eval_db.get_all()[..1024].to_vec();
@@ -967,7 +954,7 @@ pub fn train_model_with_db(
         // db.set_lambda(LAMBDA);
 
         let batch_num = ts.len() / BATCH_SIZE;
-        let n = BATCH_SIZE * 500_000;
+        let n = BATCH_SIZE * 1_000_000;
         let batch_num = n / BATCH_SIZE;
 
         let pb = ProgressBar::new(batch_num as u64);
@@ -982,9 +969,6 @@ pub fn train_model_with_db(
         for t in data.iter() {
             let b = &u128_to_b(random_rot(t.board, rng.r#gen()));
             let val = model.get_val(b);
-            if cfg!(feature = "slow") {
-                thread::sleep(Duration::from_micros(200));
-            }
             // println!("val:{:#?}", bce_loss(0.5, t.t_val));
             let result = t.result;
             let t_val = t.val;
@@ -1019,7 +1003,7 @@ pub fn train_model_with_db(
                     let b = &u128_to_b(t.board);
                     let val = model.get_val(b);
 
-                    let (loss, _) = bce_loss(val, t.val);
+                    let (loss, _) = mse_loss(val, t.val);
                     losses.push(loss);
                 }
                 let size = losses.len();
@@ -1065,20 +1049,22 @@ pub fn train_model_with_db(
             let (sprt_result3, e31, e32) = eval_actor_sprt(&agent, &neg, 100, &sprt, false);
 
             // Evaluate vs SimplLineEvaluator on test boards (keep original logic)
-            let mut agent = NegAlphaF::new(Box::new(model.clone()), 29);
-            agent.hashmap = true;
-            agent.min_depth = 5;
-            agent.timelimit = 1;
+            // let mut agent = NegAlphaF::new(Box::new(model.clone()), 29);
+            let mut sprt = SPRT::with_elo_bounds(0.0, 200.0);
+            sprt.alpha = 0.01;
+            sprt.beta = 0.01;
+            let mut agent = crate::ai::line_acumlator::TestLineAcumModel::new(model.main.clone());
+            agent.limit = 100_000;
             let agent = MateWrapperActor::new(Box::new(agent));
-            let (mut e41, e42) = eval_actor_from_boards(&test_boards, &agent, &le, false);
-            if e41 > 0.6 {
-                let mut agent = NegAlphaF::new(Box::new(model.clone()), 29);
-                agent.hashmap = true;
-                agent.min_depth = 7;
-                agent.timelimit = 500;
-                let (e51, _) = eval_actor_from_boards(&test_boards, &agent, &lh, false);
-                e41 += e51 * 5.0;
-            }
+            let (sprt_result4, e41, e42) = eval_actor_sqrt_from_boards(&test_boards, &agent, &le, &sprt, false);
+            // if e41 > 0.6 {
+            //     let mut agent = NegAlphaF::new(Box::new(model.clone()), 29);
+            //     agent.hashmap = true;
+            //     agent.min_depth = 7;
+            //     agent.timelimit = 500;
+            //     let (e51, _) = eval_actor_from_boards(&test_boards, &agent, &lh, false);
+            //     e41 += e51 * 5.0;
+            // }
 
             println!(
                 "[epoch:{epoch}][step:{step}][minimax(3)]:({:.3}, {:.3}) - {:?}",
@@ -1092,8 +1078,11 @@ pub fn train_model_with_db(
                 "[epoch:{epoch}][step:{step}][neg(3)]:({:.3}, {:.3}) - {:?}",
                 e31, e32, sprt_result3
             );
-            println!("[epoch:{epoch}][step:{step}][sle(3)]:({}, {})", e41, e42);
-
+            println!(
+                "[epoch:{epoch}][step:{step}][sle(3)]:({:.3}, {:.3}) - {:?}",
+                e41, e42, sprt_result4
+            );
+            
             if max_score < e41 {
                 println!("[epoch:{epoch}]max_score:{}->{}", max_score, e41);
                 max_score = e41;
@@ -1101,6 +1090,8 @@ pub fn train_model_with_db(
                     model.train();
                     model.save(name.clone());
                 }
+            }else{
+                println!("[epoch:{epoch}]max_score:{max_score}");
             }
             if save {
                 model.train();
@@ -1399,7 +1390,8 @@ fn play_stepback(
         }
 
         if turn < random_start {
-            action = get_random(&b);
+            // action = get_random(&b);
+            action = random_model.get_action_with_temp(&b, temp);
         } else {
             // Greedy or random
             if (rng.r#gen::<f32>() < greedy_rate && !start_insert || end_insert) && model.is_some()  {
