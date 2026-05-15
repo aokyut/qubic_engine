@@ -1365,6 +1365,7 @@ pub fn create_stepback_db(
             3600 * count / (1 + start.elapsed().as_secs())
         );
 
+        println!("writing");
         for (t, backstep) in ts {
             let att = t.board as u64;
             let def = (t.board >> 64) as u64;

@@ -475,12 +475,12 @@ pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEval
         (action, val) = negscout_hash_lineinfo(
             (att, def), &lineinfo, 
             ZOBRIST_INIT_HASH, 0, d, d, -2.0, 2.0, None, best, &mut tt, &mut search_stats, &mut rng, e);
-        // println!("lmr hit rate:{}/{}[{}%]", search_stats.lmr_researched, search_stats.lmr_applied, search_stats.lmr_researched * 100 / (1 + search_stats.lmr_applied));
+        println!("lmr hit rate:{}/{}[{}%]", search_stats.lmr_researched, search_stats.lmr_applied, search_stats.lmr_researched * 100 / (1 + search_stats.lmr_applied));
         // println!("pv nodes:{}", search_stats.pv_nodes);
         let time = t.elapsed().as_micros();
-        // println!("[negscout_hash_lineinfo, depth:{d}]action:{}, val:{:#?}, time:{time}μs", action.trailing_zeros(), val);
+        println!("[negscout_hash_lineinfo, depth:{d}]action:{}, val:{:#?}, time:{time}μs", action.trailing_zeros() % 16, val);
         // println!("time:{time}μs");
-        // println!("nps: {}", search_stats.pv_nodes * 1000_000 / (1 + time as u64));
+        println!("nps: {}", search_stats.pv_nodes * 1000_000 / (1 + time as u64));
         if time > limit as u128{
             // println!("pv changes: {:#?}", search_stats.pv_changes_move_idx);
             // println!("high: {:#?}", search_stats.pv_changes_move_idx_high);
@@ -501,7 +501,7 @@ pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEval
     return (action, val.get_exval().unwrap(), search_stats);
 }
 
-const TURN_DECAY: f32 = 0.999;
+const TURN_DECAY: f32 = 1.0;
 
 // ハッシュ管理
 // Late Move Reduction
@@ -739,7 +739,7 @@ pub fn negscout_hash_lineinfo(
 
 
             if let Some(pre_move_idx) = pre_move{
-                continuous_history_val = 2.0 * stats.continuous_history_moves[pre_move_idx + is_att_flag * 64][action_idx] as f32 / stats.continuous_history_counts[pre_move_idx].max(1) as f32;
+                continuous_history_val = 4.0 * stats.continuous_history_moves[pre_move_idx + is_att_flag * 64][action_idx] as f32 / stats.continuous_history_counts[pre_move_idx].max(1) as f32;
             }else{
                 continuous_history_val = 0.0;
             }
@@ -748,8 +748,8 @@ pub fn negscout_hash_lineinfo(
                 Some(&TTEntry { hash_hi: _, fail: old_val, depth: old_depth, best_move }) => {
                     let fail_val = match old_val{
                         Ex(v) => -v,
-                        Low(v) => -(v - 0.1),
-                        High(v) => -(0.1 + v),
+                        Low(v) => -v + 0.1,
+                        High(v) => -v -1.0,
                     };
                     action_nb_vals.push((
                         action,
@@ -974,6 +974,7 @@ pub struct TestLineAcumModel{
 
 impl TestLineAcumModel{
     pub fn new(l: SimpleLineInfoEvaluator) -> Self{
+        let mut l_ = SimplLineEvaluator::new();
         return Self { l: Box::new(l), search_stats: UnsafeCell::new(SearchStats::new()), limit:1, max_depth:29};
     }
 }
@@ -1006,8 +1007,11 @@ pub struct SimpleLineInfoEvaluator {
     pub wgl2: Vec<f32>,
     pub wfl1: Vec<f32>,
     pub wgl1: Vec<f32>,
-    pub wt3: Vec<f32>,
+    // pub wt3: Vec<f32>,
+    pub wt3nw: Vec<f32>,
+    pub wt3nb: Vec<f32>,
     pub bias: f32,
+    l: SimplLineEvaluator,
 }
 
 impl SimpleLineInfoEvaluator {
@@ -1045,6 +1049,8 @@ impl SimpleLineInfoEvaluator {
 
     }
     pub fn new() -> Self {
+        let mut l = SimplLineEvaluator::new();
+        l.load(String::from("simple.json"));
         return SimpleLineInfoEvaluator {
             wfl3: vec![0.0; WFL3_WIDTH * WFL3_WIDTH],
             wgl3: vec![0.0; WGL3_WIDTH * WGL3_WIDTH],
@@ -1052,8 +1058,11 @@ impl SimpleLineInfoEvaluator {
             wgl2: vec![0.0; 64 * 64],
             wfl1: vec![0.0; WFL1_WIDTH * WFL1_WIDTH],
             wgl1: vec![0.0; WGL1_WIDTH * WGL1_WIDTH],
-            wt3: vec![0.0; 3 * WT3_SIZE * WT3_SIZE],
+            // wt3: vec![0.0; 3 * WT3_SIZE * WT3_SIZE],
+            wt3nb: vec![0.0; 12],
+            wt3nw: vec![0.0; 12],
             bias: 0.0,
+            l: l
         };
     }
 
@@ -1065,15 +1074,18 @@ impl SimpleLineInfoEvaluator {
             wgl2: s.wgl2.clone(), 
             wfl1: s.wfl1.clone(), 
             wgl1: s.wgl1.clone(), 
-            wt3: vec![0.0; 3 * WT3_SIZE * WT3_SIZE], 
-            bias: s.bias 
+            // wt3: vec![0.0; 3 * WT3_SIZE * WT3_SIZE], 
+            wt3nb: s.wt3nb.clone(),
+            wt3nw: s.wt3nw.clone(),
+            bias: s.bias,
+            l: s.clone()
         };
     }
 
     pub fn get_counts(
         (att, def): &UBoard, line_info: &LineInfo
     ) -> (
-        usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize
+        usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, 
     ) {
         let stone = att | def;
         let ground = !stone & (stone << 16 | 0xffff);
@@ -1086,13 +1098,17 @@ impl SimpleLineInfoEvaluator {
         let mut d1g = 0u32; let mut d1f = 0u32;
         let mut d2g = 0u32; let mut d2f = 0u32;
         let mut d3g = 0u32; let mut d3f = 0u32;
+        
+        let mut a3 = 0;
+        let mut d3 = 0;
 
         let mut a3_or = 0u64;
         let mut d3_or = 0u64;
         let mut a3_or_l24 = 0u64;
         let mut d3_or_l24 = 0u64;
-        let mut tb_or = 0u64;
-        let mut tw_or = 0u64;
+        // let mut tb_or = 0u64;
+        // let mut tw_or = 0u64;
+        let mut l3 = 0u64;
 
         let layer24_mask = 0xffff_0000_ffff_0000u64 & float;
         let layer3_mask  = 0x0000_ffff_0000_0000u64 & float;
@@ -1116,58 +1132,82 @@ impl SimpleLineInfoEvaluator {
             a1f += (va1 & float).count_ones();
             a2g += (va2 & ground).count_ones();
             a2f += (va2 & float).count_ones();
-            a3g += (va3 & ground).count_ones();
-            a3f += (va3 & float).count_ones();
+
+            // a3g += (va3 & ground).count_ones();
+            // a3f += (va3 & float).count_ones();
+            a3 |= va3;
+            
             d1g += (vd1 & ground).count_ones();
             d1f += (vd1 & float).count_ones();
             d2g += (vd2 & ground).count_ones();
             d2f += (vd2 & float).count_ones();
-            d3g += (vd3 & ground).count_ones();
-            d3f += (vd3 & float).count_ones();
 
-            a3_or_l24 |= va3 & layer24_mask;
-            d3_or_l24 |= vd3 & layer24_mask;
-            tb_or |= (va3 & !vd3) & layer3_mask;
-            tw_or |= (!va3 & vd3) & layer3_mask;
+            // d3g += (vd3 & ground).count_ones();
+            // d3f += (vd3 & float).count_ones();
+            d3 |= vd3;
+
+            // a3_or_l24 |= va3 & layer24_mask;
+            // d3_or_l24 |= vd3 & layer24_mask;
+            // tb_or |= (va3 & !vd3) & layer3_mask;
+            // tw_or |= (!va3 & vd3) & layer3_mask;
+            l3 |= (a2 | d2) & !stone;
         }
 
-        if tb_or == 0xffff00000000 || tw_or == 0xffff00000000{
-            pprint_uboard((*att, *def));
-            pprint_u64(*att);
-            println!("-----");
-            pprint_u64(*def);
-        }
+        // if tb_or == 0xffff00000000 || tw_or == 0xffff00000000{
+        //     pprint_uboard((*att, *def));
+        //     pprint_u64(*att);
+        //     println!("-----");
+        //     pprint_u64(*def);
+        // }
 
-        let (gg, tb, tw) = if is_black{
-            let mut gg = d3_or_l24.count_ones() as usize;
-            if gg != 0{
-                gg = (gg % 2) + 1;
-            }
-            let tb = tb_or.count_ones() as usize;
-            let tw = tw_or.count_ones() as usize;
-            (gg, tb, tw)
-        }else{
-            let mut gg = a3_or_l24.count_ones() as usize;
-            if gg != 0{
-                gg = (gg % 2) + 1;
-            }
-            let tb = tw_or.count_ones() as usize;
-            let tw = tb_or.count_ones() as usize;
-            (gg, tb, tw)
-        };
+        // let (gg, tb, tw) = if is_black{
+        //     let mut gg = d3_or_l24.count_ones() as usize;
+        //     if gg != 0{
+        //         gg = (gg % 2) + 1;
+        //     }
+        //     let tb = tb_or.count_ones() as usize;
+        //     let tw = tw_or.count_ones() as usize;
+        //     (gg, tb, tw)
+        // }else{
+        //     let mut gg = a3_or_l24.count_ones() as usize;
+        //     if gg != 0{
+        //         gg = (gg % 2) + 1;
+        //     }
+        //     let tb = tw_or.count_ones() as usize;
+        //     let tw = tb_or.count_ones() as usize;
+        //     (gg, tb, tw)
+        // };
+        let a3g = (a3 & ground).count_ones();
+        let a3f = (a3 & float).count_ones();
+        let d3g = (d3 & ground).count_ones();
+        let d3f = (d3 & float).count_ones();
 
+        let trap_3_num = (l3 & (!l3 << 16) & 0x0000_ffff_0000_0000).count_ones() as usize;
+
+        // let ans = (
+        //     a1f as usize, a2f as usize, a3f as usize, a1g as usize, a2g as usize, a3g as usize, d1f as usize, d2f as usize, d3f as usize, d1g as usize, d2g as usize, d3g as usize, gg as usize, tb as usize, tw as usize
+        // );
         let ans = (
-            a1f as usize, a2f as usize, a3f as usize, a1g as usize, a2g as usize, a3g as usize, d1f as usize, d2f as usize, d3f as usize, d1g as usize, d2g as usize, d3g as usize, gg as usize, tb as usize, tw as usize
+            a1f as usize, a2f as usize, a3f as usize, a1g as usize, a2g as usize, a3g as usize, d1f as usize, d2f as usize, d3f as usize, d1g as usize, d2g as usize, d3g as usize, trap_3_num
         );
         return ans;
     }
 
-    pub fn get_eval_from_counts(&self, af1: usize, af2: usize, af3: usize, ag1: usize, ag2: usize, ag3: usize, df1: usize, df2: usize, df3: usize, dg1: usize, dg2: usize, dg3:usize, gg: usize, tb: usize, tw: usize) -> f32{
+    pub fn get_eval_from_counts(
+        // &self, af1: usize, af2: usize, af3: usize, ag1: usize, ag2: usize, ag3: usize, df1: usize, df2: usize, df3: usize, dg1: usize, dg2: usize, dg3:usize, gg: usize, tb: usize, tw: usize
+        &self, af1: usize, af2: usize, af3: usize, ag1: usize, ag2: usize, ag3: usize, df1: usize, df2: usize, df3: usize, dg1: usize, dg2: usize, dg3:usize, t3n: usize, is_black: bool
+    ) -> f32{
         let mut val = 0.0;
 
-        if gg * WT3_SIZE * WT3_SIZE + tb * WT3_SIZE + tw >= self.wt3.len(){
-            println!("gg:{gg}, tb:{tb}, tw:{tw}");
+        // if gg * WT3_SIZE * WT3_SIZE + tb * WT3_SIZE + tw >= self.wt3.len(){
+        //     println!("gg:{gg}, tb:{tb}, tw:{tw}");
+        // }
+        if is_black {
+            val += self.wt3nb[t3n];
+        }else{
+            val += self.wt3nw[t3n];
         }
+
 
         val += self.wfl1[af1 * WFL1_WIDTH + df1]
             + self.wfl2[af2 * WL2_WIDTH + df2]
@@ -1175,14 +1215,17 @@ impl SimpleLineInfoEvaluator {
             + self.wgl1[ag1 * WGL1_WIDTH + dg1]
             + self.wgl2[ag2 * WL2_WIDTH + dg2]
             + self.wgl3[ag3 * WGL3_WIDTH + dg3]
-            + self.wt3[gg * WT3_SIZE * WT3_SIZE + tb * WT3_SIZE + tw]
+            // + self.wt3[gg * WT3_SIZE * WT3_SIZE + tb * WT3_SIZE + tw]
             + self.bias;
         return 1.0 / (1.0 + (-val).exp());
     }
 
     pub fn evaluate_board(&self, b: &UBoard, info: &LineInfo) -> f32 {
-        let (a1, a2, a3, a4, a5, a6, d1, d2, d3, d4, d5, d6, gg, tb, tw) = Self::get_counts(b, info);
-        let v = self.get_eval_from_counts(a1, a2, a3, a4, a5, a6, d1, d2, d3, d4, d5, d6, gg, tb, tw);
+        let is_black = (b.0 | b.1).count_ones() % 2 == 0;
+        // let (a1, a2, a3, a4, a5, a6, d1, d2, d3, d4, d5, d6, gg, tb, tw) = Self::get_counts(b, info);
+        let (a1, a2, a3, a4, a5, a6, d1, d2, d3, d4, d5, d6, t3n) = Self::get_counts(b, info);
+        // let v = self.get_eval_from_counts(a1, a2, a3, a4, a5, a6, d1, d2, d3, d4, d5, d6, gg, tb, tw);
+        let v = self.get_eval_from_counts(a1, a2, a3, a4, a5, a6, d1, d2, d3, d4, d5, d6, t3n, is_black);
         return v;
     }
 
@@ -1228,7 +1271,10 @@ impl SimpleLineInfoEvaluator {
 
 impl LineInfoEvaluator for SimpleLineInfoEvaluator {
     fn evaluate_lineinfo(&self, b: &UBoard, info: &LineInfo) -> f32 {
-        return self.evaluate_board(b, info) * 2.0 - 1.0;
+        // let e = self.l.evaluate_board(&Board::from(b.0, b.1, Player::Black)) * 2.0 - 1.0;
+        let self_e = self.evaluate_board(b, info) * 2.0 - 1.0;
+        // assert!((e-self_e).abs() < 0.01, "e:{e}, self_e:{self_e}");
+        return self_e;
     }
 }
 
@@ -1264,7 +1310,9 @@ impl Trainable for TrainableSLIE {
     fn update(&mut self, b: &Board, delta: f32) {
         let (att, def) = b.get_att_def();
         let line_info = LineInfo::from_board(b);
-        let (a1, a2, a3, a1_, a2_, a3_, d1, d2, d3, d1_, d2_, d3_, gg, tb, tw) =
+        // let (a1, a2, a3, a1_, a2_, a3_, d1, d2, d3, d1_, d2_, d3_, gg, tb, tw) =
+        //     SimpleLineInfoEvaluator::get_counts(&(att, def), &line_info);
+        let (a1, a2, a3, a1_, a2_, a3_, d1, d2, d3, d1_, d2_, d3_, tn3) =
             SimpleLineInfoEvaluator::get_counts(&(att, def), &line_info);
         // println!("{:#?}", (gg, tb, tw));
         // とりあえずsgd
@@ -1289,7 +1337,12 @@ impl Trainable for TrainableSLIE {
         self.main.wgl3[a3_ * WGL3_WIDTH + d3_] += delta;
         // self.main.wgl3[d3_ * WGL3_WIDTH + a3_] -= delta;
         
-        self.main.wt3[gg * WT3_SIZE * WT3_SIZE + tb * WT3_SIZE + tw] += delta;
+        if (att | def).count_ones() % 2 == 0{
+            self.main.wt3nb[tn3] += delta;
+        }else{
+            self.main.wt3nw[tn3] += delta;
+        }
+        // self.main.wt3[gg * WT3_SIZE * WT3_SIZE + tb * WT3_SIZE + tw] += delta;
         self.main.bias += delta;
     }
 

@@ -967,6 +967,7 @@ pub fn negscoutf_hash_iter(
                                 hashmap.insert(hash, (_val, r#gen));
                                 let _val = _val.inverse();
                                 if _val.is_fail_high() {
+                                    println!("hoge");
                                     return (action, High(beta), count);
                                 }
                                 val = _val.get_val();

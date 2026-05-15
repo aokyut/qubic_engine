@@ -66,10 +66,10 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut ld = NegAlphaF::new(Box::new(l.clone()), 5);
+    let mut ld = NegAlphaF::new(Box::new(l.clone()), 29);
     // l7_.hashmap = true;
     ld.scout = true;
-    ld.timelimit = 100;
+    ld.timelimit = 1000;
     ld.min_depth = 5;
     // let l7_ = MateWrapperActor::new(Box::new(l7_));
     //
@@ -104,14 +104,26 @@ fn main() {
 
     // println!("{}, {}", qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[0], qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[64]);
 
-    // let mut test_l = SimpleLineInfoEvaluator::from_sle(&l);
+    let mut test_l = SimpleLineInfoEvaluator::from_sle(&l);
     // let _ = test_l.load("slie_result.json".to_string());
 
-    // let mut test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel::new(test_l.clone());
-    // test_acum.limit = 100_000;
+    let mut test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel::new(test_l.clone());
+    test_acum.limit = 1000_000;
 
-    // let _result = eval_actor(&test_acum, &ld, 10, true);
-    // return;
+    let mut b = Board::new();
+
+    // loop{
+    //     let val1 = test_acum.get_action(&b);
+    //     let (act, val2, _)= ld.eval_with_negalpha(&b);
+    //     println!("val1:{val1}, val2:{val2}");
+    //     b = b.next(act);
+    //     if b.is_win() || b.is_draw(){
+    //         break;
+    //     }
+    // }
+
+    let _result = play_actor_from(b, &test_acum, &ld, true);
+    return;
 
     // let stats = unsafe { test_acum.search_stats.get().as_ref().unwrap()};
     // println!("test_acum search stats: {:#?},\nnps:{}/{}[{}]", stats.pv_max_idx_frac, stats.pv_nodes, stats.time, 1000_000 * stats.pv_nodes / stats.time);
