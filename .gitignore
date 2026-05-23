@@ -19,3 +19,4 @@ perf.data.old
 runs/
 perf_*
 annotate_*
+mise.toml

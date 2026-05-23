@@ -1908,8 +1908,3 @@ pub fn eval_actor(a1: &impl GetAction, a2: &impl GetAction, n: usize, render: bo
 
     (score1 / (2 * n) as f32, score2 / (2 * n) as f32)
 }
-
-
-pub type UBoard = (u64, u64);
-pub type Action = u64;
-pub type HalfBoard = u64;

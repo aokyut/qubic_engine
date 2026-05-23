@@ -1,6 +1,8 @@
 use crate::board::{
     self, get_2row_mask, get_put_reach_mask, get_reach_mask, pprint_board, pprint_u64, Board,
-    UBoard, Action, HalfBoard,
+};
+use crate::uboard::{
+    UBoard, Action, HalfBoard
 };
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};

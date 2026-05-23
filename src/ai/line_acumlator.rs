@@ -1,15 +1,20 @@
 use std::f64;
 use std::hash::Hash;
+use std::panic::panic_any;
 use std::sync::LazyLock;
 use std::cell::UnsafeCell;
 
 use super::*;
 use crate::board::{
-    Action, HalfBoard, Player, UBoard, pprint_u64
+    Player, pprint_u64
+};
+use crate::uboard::{
+    Action, HalfBoard, UBoard, UBoardActions, HalfBoardActions
 };
 use crate::ai::{Fail, EvaluatorF};
 use crate::dfpn::pprint_uboard;
 use rand::{Rng, thread_rng};
+use sqlite::ffi::SQLITE_PREPARE_PERSISTENT;
 
 // Actionから伸びるLineの情報のみを更新する
 // Actionについてはそれぞれ自分から伸びるLineのインデックスの配列を定数として保持しておく
@@ -190,11 +195,17 @@ pub struct LineInfo{
     def: HalfLineInfo,
 }
 
+struct Reachs{
+    att_reach: u64,
+    def_reach: u64,
+    att_losing: u64,
+}
+
 impl LineInfo{
     pub fn from_board(b: &Board) -> Self{
         let (a, d) = b.get_att_def();
         let p = Self::ad_board_to_halfLineInfo(a, d);
-        let e = Self::ad_board_to_halfLineInfo(d, a);
+        let e: ([u64; 7], [u64; 7], [u64; 7]) = Self::ad_board_to_halfLineInfo(d, a);
         return Self { att: p, def: e }
     }
     pub fn ad_board_to_halfLineInfo(a:u64, d:u64) -> HalfLineInfo{
@@ -245,6 +256,17 @@ impl LineInfo{
             ]
         );
         return Self { att: self.def.clone(), def: next_att_line_info }
+    }
+
+    #[inline(always)]
+    pub fn get_reachs(&self, ground: u64) -> Reachs{
+        let mut a3 = 0;
+        let mut d3 = 0;
+        for i in 0..7{
+            a3 |= !self.def.0[i] & self.att.2[i];
+            d3 |= !self.att.0[i] & self.def.2[i];
+        }
+        return Reachs { att_reach: a3 & ground, def_reach: d3 & ground, att_losing: (d3 >> 16) & ground };
     }
 }
 
@@ -326,7 +348,7 @@ impl LineStateTracker {
             let old_counts = SCORE_LUT[old_state as usize];
             let new_state = (old_state + delta) & STATE_INDEX_MASK;
             let new_counts = SCORE_LUT[new_state as usize];
-            println!("[{line_idx}]state:{old_state:0x}->{new_state:0x}, old_counts:({:0x}, {:0x}), new_counts:({:0x}, {:0x})", old_counts.0, old_counts.1, new_counts.0, new_counts.1);
+            // println!("[{line_idx}]state:{old_state:0x}->{new_state:0x}, old_counts:({:0x}, {:0x}), new_counts:({:0x}, {:0x})", old_counts.0, old_counts.1, new_counts.0, new_counts.1);
             black_counts = black_counts - old_counts.0 + new_counts.0;
             white_counts = white_counts - old_counts.1 + new_counts.1;
             new_tracker.line_state[line_idx as usize] = new_state;
@@ -359,7 +381,7 @@ pub trait LineStateTrackEvaluator{
 }
 
 #[derive(Default, Debug)]
-pub struct SearchStats {
+pub struct SearchProfiler {
     // === 基本ノード情報 ===
     nodes: u64,           // 総探索ノード数
     pub pv_nodes: u64,        // PVノード数
@@ -398,19 +420,19 @@ pub struct SearchStats {
     continuous_history_moves: Vec<Vec<u64>>,
 }
 
-impl SearchStats{
+impl SearchProfiler{
     pub fn new() -> Self{
-        let mut stats = Self::default();
-        stats.pv_max_idx_frac = vec![vec![0;20];20];
-        stats.pv_changes_move_idx = vec![0;20];
-        stats.pv_changes_move_idx_low = vec![0;20];
-        stats.pv_changes_move_idx_high = vec![0;20];
-        stats.pv_changes_move_idx_ex = vec![0;20];
-        stats.pv_count = vec![0;20];
-        stats.history_moves = vec![0;128];
-        stats.continuous_history_counts = vec![0;128];
-        stats.continuous_history_moves = vec![vec![0;64];128];
-        return stats;
+        let mut profiler = Self::default();
+        profiler.pv_max_idx_frac = vec![vec![0;20];20];
+        profiler.pv_changes_move_idx = vec![0;20];
+        profiler.pv_changes_move_idx_low = vec![0;20];
+        profiler.pv_changes_move_idx_high = vec![0;20];
+        profiler.pv_changes_move_idx_ex = vec![0;20];
+        profiler.pv_count = vec![0;20];
+        profiler.history_moves = vec![0;128];
+        profiler.continuous_history_counts = vec![0;128];
+        profiler.continuous_history_moves = vec![vec![0;64];128];
+        return profiler;
     }
 }
 
@@ -420,23 +442,23 @@ pub const ZOBRIST_INIT_HASH: u64 = 1 << 63;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug)]
-pub struct TTEntry{
+pub struct TTEntry<B: Clone + Copy>{
     hash_hi: u32,
     fail: Fail,
     depth: u8,
-    best_move: Option<u8>,
+    best_move: B,
 }
 
-pub struct TT{
-    v: Vec<TTEntry>,
+pub struct TT<B: Clone + Copy>{
+    v: Vec<TTEntry<B>>,
     mask: u64,
 }
 
-impl TT{
-    fn new(size: usize, mask: u64) -> Self{
-        return Self { v: vec![TTEntry { hash_hi: 0, fail: Fail::Ex(0.0), depth: 0, best_move: None }; size], mask }
+impl<B: Clone + Copy> TT<B>{
+    fn new(size: usize, mask: u64, default: TTEntry<B>) -> Self{
+        return Self { v: vec![default; size], mask }
     }
-    fn get(&self, hash: u64) -> Option<&TTEntry>{
+    fn get(&self, hash: u64) -> Option<&TTEntry<B>>{
         let idx = (hash & self.mask) as usize;
         let entry = self.v[idx];
         if entry.hash_hi as u64 != (hash >> 32){
@@ -444,15 +466,37 @@ impl TT{
         }
         Some(&self.v[(hash & self.mask) as usize])
     }
+    fn len(&self) -> usize{
+        let mut count = 0;
+        for tt in self.v.iter(){
+            if tt.hash_hi >> 31 == 1{
+                count += 1
+            }
+        }
+        return count;
+    }
     // 強制的に上書き
-    fn insert_force(&mut self, hash: u64, entry: TTEntry){
+    fn insert_force(&mut self, hash: u64, entry: TTEntry<B>){
         let idx = (hash & self.mask) as usize;
         self.v[idx] = entry;
     }
+
+    
 }
 
-pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEvaluator>, tt_size: u64, limit: u64) -> (Action, f32, SearchStats){
-    let mut tt = TT::new(1 << tt_size, (1 << tt_size) - 1);
+impl TT<u8>{
+    #[inline(always)]
+    fn insert_ttentry(&mut self, hash: u64, fail: Fail, depth: u8, best_move: u8){
+        let idx = (hash & self.mask) as usize;
+        if best_move >= 64{
+            panic!("");
+        }
+        self.v[idx] = TTEntry { hash_hi: (hash >> 32) as u32, fail: fail, depth: depth, best_move: best_move };
+    }
+}
+
+pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEvaluator>, tt_size: u64, limit: u64) -> (Action, f32, SearchProfiler){
+    let mut tt = TT::<Option<u8>>::new(1 << tt_size, (1 << tt_size) - 1, TTEntry {hash_hi: 0, fail:Fail::Ex(0.0), depth:0, best_move:None});
     let (att, def) = b.get_att_def();
     let lineinfo = LineInfo::from_board(b);
     let mut rng = thread_rng();
@@ -461,10 +505,10 @@ pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEval
     let t = Instant::now();
     let limit = limit; // 1秒
     let depth = depth.min((64 - (att.count_ones() + def.count_ones())) as u8);
-    let mut search_stats=SearchStats::new();
+    let mut search_profiler=SearchProfiler::new();
     for d in (3..=depth).step_by(2){
         // println!("depth:{d}");
-        search_stats = SearchStats::new();
+        search_profiler = SearchProfiler::new();
         let root_entry = tt.get(ZOBRIST_INIT_HASH);
         let best;
         if let Some(&TTEntry { hash_hi: _, fail: old_val, depth: old_depth, best_move }) = root_entry{
@@ -474,21 +518,23 @@ pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEval
         }
         (action, val) = negscout_hash_lineinfo(
             (att, def), &lineinfo, 
-            ZOBRIST_INIT_HASH, 0, d, d, -2.0, 2.0, None, best, &mut tt, &mut search_stats, &mut rng, e);
-        println!("lmr hit rate:{}/{}[{}%]", search_stats.lmr_researched, search_stats.lmr_applied, search_stats.lmr_researched * 100 / (1 + search_stats.lmr_applied));
-        // println!("pv nodes:{}", search_stats.pv_nodes);
+            ZOBRIST_INIT_HASH, 0, d, d, -2.0, 2.0, None, best, &mut tt, &mut search_profiler, &mut rng, e);
+            // println!("pv nodes:{}", search_profiler.pv_nodes);
         let time = t.elapsed().as_micros();
-        println!("[negscout_hash_lineinfo, depth:{d}]action:{}, val:{:#?}, time:{time}μs", action.trailing_zeros() % 16, val);
+        if cfg!(feature="view"){
+            println!("[negscout_hash_lineinfo, depth:{d}]action:{}, val:{:#?}, time:{time}μs", action.trailing_zeros() % 16, val);
+            println!("lmr hit rate:{}/{}[{}%]", search_profiler.lmr_researched, search_profiler.lmr_applied, search_profiler.lmr_researched * 100 / (1 + search_profiler.lmr_applied));
+            println!("nps: {}", search_profiler.pv_nodes * 1000_000 / (1 + time as u64));
+        }
         // println!("time:{time}μs");
-        println!("nps: {}", search_stats.pv_nodes * 1000_000 / (1 + time as u64));
         if time > limit as u128{
-            // println!("pv changes: {:#?}", search_stats.pv_changes_move_idx);
-            // println!("high: {:#?}", search_stats.pv_changes_move_idx_high);
-            // println!("low: {:#?}", search_stats.pv_changes_move_idx_low);
-            // println!("ex: {:#?}", search_stats.pv_changes_move_idx_ex);
-            // println!("pv max_idx: {:#?}", search_stats.pv_max_idx_frac);
-            search_stats.time = time as u64;
-            // println!("{}", search_stats.history_moves.iter().sum::<u64>());
+            // println!("pv changes: {:#?}", search_profiler.pv_changes_move_idx);
+            // println!("high: {:#?}", search_profiler.pv_changes_move_idx_high);
+            // println!("low: {:#?}", search_profiler.pv_changes_move_idx_low);
+            // println!("ex: {:#?}", search_profiler.pv_changes_move_idx_ex);
+            // println!("pv max_idx: {:#?}", search_profiler.pv_max_idx_frac);
+            search_profiler.time = time as u64;
+            // println!("{}", search_profiler.history_moves.iter().sum::<u64>());
             break;
         }
         if d != depth{
@@ -498,7 +544,7 @@ pub fn call_negscout_hash_lineinfo(b:&Board, depth: u8, e: &Box<dyn LineInfoEval
     let time = t.elapsed().as_micros();
     // println!("time:{time}μs");
 
-    return (action, val.get_exval().unwrap(), search_stats);
+    return (action, val.get_exval().unwrap(), search_profiler);
 }
 
 const TURN_DECAY: f32 = 1.0;
@@ -516,13 +562,13 @@ pub fn negscout_hash_lineinfo(
     beta: f32,
     pre_move: Option<usize>,
     best_move: Option<u8>,
-    tt: &mut TT,
-    stats: &mut SearchStats,
+    tt: &mut TT<Option<u8>>,
+    profiler: &mut SearchProfiler,
     rng: &mut impl Rng,
     e: &Box<dyn LineInfoEvaluator>
 ) -> (Action, Fail){
     use Fail::*;
-    stats.pv_nodes += 1;
+    profiler.pv_nodes += 1;
 
     let four_mask = get_reach_mask(att, def);
     if four_mask != 0 {
@@ -569,8 +615,6 @@ pub fn negscout_hash_lineinfo(
         }
         return (max_action, Ex(max_val));
     }else{
-        let mut action_nb_vals: Vec<(Action, u8, UBoard, LineInfo, f32, u64, (Option<Fail>, u8), Option<u8>)> = Vec::new();
-
         let mut valid_action_mask = {
             let stone = att | def;
             !stone & ((stone << 16) | 0xffff)
@@ -589,29 +633,29 @@ pub fn negscout_hash_lineinfo(
                 if let Some(&TTEntry { hash_hi: _, fail: old_val, depth: old_depth, best_move: next_best_move }) = tt_entry
                 {
                     if old_depth >= depth - 1{
-                        stats.tt_hits += 1;
+                        profiler.tt_hits += 1;
                         match old_val{
                             High(x) => {
                                 if alpha >= -x{
-                                    stats.tt_alpha_cutoffs += 1;
+                                    profiler.tt_alpha_cutoffs += 1;
                                     break 'outer;
                                 }
                             },
                             Low(x) => {
                                 if beta <= -x{
-                                    stats.tt_beta_cutoffs += 1;
-                                    stats.pv_max_idx_frac[1 + valid_action_mask.count_ones() as usize + 1][0] += 1;
+                                    profiler.tt_beta_cutoffs += 1;
+                                    profiler.pv_max_idx_frac[1 + valid_action_mask.count_ones() as usize + 1][0] += 1;
                                     return (action, High(-x));
                                 }
                             },
                             Ex(x) => {
-                                stats.tt_exact_hits += 1;
+                                profiler.tt_exact_hits += 1;
                                 if beta <= -x{
-                                    stats.tt_beta_cutoffs += 1;
-                                    stats.pv_max_idx_frac[1 + valid_action_mask.count_ones() as usize + 1][0] += 1;
+                                    profiler.tt_beta_cutoffs += 1;
+                                    profiler.pv_max_idx_frac[1 + valid_action_mask.count_ones() as usize + 1][0] += 1;
                                     return (action, High(-x));
                                 }else if alpha >= -x{
-                                    stats.tt_alpha_cutoffs += 1;
+                                    profiler.tt_alpha_cutoffs += 1;
                                     break 'outer;
                                 }
                                 // alpha < -x < beta
@@ -619,8 +663,8 @@ pub fn negscout_hash_lineinfo(
                                 max_move_idx = 0;
                                 max_val = -x;
     
-                                stats.pv_changes += 1;
-                                stats.pv_changes_move_idx[0] += 1;
+                                profiler.pv_changes += 1;
+                                profiler.pv_changes_move_idx[0] += 1;
     
                                 alpha = max_val;
                                 break 'outer;
@@ -640,7 +684,7 @@ pub fn negscout_hash_lineinfo(
                             Some(action.trailing_zeros() as usize),
                             next_best_move,
                             tt,
-                            stats,
+                            profiler,
                             rng,
                             e
                         );
@@ -658,7 +702,7 @@ pub fn negscout_hash_lineinfo(
                                 break 'outer;
                             },
                             Low(v) => {
-                                stats.pv_max_idx_frac[1 + action_nb_vals.len()][max_move_idx] += 1;
+                                profiler.pv_max_idx_frac[1 + valid_action_mask.count_ones() as usize][0] += 1;
                                 return (action, High(-v));
                             },
                             Ex(v) => {
@@ -668,8 +712,8 @@ pub fn negscout_hash_lineinfo(
 
                         max_val = val;
                         max_move_idx = 0;
-                        stats.pv_changes += 1;
-                        stats.pv_changes_move_idx[0] += 1;
+                        profiler.pv_changes += 1;
+                        profiler.pv_changes_move_idx[0] += 1;
                         alpha = max_val;
                     }
                 }else{
@@ -686,7 +730,7 @@ pub fn negscout_hash_lineinfo(
                         Some(action.trailing_zeros() as usize),
                         None,
                         tt,
-                        stats,
+                        profiler,
                         rng,
                         e
                     );
@@ -704,7 +748,7 @@ pub fn negscout_hash_lineinfo(
                             break 'outer;
                         },
                         Low(v) => {
-                            stats.pv_max_idx_frac[1 + action_nb_vals.len()][max_move_idx] += 1;
+                            profiler.pv_max_idx_frac[1 + valid_action_mask.count_ones() as usize][0] += 1;
                             return (action, High(-v));
                         },
                         Ex(v) => {
@@ -714,14 +758,16 @@ pub fn negscout_hash_lineinfo(
 
                     max_val = val;
                     max_move_idx = 0;
-                    stats.pv_changes += 1;
-                    stats.pv_changes_move_idx[0] += 1;
+                    profiler.pv_changes += 1;
+                    profiler.pv_changes_move_idx[0] += 1;
                     alpha = max_val;
                 }
             }
         }
 
         let mut generator: Vec<(u64, usize)> = action_mask2vec(valid_action_mask);
+        // let mut action_nb_vals: Vec<(Action, u8, UBoard, LineInfo, f32, u64, (Option<Fail>, u8), Option<u8>)> = Vec::new();
+        let mut action_nb_vals: Vec<(Action, u8, UBoard, f32, u64, (Option<Fail>, u8), Option<u8>)> = Vec::new();
         for (idx, &(action, action_idx)) in generator.iter().enumerate(){
             if let Some(&(second_action, second_idx)) =  generator.get(idx + 1){
                 let second_hash = ZOBRIST_TABLE[second_idx + is_att_flag * 64] ^ now_hash;
@@ -732,14 +778,14 @@ pub fn negscout_hash_lineinfo(
                 }
             }
 
-            let next_line_info = line_info.next(action_idx);
+            // let next_line_info = line_info.next(action_idx);
             let hash = ZOBRIST_TABLE[action_idx + is_att_flag * 64] ^ now_hash;
             let tt_entry = tt.get(hash);
             let continuous_history_val;
 
 
             if let Some(pre_move_idx) = pre_move{
-                continuous_history_val = 4.0 * stats.continuous_history_moves[pre_move_idx + is_att_flag * 64][action_idx] as f32 / stats.continuous_history_counts[pre_move_idx].max(1) as f32;
+                continuous_history_val = 4.0 * profiler.continuous_history_moves[pre_move_idx + is_att_flag * 64][action_idx] as f32 / profiler.continuous_history_counts[pre_move_idx].max(1) as f32;
             }else{
                 continuous_history_val = 0.0;
             }
@@ -755,7 +801,6 @@ pub fn negscout_hash_lineinfo(
                         action,
                         action_idx as u8,
                         (def, att | action),
-                        next_line_info,
                         fail_val + continuous_history_val,
                         hash,
                         (Some(
@@ -770,15 +815,15 @@ pub fn negscout_hash_lineinfo(
                 }
                 None => {
                     let next_board = (def, att | action);
-                    let v = -e.evaluate_lineinfo(&next_board, &next_line_info);
-                    action_nb_vals.push((action, action_idx as u8, next_board, next_line_info, v + continuous_history_val, hash, (None, 0), None))
+                    // let v = -e.evaluate_lineinfo(&next_board, &next_line_info);
+                    action_nb_vals.push((action, action_idx as u8, next_board, -1.0 + continuous_history_val, hash, (None, 0), None))
                 }
             }
         }
 
         action_nb_vals.sort_by(|a, b| b.4.partial_cmp(&a.4).unwrap());
 
-        for (move_idx, &(action, action_idx, next_board, ref next_line_info, sort_val, hash, (hit, old_depth), next_best_move)) in action_nb_vals.iter().enumerate(){
+        for (move_idx, &(action, action_idx, next_board,  sort_val, hash, (hit, old_depth), next_best_move)) in action_nb_vals.iter().enumerate(){
             let mut val=-2.0;
             let mut is_set = false;
 
@@ -791,23 +836,23 @@ pub fn negscout_hash_lineinfo(
             if let Some(fail_val) = hit.clone()
             && old_depth >= depth - 1
             {
-                stats.tt_hits += 1;
+                profiler.tt_hits += 1;
                 match fail_val{
                     High(x) => {
                         if beta < x{
-                            stats.tt_beta_cutoffs += 1;
-                            stats.pv_max_idx_frac[action_nb_vals.len()][move_idx] += 1;
+                            profiler.tt_beta_cutoffs += 1;
+                            profiler.pv_max_idx_frac[action_nb_vals.len()][move_idx] += 1;
                             return (action, High(x));
                         }
                     },
                     Low(x) => {
                         if alpha >= x{
-                            stats.tt_alpha_cutoffs += 1;
+                            profiler.tt_alpha_cutoffs += 1;
                             continue;
                         }
                     },
                     Ex(x) => {
-                        stats.tt_exact_hits += 1;
+                        profiler.tt_exact_hits += 1;
                         val = TURN_DECAY * x;
                         is_set = true;
                     }
@@ -815,14 +860,15 @@ pub fn negscout_hash_lineinfo(
             }
 
             let (mut next_action, mut next_fail);
+            let next_line_info = line_info.next(action_idx as usize);
 
             if !is_set{
                 if reduction_flag{
                     // null window search
-                    stats.lmr_applied += 1;
+                    profiler.lmr_applied += 1;
                     (next_action, next_fail) = negscout_hash_lineinfo(
                         next_board, 
-                        next_line_info, 
+                        &next_line_info, 
                         hash,
                         1 - is_att_flag, 
                         reduction_depth, 
@@ -832,14 +878,14 @@ pub fn negscout_hash_lineinfo(
                         Some(action.trailing_zeros() as usize),
                         next_best_move,
                         tt,
-                        stats,
+                        profiler,
                         rng,
                         e
                     );
                 }else{
                     (next_action, next_fail) = negscout_hash_lineinfo(
                         next_board, 
-                        next_line_info, 
+                        &next_line_info, 
                         hash,
                         1 - is_att_flag, 
                         depth - 1, 
@@ -849,7 +895,7 @@ pub fn negscout_hash_lineinfo(
                         Some(action.trailing_zeros() as usize),
                         next_best_move,
                         tt,
-                        stats,
+                        profiler,
                         rng,
                         e
                     );
@@ -865,9 +911,9 @@ pub fn negscout_hash_lineinfo(
                 if reduction_flag{
                     if !next_fail.is_fail_high(){            
                         // println!("next_fail:{:#?}, alpha:{}, beta:{}", next_fail, -(alpha + 0.00001), -alpha);
-                        stats.lmr_researched += 1;
+                        profiler.lmr_researched += 1;
                         (next_action, next_fail) = negscout_hash_lineinfo(
-                            next_board, next_line_info, hash, 1 - is_att_flag, depth - 1, max_depth, -beta, -alpha, Some(action.trailing_zeros() as usize), next_best_move, tt, stats, rng, e
+                            next_board, &next_line_info, hash, 1 - is_att_flag, depth - 1, max_depth, -beta, -alpha, Some(action.trailing_zeros() as usize), next_best_move, tt, profiler, rng, e
                         );
                         if old_depth < depth - 1{
                             tt.insert_force(hash, TTEntry { hash_hi: (hash >> 32) as u32, fail: next_fail, depth: depth - 1, best_move: new_best_move });
@@ -884,7 +930,7 @@ pub fn negscout_hash_lineinfo(
                         continue;
                     },
                     Low(v) => {
-                        stats.pv_max_idx_frac[action_nb_vals.len()][max_move_idx] += 1;
+                        profiler.pv_max_idx_frac[action_nb_vals.len()][max_move_idx] += 1;
                         return (action, High(-v));
                     },
                     Ex(v) => {
@@ -904,33 +950,33 @@ pub fn negscout_hash_lineinfo(
                 max_move_idx = move_idx;
 
                 max_action = action;
-                stats.pv_changes += 1;
-                stats.pv_changes_move_idx[move_idx] += 1;
+                profiler.pv_changes += 1;
+                profiler.pv_changes_move_idx[move_idx] += 1;
                 if let Some(fail_val) = hit{
                     if fail_val.is_fail_low(){
-                        stats.pv_changes_move_idx_low[move_idx] += 1;
+                        profiler.pv_changes_move_idx_low[move_idx] += 1;
                     }else if fail_val.is_fail_high(){
-                        stats.pv_changes_move_idx_high[move_idx] += 1;
+                        profiler.pv_changes_move_idx_high[move_idx] += 1;
                     }else{
-                        stats.pv_changes_move_idx_ex[move_idx] += 1;
+                        profiler.pv_changes_move_idx_ex[move_idx] += 1;
                     }
                 }
 
                 if alpha < max_val{
                     alpha = max_val;
                     if alpha > beta{
-                        stats.cut_nodes += 1;
+                        profiler.cut_nodes += 1;
                         if let Some(pre_move) = pre_move{
-                            stats.history_moves[pre_move] += 1;
+                            profiler.history_moves[pre_move] += 1;
                             if move_idx == 0{
-                                stats.continuous_history_counts[pre_move] += 1;
-                                stats.continuous_history_moves[pre_move][action.trailing_zeros() as usize] += 1;
+                                profiler.continuous_history_counts[pre_move] += 1;
+                                profiler.continuous_history_moves[pre_move][action.trailing_zeros() as usize] += 1;
                             }
                         }
                         if move_idx == 0{
-                            stats.cut_on_first_move += 1;
+                            profiler.cut_on_first_move += 1;
                         }else{
-                            stats.cut_on_later_move += 1;
+                            profiler.cut_on_later_move += 1;
                         }
                         // println!("beta cut");
                         return (max_action, High(alpha));
@@ -938,36 +984,1038 @@ pub fn negscout_hash_lineinfo(
                 }
             }else if max_val == val{
                 max_action_count += 1;
-                stats.pv_additionals += 1;
+                profiler.pv_additionals += 1;
                 if rng.r#gen::<u32>() % max_action_count == 0{
                     max_action = action;
                 }
             }
         }
 
-        stats.pv_count[max_action_count as usize] += 1;
+        profiler.pv_count[max_action_count as usize] += 1;
 
         if max_val < alpha{
             return (max_action, Low(alpha));
         }
 
-        stats.pv_max_idx_frac[action_nb_vals.len()][max_move_idx] += 1;
+        profiler.pv_max_idx_frac[action_nb_vals.len()][max_move_idx] += 1;
 
         return (max_action, Ex(max_val));
     }
 }
 
-// impl<E: EvaluatorF> LineInfoEvaluator for E{
-//     fn evaluate(&self, board:&UBoard, line_info: &LineInfo) -> f32 {
-//         let b = Board::from(board.0, board.1, Player::Black);
-//         let f = self.eval_func_f32(&b) * 2.0 - 1.0;
-//         return f
-//     }
-// }
+#[derive(Clone, Debug)]
+pub enum FailType{
+    High,
+    Low,
+    Ex
+}
+
+#[derive(Clone, Debug)]
+pub enum CutOffSource{
+    Winning,
+    Blocking,
+    TTValueCut(FailType),
+    TTMove,
+    Killer0,
+    Killer1,
+    History,
+}
+
+#[derive(Clone, Debug)]
+pub enum HitSource{
+    TTable,
+    TTBestMove,
+    K0,
+    K1,
+    History,
+}
+
+#[derive(Clone, Debug)]
+pub enum PVSearchEvent{
+    Hit{source: HitSource, is_pv:bool, depth:u8},
+    CutOff{source:CutOffSource, is_pv:bool, depth:u8, action_num:u8, action_idx:u8},
+    Call{is_pv: bool, depth: u8, ply: u8}
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct CutOffRecord{
+
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct PVSearchProfiler{
+    cut_node_tt_depth_eq: u64,
+    cut_node_tt_depth_gt: u64,
+    cut_node_tt_cutoff_beta: u64,
+    cut_node_tt_cutoff_alpha: u64,
+    cut_node_tt_cutoff_ex: u64,
+    scout_attempt: u64,
+    scout_failures: u64,
+    events: Vec<PVSearchEvent>,
+    call_blocking: u64,
+    call_tt: u64,
+}
+
+impl PVSearchProfiler{
+    fn new(capacity: usize) -> Self{
+        let mut p = Self::default();
+        p.events = Vec::with_capacity(capacity);
+        p
+    }
+    fn push_hit(&mut self, source: HitSource, is_pv: bool, depth: u8){
+        self.events.push(PVSearchEvent::Hit { source: source, is_pv:is_pv, depth:depth });
+    }
+    fn push_cut(&mut self, source: CutOffSource, is_pv: bool, depth: u8, action_num: u8, action_idx:u8){
+        self.events.push(PVSearchEvent::CutOff { source: source, is_pv:is_pv, depth:depth, action_num:action_num, action_idx:action_idx });
+    }
+    fn push_call(&mut self, is_pv: bool, depth: u8, ply: u8){
+        self.events.push(PVSearchEvent::Call { is_pv:is_pv, depth:depth, ply:ply });
+    }
+}
+
+pub struct PVSearchStats{
+    killer_moves: [[u8;2];64],
+    move_history: [i16; 128], // [att0, ... , att63, def0, ... def63]
+    continuous_history1: [[i16;64];128], // 1手前
+    continuous_history2: [[i16;64];128], // 2手前
+    continuous_history4: [[i16;64];128], // 3手前
+    continuous_history6: [[i16;64];128], // 4手前
+}
+
+#[inline(always)]
+fn update_history_array(entry: &mut i16, bonus: i16){
+    *entry += bonus - (*entry * bonus.abs() >> HIST_MAX_DIGIT);
+}
+
+impl PVSearchStats{
+    fn default_from_board(att: u64, def: u64) -> Self{
+        let idx = if def == 0{
+            63
+        }else{
+            def.trailing_zeros() as u8
+        };
+        return PVSearchStats { killer_moves: [[idx; 2]; 64], move_history: [0;128], continuous_history1: [[0;64];128], continuous_history2: [[0;64];128], continuous_history4: [[0;64];128], continuous_history6: [[0;64];128] };
+    }
+    #[inline(always)]
+    fn update_history(&mut self, searched_actions:&[u8], last_action: u8, move_history: u64, depth: u8, ply: u8, is_true_att: u8){
+        // update killer
+        let offset = (is_true_att << 6) as usize;
+        let bonus = (depth as i16).pow(2).min(BONUS_MAX);
+        let last_action = last_action as usize;
+        self.killer_moves[ply as usize] = [last_action as u8, self.killer_moves[ply as usize][0]];
+        if ply >= 6{
+            let c1: usize = (move_history & 0x3f) as usize;
+            let c2 = ((move_history >> 6) & 0x3f) as usize;
+            let c4 = ((move_history >> 18) & 0x3f) as usize;
+            let c6 = ((move_history >> 30) & 0x3f) as usize;
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            update_history_array(&mut self.continuous_history1[c1][last_action], bonus);
+            update_history_array(&mut self.continuous_history2[c2][last_action], bonus);
+            update_history_array(&mut self.continuous_history4[c4][last_action], bonus);
+            update_history_array(&mut self.continuous_history6[c6][last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+                update_history_array(&mut self.continuous_history1[c1][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history2[c2][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history4[c4][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history6[c6][searched_action as usize], -bonus);
+            }
+        }else if ply >= 4{
+            let c1: usize = (move_history & 0x3f) as usize;
+            let c2 = ((move_history >> 6) & 0x3f) as usize;
+            let c4 = ((move_history >> 18) & 0x3f) as usize;
+            let c6 = ((move_history >> 30) & 0x3f) as usize;
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            update_history_array(&mut self.continuous_history1[c1][last_action], bonus);
+            update_history_array(&mut self.continuous_history2[c2][last_action], bonus);
+            update_history_array(&mut self.continuous_history4[c4][last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+                update_history_array(&mut self.continuous_history1[c1][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history2[c2][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history4[c4][searched_action as usize], -bonus);
+            }
+        }else if ply >= 2{
+            let c1: usize = (move_history & 0x3f) as usize;
+            let c2 = ((move_history >> 6) & 0x3f) as usize;
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            update_history_array(&mut self.continuous_history1[c1][last_action], bonus);
+            update_history_array(&mut self.continuous_history2[c2][last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+                update_history_array(&mut self.continuous_history1[c1][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history2[c2][searched_action as usize], -bonus);
+            }
+        }else if ply >= 1{
+            let c1: usize = (move_history & 0x3f) as usize;
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            update_history_array(&mut self.continuous_history1[c1][last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+                update_history_array(&mut self.continuous_history1[c1][searched_action as usize], -bonus);
+            }
+        }else{
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+            }
+        }
+    }
+}
+
+
+pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, depth: u8, e: &E, tt_size: u64, limit: u64) -> (Action, f32, SearchProfiler){
+    let mut tt = TT::<u8>::new(1 << tt_size, (1 << tt_size) - 1, TTEntry { hash_hi: 0, fail: Fail::Ex(0.0), depth:0, best_move: 0 });
+    let (att, def) = b.get_att_def();
+    let lineinfo = LineInfo::from_board(b);
+    let mut rng = thread_rng();
+    
+    let (mut action, mut val) = (0, Fail::Ex(0.0));
+    let t = Instant::now();
+    let limit = limit; // 1秒
+    let depth = depth.min((64 - (att.count_ones() + def.count_ones())) as u8);
+    let mut search_profiler=SearchProfiler::new();
+    let mut stats = PVSearchStats::default_from_board(att, def);
+    let mut profiler = PVSearchProfiler::new(1_000_000);
+    for d in (1..=depth).step_by(2){
+        // println!("depth:{d}");
+        profiler = PVSearchProfiler::new(1_000_000);
+        let root_entry = tt.get(ZOBRIST_INIT_HASH);
+        
+        (action, val) = pv_search_lineinfo::<true, _>(
+            (att, def), &lineinfo, ZOBRIST_INIT_HASH, 0, d, 0, d, -1.0, 1.0, 0, e, &mut tt, &mut stats, &mut profiler, &mut rng);
+        let time = t.elapsed().as_micros();
+        if cfg!(feature="view"){
+            use PVSearchEvent::*;
+            let mut call = 0;
+            let mut catoff = 0;
+            for event in profiler.events{
+                match event{
+                    Call { is_pv, depth, ply } => {
+                        call += 1;
+                    },
+                    _ => {}
+                }
+            }
+            let tt_used = tt.len();
+            let tt_len = 1 << tt_size;
+
+            let nps = call * 1_000_000 / (1 + time as u64);
+            let tt_occupied_rate = 100 * tt_used / tt_len;
+            let action = action.trailing_zeros() % 16;
+            println!("[pvsearch:d{d}]action:{action}, val:{val:#?}, call/time:{call}[n]/{time}[μs]-{nps}[nps], tt_use_rate:{tt_used}/{tt_len}[{tt_occupied_rate}%]")
+        }
+        // println!("time:{time}μs");
+        if time > limit as u128{
+            // println!("pv changes: {:#?}", search_profiler.pv_changes_move_idx);
+            // println!("high: {:#?}", search_profiler.pv_changes_move_idx_high);
+            // println!("low: {:#?}", search_profiler.pv_changes_move_idx_low);
+            // println!("ex: {:#?}", search_profiler.pv_changes_move_idx_ex);
+            // println!("pv max_idx: {:#?}", search_profiler.pv_max_idx_frac);
+            search_profiler.time = time as u64;
+            // println!("{}", search_profiler.history_moves.iter().sum::<u64>());
+            break;
+        }
+        if d != depth{
+            continue;
+        }
+    }
+    let time = t.elapsed().as_micros();
+    // println!("time:{time}μs");
+
+    println!("val:{:#?}", val);
+
+    return (action, val.get_val(), search_profiler);
+}
+
+
+const HIST_MAX_DIGIT: u8 = 7;
+const HIST_MAX: i16 = 1 << 7 ;
+const BONUS_MAX: i16 = HIST_MAX / 4;
+const HISTORY_MASK: u64 = 0xffff_ffff_ffff;
+
+pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
+    (att, def): UBoard,
+    info: &LineInfo,
+    hash: u64,
+    is_true_att: u8,
+    depth: u8,
+    ply: u8,
+    max_depth: u8,
+    alpha: f32,
+    beta: f32,
+    move_history: u64,
+    e: &E,
+    tt: &mut TT<u8>,
+    stats: &mut PVSearchStats,
+    profiler: &mut PVSearchProfiler,
+    rng: &mut impl Rng,
+) -> (Action, Fail){
+    use Fail::*;
+    if cfg!(feature="search_profile"){
+        profiler.push_call(IS_PV, depth, ply);
+    }
+    if depth==0{
+        let v = e.evaluate_lineinfo(&(att, def), &info);
+        if v <= alpha{
+            return (0, Low(v));
+        }else if v >= beta{
+            return (0, High(v));
+        }else{
+            return (0, Ex(v));
+        }
+    }
+    // LineInfoを使ったリーチ探索を行う
+    let (stone, valid_mask, _) = (att, def).get_sgf();
+    let Reachs { att_reach, def_reach, att_losing } = info.get_reachs(valid_mask);
+    let att_offset = (is_true_att << 6) as u64;
+    let move_history = move_history & HISTORY_MASK;
+    if att_reach != 0 {
+        // wining move
+        if cfg!(feature="search_profile"){
+            profiler.push_cut(
+                CutOffSource::Winning, IS_PV, depth, valid_mask.count_ones() as u8, 0);
+        }
+        let action = att_reach.get_lsb();
+        
+        return (action, High(1.0));
+    }else if stone.count_ones() == 63{
+        // def_reachの後に置くと一手飛ばして終了盤面が入力される可能性がある。
+        if 0.0 <= alpha{
+            return (!stone, Low(0.0));
+        }else if 0.0 >= beta{
+            return (!stone, High(0.0));
+        }else{
+            return (!stone, Ex(0.0));
+        }
+    }else if def_reach != 0{
+        // blocking move
+        let action = def_reach.get_lsb();
+        let next_att = att | action;
+        let action_idx = action.trailing_zeros() as usize;
+        let next_info = info.next(action_idx);
+        let next_hash = hash ^ ZOBRIST_TABLE[action_idx + (att_offset as usize)];
+        let next_move_history = (move_history << 6) | action_idx as u64;
+        let (_, v) = pv_search_lineinfo::<IS_PV, E>(
+                (def, next_att), 
+                &next_info, 
+                next_hash, 
+                1- is_true_att,
+                depth - 1, 
+                ply + 1, 
+                max_depth, 
+                -beta, 
+                -alpha, 
+                next_move_history,
+                e, 
+                tt, 
+                stats, 
+                profiler, 
+                rng
+            );
+        
+        if cfg!(feature="search_profile"){
+            profiler.call_blocking += 1;
+            profiler.push_cut(
+                CutOffSource::Blocking, IS_PV, depth, valid_mask.count_ones() as u8, 0);
+        }
+        match v{
+            High(x) => return(action, Low(-x)),
+            Low(x) => return(action, High(-x)),
+            Ex(x) => return(action, Ex(-x))
+        }
+    }
+    // valid_maskから即負けの手を取り除く
+    let mut valid_mask = valid_mask ^ att_losing;
+    if valid_mask == 0 {
+        // 全合法手が即負け → 負けを返す
+        if att_losing == 0{
+            pprint_uboard((att, def));
+            panic!("att_losing == 0");
+        }
+        let action_idx = att_losing.trailing_zeros();
+        tt.insert_ttentry(hash, Low(-1.0), depth, action_idx as u8);
+        return (1 << action_idx, Low(-1.0));
+    }
+    let action_num = valid_mask.count_ones() as u8;
+    let mut searched_action_num = 0;
+    
+    // 1. TTEntry <- TT.get(hash)
+    //     1. alpha-beta窓を使って探索を行う
+    // 1. TTからbestなアクションを取ってきて探索
+    //     1. PVノードのときはカットオフを起こさない（これより深いノードのTTは存在しないので調べる必要もない）
+    // ttprobe
+    let mut alpha = alpha;
+    let orig_alpha = alpha;
+    let mut max_val = -2.0;
+    let mut max_action = 0;
+    let mut searched_actions = Vec::new(); // continuous history 更新用
+    let ttentry = tt.get(hash);
+    
+    match ttentry {
+        Some(TTEntry { hash_hi, fail, depth:tt_depth, best_move }) if valid_mask & (1 << *best_move) != 0 => {
+            let action = 1 << *best_move;
+            valid_mask ^= action;
+            if cfg!(feature="search_profile"){
+                profiler.push_hit(HitSource::TTable, IS_PV, depth);
+            }
+            // >=で良いのか？ tt_depth > depthの時、手番の関係で誤った判断を下す可能性がある。
+            if !IS_PV && *tt_depth >= depth{
+                match fail{
+                    High(x) if *x >= beta => {
+                        if cfg!(feature="search_profile"){
+                            profiler.cut_node_tt_cutoff_beta += 1;
+                            if *tt_depth == depth{
+                                profiler.cut_node_tt_depth_eq+=1;
+                            }else{
+                                profiler.cut_node_tt_depth_gt+=1;
+                            }
+                            
+                            profiler.push_cut(CutOffSource::TTValueCut((FailType::High)), IS_PV, depth, valid_mask.count_ones() as u8, 0);
+                        }
+                        return (1 << *best_move, High(*x));
+                    },
+                    Low(x) if *x <= alpha => {
+                        if cfg!(feature="search_profile"){
+                            profiler.cut_node_tt_cutoff_alpha;
+                            if *tt_depth == depth{
+                                profiler.cut_node_tt_depth_eq+=1;
+                            }else{
+                                profiler.cut_node_tt_depth_gt+=1;
+                            }
+                            profiler.push_cut(CutOffSource::TTValueCut((FailType::Low)), IS_PV, depth, valid_mask.count_ones() as u8, 0);
+                        }
+                        return (0, Low(*x));
+                    },
+                    Ex(x) => {
+                        if cfg!(feature="search_profile"){
+                            profiler.cut_node_tt_cutoff_ex;
+                            if *tt_depth == depth{
+                                profiler.cut_node_tt_depth_eq+=1;
+                            }else{
+                                profiler.cut_node_tt_depth_gt+=1;
+                            }
+                            profiler.push_cut(CutOffSource::TTValueCut((FailType::Ex)), IS_PV, depth, valid_mask.count_ones() as u8, 0);
+                        }
+
+                        let action = 1 << *best_move;
+                        if *x <= alpha{
+                            return (action, Fail::Low(*x));
+                        }else if *x >= beta{
+                            return (action, Fail::High(*x));
+                        }else{
+                            return (action, Fail::Ex(*x));
+                        }
+                    },
+                    _ => {}
+                }
+            } 
+            // evaluate best move
+            let next_uboard = (def, att | action);
+            let next_hash = hash ^ ZOBRIST_TABLE[*best_move as usize + (att_offset as usize)];
+
+            let next_info = info.next(*best_move as usize);
+            let next_move_history = (move_history << 6) | *best_move as u64;
+
+            let (next_action, next_val) = pv_search_lineinfo::<IS_PV, E>(
+                    next_uboard, 
+                    &next_info, 
+                    next_hash, 
+                    1- is_true_att,
+                    depth - 1, 
+                    ply + 1, 
+                    max_depth, 
+                    -beta, 
+                    -alpha, 
+                    next_move_history, 
+                    e,
+                    tt, 
+                    stats, 
+                    profiler, 
+                    rng
+                );
+
+            if cfg!(feature="search_profile"){
+                profiler.call_blocking += 1;
+            }
+
+            let action_idx = action.trailing_zeros();
+
+            match next_val{
+                Low(x) => {
+                    // update tt
+                    if cfg!(feature="search_profile"){
+                        profiler.push_cut(CutOffSource::TTMove, IS_PV, depth, action_num, 0);
+                    }
+                    tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                    stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
+                    return (action, High(-x));
+                },
+                High(x) => {
+                    max_val = -x;
+                    max_action = action;
+                },
+                Ex(x) => {
+                    // alpha < x < beta
+                    max_val = -x;
+                    max_action = action;
+                    alpha = -x;
+                },
+            }
+            searched_actions.push(action_idx as u8);
+            searched_action_num += 1;
+        },
+        _ => {
+
+        }
+    }
+
+    // 1. killer moveの探索
+    // killer0
+    let k0_action_idx = stats.killer_moves[ply as usize][0];
+    let k0_action = 1 << k0_action_idx;
+    if k0_action & valid_mask != 0{
+        if cfg!(feature="search_profile"){
+            profiler.push_hit(HitSource::K0, IS_PV, depth);
+        }
+        let next_board = (def, att | k0_action);
+        let next_info = info.next(k0_action_idx as usize);
+        let next_hash = hash ^ ZOBRIST_TABLE[k0_action_idx as usize + att_offset as usize];
+        let next_move_history = (move_history << 6) | (k0_action_idx as u64);
+        // CUT_Search
+        if IS_PV{
+            // CUT_search
+            // research
+            if cfg!(feature="search_profile"){
+                profiler.scout_attempt += 1;
+            }
+            // null window search
+            let (next_action, next_fail) = pv_search_lineinfo::<false, E>(
+                next_board, 
+                &next_info, 
+                next_hash, 
+                1 - is_true_att, 
+                depth - 1, 
+                ply + 1, 
+                max_depth, 
+                -(alpha.next_up()), 
+                -alpha, 
+                next_move_history, 
+                e,
+                tt, 
+                stats, 
+                profiler, 
+                rng
+            );
+            match next_fail{
+                Low(x) => {
+                    // research
+                    if cfg!(feature="search_profile"){
+                        profiler.scout_failures += 1;
+                    }
+                    
+                    // search-full
+                    let (next_action, next_fail) = pv_search_lineinfo::<true, E>(
+                        next_board, 
+                        &next_info, 
+                        next_hash, 
+                        1 - is_true_att, 
+                        depth - 1, 
+                        ply + 1, 
+                        max_depth, 
+                        -beta, 
+                        -alpha, 
+                        next_move_history, 
+                        e,
+                        tt, 
+                        stats, 
+                        profiler, 
+                        rng
+                    );
+                    match next_fail{
+                        Low(x) => {
+                            // beta cut
+                            if cfg!(feature="search_profile"){
+                                profiler.push_cut(CutOffSource::Killer0, IS_PV, depth, action_num, searched_action_num);
+                            }
+                            tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                            stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
+                            return (k0_action, High(-x));
+                        },
+                        High(x) => {
+                            if -x > max_val{
+                                max_val = -x;
+                                max_action = k0_action;
+                                assert!(max_val <= alpha);
+                            }
+                        }, // ok
+                        Ex(x) => {
+                            max_val = -x;
+                            if -x >= beta{
+                                if cfg!(feature="search_profile"){
+                                    profiler.push_cut(CutOffSource::Killer0, IS_PV, depth, action_num, searched_action_num);
+                                }
+                                tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                                stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
+                                return (k0_action, High(-x));
+                            }
+                            if max_val > alpha{
+                                max_val = alpha;
+                                max_action = k0_action;
+                            }
+                        },
+                    }
+                },  
+                High(x) => {
+                    if -x > max_val{
+                        max_val = -x;
+                        max_action = k0_action;
+                        assert!(max_val <= alpha, "max_val:{max_val}, alpha: {alpha}");
+                    }
+                }, // ok
+                Ex(x) => {
+                    if -x >= beta{
+                        if cfg!(feature="search_profile"){
+                            profiler.push_cut(CutOffSource::Killer0, IS_PV, depth, action_num, searched_action_num);
+                        }
+                        tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                        stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
+                        return (k0_action, High(-x));
+                    }
+                },
+            }
+        }else{
+            let (next_action, next_fail) = pv_search_lineinfo::<false, E>(
+                next_board, 
+                &next_info, 
+                next_hash, 
+                1 - is_true_att, 
+                depth - 1, 
+                ply + 1, 
+                max_depth, 
+                -beta, 
+                -alpha, 
+                next_move_history, 
+                e,
+                tt, 
+                stats, 
+                profiler, 
+                rng
+            );
+            match next_fail{
+                High(x) => {
+                    if max_val < -x{
+                        max_action = k0_action;
+                        max_val = -x;
+                    }
+                },
+                Low(x) => {
+                    // beta cut
+                    if cfg!(feature="search_profile"){
+                        profiler.push_cut(CutOffSource::Killer0, false, depth, action_num, searched_action_num);
+                    }
+
+                    tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                    stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
+                    return (k0_action, High(-x));
+                },
+                Ex(x) => {
+                    if -x >= beta{
+                        if cfg!(feature="search_profile"){
+                            profiler.push_cut(CutOffSource::Killer0, false, depth, action_num, searched_action_num);
+                        }
+
+                        tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                        stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
+                        return (k0_action, High(-x));
+                    }
+                }
+            }
+        }
+        searched_action_num += 1;
+        searched_actions.push(k0_action_idx);
+        valid_mask ^= k0_action;
+    }
+    
+    // killer1
+    let k1_action_idx = stats.killer_moves[ply as usize][1];
+    let k1_action = 1 << k1_action_idx;
+    if k1_action != k0_action && k1_action & valid_mask != 0{
+        // CUT_Search
+        if cfg!(feature="search_profile"){
+            profiler.push_hit(HitSource::K1, IS_PV, depth);
+        }
+        let next_board = (def, att | k1_action);
+        let next_info = info.next(k1_action_idx as usize);
+        let next_hash = hash ^ ZOBRIST_TABLE[k1_action_idx as usize + att_offset as usize];
+        let next_move_history = (move_history << 6) | (k1_action_idx as u64);
+        // CUT_Search
+        if IS_PV{
+            // CUT_search
+            // research
+            if cfg!(feature="search_profile"){
+                profiler.scout_attempt += 1;
+            }
+            // null window search
+            let (next_action, next_fail) = pv_search_lineinfo::<false, E>(
+                next_board, 
+                &next_info, 
+                next_hash, 
+                1 - is_true_att, 
+                depth - 1, 
+                ply + 1, 
+                max_depth, 
+                -(alpha.next_up()), 
+                -alpha, 
+                next_move_history, 
+                e,
+                tt, 
+                stats, 
+                profiler, 
+                rng
+            );
+            match next_fail{
+                Low(x) => {
+                    // research
+                    if cfg!(feature="search_profile"){
+                        profiler.scout_failures += 1;
+                    }
+                    
+                    // search-full
+                    let (next_action, next_fail) = pv_search_lineinfo::<true, E>(
+                        next_board, 
+                        &next_info, 
+                        next_hash, 
+                        1 - is_true_att, 
+                        depth - 1, 
+                        ply + 1, 
+                        max_depth, 
+                        -beta, 
+                        -alpha, 
+                        next_move_history, 
+                        e,
+                        tt, 
+                        stats, 
+                        profiler, 
+                        rng
+                    );
+                    match next_fail{
+                        Low(x) => {
+                            // beta cut
+                            if cfg!(feature="search_profile"){
+                                profiler.push_cut(CutOffSource::Killer1, IS_PV, depth, action_num, searched_action_num);
+                            }
+                            tt.insert_ttentry(hash, High(-x), depth, k1_action_idx);
+                            stats.update_history(&searched_actions, k1_action_idx,  move_history, depth, ply, is_true_att);
+                            return (k1_action, High(-x));
+                        },
+                        High(x) => {
+                            if -x > max_val{
+                                max_val = -x;
+                                max_action = k1_action;
+                                assert!(max_val <= alpha);
+                            }
+                        }, // ok
+                        Ex(x) => {
+                            max_val = -x;
+                            if -x >= beta{
+                                if cfg!(feature="search_profile"){
+                                    profiler.push_cut(CutOffSource::Killer1, IS_PV, depth, action_num, searched_action_num);
+                                }
+                                tt.insert_ttentry(hash, High(-x), depth, k1_action_idx);
+                                stats.update_history(&searched_actions, k1_action_idx,  move_history, depth, ply, is_true_att);
+                                return (k1_action, High(-x));
+                            }
+                            if max_val > alpha{
+                                max_val = alpha;
+                                max_action = k1_action;
+                            }
+                        },
+                    }
+                },  
+                High(x) => {
+                    if -x > max_val{
+                        max_val = -x;
+                        max_action = k1_action;
+                        assert!(max_val <= alpha, "alpha:{alpha}, max_val:{max_val}, {:#?}", profiler.events.rchunks(20).next());
+                    }
+                }, // ok
+                Ex(x) => {
+                    // ここは本来辿り着いてはだめな場所（null window searchなので）
+                    panic!("[is_pv:{IS_PV}]alpha:{alpha}, x:{}, beta:{beta}", -x);
+                    // if -x >= beta{
+                    //     if cfg!(feature="search_profile"){
+                    //         profiler.push_cut(CutOffSource::Killer1, IS_PV, depth, action_num, searched_action_num);
+                    //     }
+                    //     tt.insert_ttentry(hash, High(-x), depth, k1_action_idx);
+                    //     stats.update_history(&searched_actions, k1_action_idx,  move_history, depth, ply, is_true_att);
+                    //     return (k1_action, High(-x));
+                    // }
+                },
+            }
+        }else{
+            let (next_action, next_fail) = pv_search_lineinfo::<false, E>(
+                next_board, 
+                &next_info, 
+                next_hash, 
+                1 - is_true_att, 
+                depth - 1, 
+                ply + 1, 
+                max_depth, 
+                -beta, 
+                -alpha, 
+                next_move_history, 
+                e,
+                tt, 
+                stats, 
+                profiler, 
+                rng
+            );
+            match next_fail{
+                High(x) => {
+                    if max_val < -x{
+                        max_action = k1_action;
+                        max_val = -x;
+                    }
+                },
+                Low(x) => {
+                    // beta cut
+                    if cfg!(feature="search_profile"){
+                        profiler.push_cut(CutOffSource::Killer1, false, depth, action_num, searched_action_num);
+                    }
+
+                    tt.insert_ttentry(hash, High(-x), depth, k1_action_idx);
+                    stats.update_history(&searched_actions, k1_action_idx,  move_history, depth, ply, is_true_att);
+                    return (k1_action, High(-x));
+                },
+                Ex(x) => {
+                    panic!("[is_pv:{IS_PV}]alpha:{alpha}, x:{}, beta:{beta}", -x);
+                    // if -x >= beta{
+                    //     if cfg!(feature="search_profile"){
+                    //         profiler.push_cut(CutOffSource::Killer1, false, depth, action_num, searched_action_num);
+                    //     }
+
+                    //     tt.insert_ttentry(hash, High(-x), depth, k1_action_idx);
+                    //     stats.update_history(&searched_actions, k1_action_idx,  move_history, depth, ply, is_true_att);
+                    //     return (k1_action, High(-x));
+                    // }
+                }
+            }
+        }
+        searched_action_num += 1;
+        searched_actions.push(k1_action_idx);
+        valid_mask ^= k1_action;
+    }    
+
+    // 1. history moveの探索(このあたりにラインの数による加重を行いたい)
+    //     1. 全てのアクションを列挙してソーティング
+    //     2. それぞれの手についてline_infoを計算した後に探索を行う
+    if cfg!(feature="search_profile"){
+        profiler.push_hit(HitSource::History, IS_PV, depth);
+    }
+    let mut sorting_actions = Vec::new();
+    let actions = action_mask2vec(valid_mask);
+    let att_offset = (is_true_att << 6) as u64;
+    if ply >= 6{
+        // hist + c1 + c2 + c4 + c6
+        let c1 = (att_offset + (move_history & 0x3f)) as usize;
+        let c2 = (att_offset + ((move_history >> 6) & 0x3f)) as usize;
+        let c4 = (att_offset + ((move_history >> 18) & 0x3f)) as usize;
+        let c6 = (att_offset + ((move_history >> 30) & 0x3f)) as usize;
+        for (action, action_idx) in actions{
+            let val = stats.move_history[att_offset as usize + action_idx]
+            + stats.continuous_history1[c1][action_idx]
+            + stats.continuous_history2[c2][action_idx]
+            + stats.continuous_history4[c4][action_idx]
+            + stats.continuous_history6[c6][action_idx];
+            sorting_actions.push((val, action_idx));
+        }
+    }else if ply >= 4{
+        // hist + c1 + c2 + c4
+        let c1 = (att_offset + (move_history & 0x3f)) as usize;
+        let c2 = (att_offset + ((move_history >> 6) & 0x3f)) as usize;
+        let c4 = (att_offset + ((move_history >> 18) & 0x3f)) as usize;
+        for (action, action_idx) in actions{
+            let val = stats.move_history[att_offset as usize + action_idx]
+            + stats.continuous_history1[c1][action_idx]
+            + stats.continuous_history2[c2][action_idx]
+            + stats.continuous_history4[c4][action_idx];
+            sorting_actions.push((val, action_idx));
+        }
+    }else if ply >= 2{
+        // hist + c1 + c2
+        let c1 = (att_offset + (move_history & 0x3f)) as usize;
+        let c2 = (att_offset + ((move_history >> 6) & 0x3f)) as usize;
+        
+        for (action, action_idx) in actions{
+            let val = stats.move_history[att_offset as usize + action_idx]
+            + stats.continuous_history1[c1][action_idx]
+            + stats.continuous_history2[c2][action_idx];
+            sorting_actions.push((val, action_idx));
+        }
+    }else if ply >= 1{
+        // hist + c1
+        let c1 = (att_offset + (move_history & 0x3f)) as usize;
+        for (action, action_idx) in actions{
+            let val = stats.move_history[att_offset as usize + action_idx]
+                + stats.continuous_history1[c1][action_idx];
+            sorting_actions.push((val, action_idx));
+        }
+    }else{
+        // hist
+        for (action, action_idx) in actions{
+            let val = stats.move_history[att_offset as usize + action_idx];
+            sorting_actions.push((val, action_idx));
+        }
+    }
+
+    sorting_actions.sort_by(|a, b| b.0.cmp(&a.0));
+    
+    for (val, action_idx) in sorting_actions{
+        let action = 1 << action_idx;
+        let next_att = att | action;
+        let next_info = info.next(action_idx);
+        let next_hash = hash ^ ZOBRIST_TABLE[action_idx + att_offset as usize];
+        let next_move_history = (move_history << 6) | action_idx as u64;
+        // cut search
+        if cfg!(feature="search_profile"){
+            if IS_PV{
+                profiler.scout_attempt += 1;
+            }
+        }
+        let (next_action, next_fail) = pv_search_lineinfo::<false, E>(
+                (def, next_att), 
+                &next_info, 
+                next_hash, 
+                1- is_true_att,
+                depth - 1, 
+                ply + 1, 
+                max_depth, 
+                -(alpha.next_up()), 
+                -alpha, 
+                next_move_history,
+                e, 
+                tt, 
+                stats, 
+                profiler, 
+                rng
+        );
+        match (IS_PV, next_fail){
+            (true, Low(x)) => {
+                // research
+                if cfg!(feature="search_profile"){
+                    profiler.scout_failures += 1;
+                }
+                let (next_action, next_fail) = pv_search_lineinfo::<true, _>(
+                    (def, next_att), 
+                    &next_info, next_hash, 1 - is_true_att, depth - 1, ply + 1, max_depth, 
+                    -beta,
+                    -alpha, 
+                    next_move_history, 
+                    e, tt, stats, profiler, rng);
+                match next_fail{
+                    Low(x) => {
+                        // cut
+                        if cfg!(feature="search_profile"){
+                            profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
+                        }
+                        tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                        stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
+                        return (action, High(-x));
+                    },
+                    High(x) => {
+                        // ok
+                        if max_val < -x{
+                            max_action = action;
+                            max_val = -x;
+                        }
+                    },
+                    Ex(x) => {
+                        // alpha < x < beta
+                        if max_val < -x{
+                            max_val = -x;
+                            max_action = action;
+                            if max_val > alpha {
+                                alpha = max_val;
+                                if alpha >= beta{
+                                    if cfg!(feature="search_profile"){
+                                        profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
+                                    }
+                                    tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                                    stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
+                                    return (action, High(-x));    
+                                }
+                            }
+                        }
+                        assert!(alpha <= max_val, "events:{:#?}, alpha:{alpha}, max_val:{max_val}, beta:{beta}", profiler.events.rchunks(10).next());
+                    }
+                }
+            },
+            (true, High(x)) => {
+                if max_val < -x{
+                    max_val = -x;
+                    max_action = action;
+                }
+            },
+            (false, Low(x)) => {
+                if cfg!(feature="search_profile"){
+                    profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
+                }
+                tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
+                return (action, High(-x));
+            },
+            (false, High(x)) => {
+                if max_val < -x{
+                    max_val = -x;
+                    max_action = action;
+                }
+            },
+            (_, Ex(x)) => {
+                if -x >= beta{
+                    if cfg!(feature="search_profile"){
+                        profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
+                    }
+                    tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                    stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
+                    return (action, High(-x));
+                }
+                if max_val < -x{
+                    max_val = -x;
+                    max_action = action;
+                }
+            }
+        }
+        searched_action_num += 1;
+        searched_actions.push(action_idx as u8);
+    }
+
+    if alpha == orig_alpha{
+        if max_action == 0{
+            let (_, valid_mask, _) = (att, def).get_sgf();
+            pprint_uboard((att, def));
+            pprint_u64(valid_mask);
+            println!("[depth:{depth}, ply:{ply}, is_pv:{IS_PV}]");
+            println!("k0:{k0_action_idx}, k1:{k1_action_idx}, max_val:{max_val}");
+            // println!("killer_move:{:#?}", stats.killer_moves);
+            println!("{:#?}", profiler.events.rchunks(20).next());
+        }
+        tt.insert_ttentry(hash, Low(max_val), depth, max_action.trailing_zeros() as u8);
+        return (max_action, Low(max_val));
+    }else{
+        tt.insert_ttentry(hash, Ex(max_val), depth, max_action.trailing_zeros() as u8);
+        return (max_action, Ex(max_val))
+    }
+}
 
 pub struct TestLineAcumModel{
     l: Box<dyn LineInfoEvaluator>,
-    pub search_stats: UnsafeCell<SearchStats>,
+    pub search_profiler: UnsafeCell<SearchProfiler>,
     pub limit: u64,
     pub max_depth: u64,
 }
@@ -975,26 +2023,60 @@ pub struct TestLineAcumModel{
 impl TestLineAcumModel{
     pub fn new(l: SimpleLineInfoEvaluator) -> Self{
         let mut l_ = SimplLineEvaluator::new();
-        return Self { l: Box::new(l), search_stats: UnsafeCell::new(SearchStats::new()), limit:1, max_depth:29};
+        return Self { l: Box::new(l), search_profiler: UnsafeCell::new(SearchProfiler::new()), limit:1, max_depth:29};
     }
 }
 
 impl GetAction for TestLineAcumModel{
     fn get_action(&self, b: &Board) -> u8 {
-        let (action, val, stats) = call_negscout_hash_lineinfo(b, self.max_depth as u8, &self.l, 22, self.limit);
+        let (action, val, profiler) = call_negscout_hash_lineinfo(b, self.max_depth as u8, &self.l, 22, self.limit);
+        // let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, self.l.as_ref(), 22, self.limit);
         unsafe {
-            let k = &mut *self.search_stats.get();
-            k.time += stats.time;
-            k.pv_nodes += stats.pv_nodes;
+            let k = &mut *self.search_profiler.get();
+            k.time += profiler.time;
+            k.pv_nodes += profiler.pv_nodes;
             for i in 0..20{
                 for j in 0..20{
-                    k.pv_max_idx_frac[i][j] += stats.pv_max_idx_frac[i][j];
+                    k.pv_max_idx_frac[i][j] += profiler.pv_max_idx_frac[i][j];
                 }
             }
         }
         return (action.trailing_zeros() % 16) as u8;
     }
 }
+
+
+pub struct TestLineAcumModel2<E: LineInfoEvaluator>{
+    l: E,
+    pub search_profiler: UnsafeCell<SearchProfiler>,
+    pub limit: u64,
+    pub max_depth: u64,
+}
+
+impl<E: LineInfoEvaluator> TestLineAcumModel2<E>{
+    pub fn new(l: E) -> Self{
+        return Self { l: l, search_profiler: UnsafeCell::new(SearchProfiler::new()), limit:1, max_depth:29};
+    }
+}
+
+impl<E: LineInfoEvaluator> GetAction for TestLineAcumModel2<E>{
+    fn get_action(&self, b: &Board) -> u8 {
+        // let (action, val, profiler) = call_negscout_hash_lineinfo(b, self.max_depth as u8, &self.l, 22, self.limit);
+        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, &self.l, 22, self.limit);
+        unsafe {
+            let k = &mut *self.search_profiler.get();
+            k.time += profiler.time;
+            k.pv_nodes += profiler.pv_nodes;
+            for i in 0..20{
+                for j in 0..20{
+                    k.pv_max_idx_frac[i][j] += profiler.pv_max_idx_frac[i][j];
+                }
+            }
+        }
+        return (action.trailing_zeros() % 16) as u8;
+    }
+}
+
 
 use crate::ai::line::*;
 pub const WT3_SIZE: usize = 16;

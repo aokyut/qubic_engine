@@ -35,6 +35,7 @@ render = []
 slow = []
 view = []
 view_detail = []
+search_profile = []
 
 [profile.release]
 opt-level = 3

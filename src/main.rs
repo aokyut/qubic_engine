@@ -17,7 +17,7 @@ use qubic_engine::board::{
     pprint_u64, Board, GetAction, _is_win_board,
 };
 use qubic_engine::db::{BoardDB, BoardDataset, StepbackBoardDB};
-use qubic_engine::train::{create_db, train_with_db};
+use qubic_engine::train::{create_db, create_eval_board, train_with_db};
 use qubic_engine::{
     ai::{CoEvaluator, NegAlpha, NNUE},
     board::{compare_agent, Agent},
@@ -69,7 +69,7 @@ fn main() {
     let mut ld = NegAlphaF::new(Box::new(l.clone()), 29);
     // l7_.hashmap = true;
     ld.scout = true;
-    ld.timelimit = 1000;
+    ld.timelimit = 100;
     ld.min_depth = 5;
     // let l7_ = MateWrapperActor::new(Box::new(l7_));
     //
@@ -88,41 +88,34 @@ fn main() {
     // let mcts = ai::mcts::Mcts::new(10_000, 3, 10000, po);
     let mcts2 = ai::mcts::Mcts::new(100_000, 3, 1000000, po2);
 
+    
     // let b = Board::new().next(0).next(15).next(12);
     // let mut action = vec![0; 16];
-
+    
     // for _ in 0..1000{
     //     let a = mcts2.get_action(&b);
     //     action[a as usize] += 1;
     // }
-
+    
     // for a in 0..16{
     //     println!("action={}:{}", a, action[a]);
     // }
-
+    
     // use qubic_engine::ai::line_acumlator::*;
-
+    
     // println!("{}, {}", qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[0], qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[64]);
-
+    
     let mut test_l = SimpleLineInfoEvaluator::from_sle(&l);
     // let _ = test_l.load("slie_result.json".to_string());
+    
+    let mut test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel2::new(test_l.clone());
+    test_acum.limit = 100_000;
 
-    let mut test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel::new(test_l.clone());
-    test_acum.limit = 1000_000;
+    let boards = create_eval_board(10, 6);
 
-    let mut b = Board::new();
-
-    // loop{
-    //     let val1 = test_acum.get_action(&b);
-    //     let (act, val2, _)= ld.eval_with_negalpha(&b);
-    //     println!("val1:{val1}, val2:{val2}");
-    //     b = b.next(act);
-    //     if b.is_win() || b.is_draw(){
-    //         break;
-    //     }
-    // }
-
-    let _result = play_actor_from(b, &test_acum, &ld, true);
+    let result = eval_actor_from_boards(&boards, &test_acum, &ld, true);
+            
+    // let _result = play_actor_from(b, &test_acum, &ld, true);
     return;
 
     // let stats = unsafe { test_acum.search_stats.get().as_ref().unwrap()};
@@ -130,8 +123,8 @@ fn main() {
     
     // Test NeuralLineEvaluator vs SimplLineEvaluator
     // train_line_eval(
-    //     "sle_tl50_dfpn.db".to_string(),
-    //     "sle_tl50_dfpn_test.db".to_string(),
+    //     "sb_l1_tss_r4-15.db".to_string(),
+    //     "sb_l1_tss_r4-15_test.db".to_string(),
     // );
     // exp_sprt();
 
