@@ -8,13 +8,15 @@ use super::*;
 use crate::board::{
     Player, pprint_u64
 };
-use crate::uboard::{
+use crate::board::uboard::{
     Action, HalfBoard, UBoard, UBoardActions, HalfBoardActions
 };
 use crate::ai::{Fail, EvaluatorF};
 use crate::dfpn::pprint_uboard;
+use ndarray::Array;
 use rand::{Rng, thread_rng};
 use sqlite::ffi::SQLITE_PREPARE_PERSISTENT;
+use arrayvec::ArrayVec;
 
 // Actionから伸びるLineの情報のみを更新する
 // Actionについてはそれぞれ自分から伸びるLineのインデックスの配列を定数として保持しておく
@@ -1019,6 +1021,7 @@ pub enum CutOffSource{
     Killer0,
     Killer1,
     History,
+    None,
 }
 
 #[derive(Clone, Debug)]
@@ -1194,7 +1197,7 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, depth: u8, e: &E, 
             use PVSearchEvent::*;
             let mut call = 0;
             let mut catoff = 0;
-            for event in profiler.events{
+            for event in profiler.events.iter(){
                 match event{
                     Call { is_pv, depth, ply } => {
                         call += 1;
@@ -1226,9 +1229,73 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, depth: u8, e: &E, 
         }
     }
     let time = t.elapsed().as_micros();
+
+    if cfg!(feature="search_profile"){
+        use PVSearchEvent::*;
+        use HitSource::*;
+        let mut hit_ttable = 0;
+        let mut hit_k0 = 0;
+        let mut hit_k1 = 0;
+        let mut hit_h = 0;
+        let mut cut_tvalue = 0;
+        let mut cut_ttable = 0;
+        let mut cut_k0 = 0;
+        let mut cut_k1 = 0;
+        let mut cut_h = 0;
+        let mut non_cut = 0;
+        let mut call = 0;
+        println!("ttentry:eq:{}, gt:{}",profiler.cut_node_tt_depth_eq, profiler.cut_node_tt_depth_gt);
+        for event in profiler.events.iter(){
+            match event{
+                Call { .. } => {
+                    call += 1;
+                }
+                PVSearchEvent::Hit { source: HitSource::TTable, .. } => {
+                    hit_ttable += 1;
+                },
+                Hit {source: K1, ..} => {
+                    hit_k1 += 1;
+                },
+                Hit {source: K0, ..} => {
+                    hit_k0 += 1;
+                },
+                Hit {source: History, ..} => {
+                    hit_h += 1;
+                },
+                CutOff { source: CutOffSource::TTValueCut(_), .. } => {
+                    cut_tvalue += 1;
+                },
+                CutOff { source: CutOffSource::TTMove, .. } => {
+                    cut_ttable += 1;
+                },
+                CutOff { source: CutOffSource::Killer0, .. } => {
+                    cut_k0 += 1;
+                },
+                CutOff { source: CutOffSource::Killer1, .. } => {
+                    cut_k1 += 1;
+                },
+                CutOff { source: CutOffSource::History, .. } => {
+                    cut_h += 1;
+                },
+                CutOff { source: CutOffSource::None, .. } => {
+                    non_cut += 1;
+                },
+                _ => {}
+            }
+        }
+
+        println!("hit:{}/{call}", cut_tvalue+cut_ttable+cut_k1+cut_k0+cut_h+non_cut);
+        println!("cutoff_rate:[tvalue]{cut_tvalue}/{hit_ttable}[{}%], [ttable]{cut_ttable}/{hit_ttable}[{}%], [k0]{cut_k0}/{hit_k0}[{}%], [k1]{cut_k1}/{hit_k1}[{}%], [h]{cut_h}/{hit_h}[{}%], [non]{non_cut}/{call}[{}%]",
+            100 * cut_tvalue / (hit_ttable + 1),
+            100 * cut_ttable / (hit_ttable + 1),
+            100 * cut_k0 / (hit_k0 + 1),
+            100 * cut_k1 / (hit_k1 + 1),
+            100 * cut_h / (hit_h + 1),
+            100 * non_cut / (call + 1),
+        );
+    }
     // println!("time:{time}μs");
 
-    println!("val:{:#?}", val);
 
     return (action, val.get_val(), search_profiler);
 }
@@ -1259,6 +1326,10 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
     use Fail::*;
     if cfg!(feature="search_profile"){
         profiler.push_call(IS_PV, depth, ply);
+    }
+    unsafe {
+        let prefetch_ptr = tt.v.as_ptr().add((hash & tt.mask) as usize);
+        std::arch::x86_64::_mm_prefetch(prefetch_ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
     }
     if depth==0{
         let v = e.evaluate_lineinfo(&(att, def), &info);
@@ -1818,7 +1889,8 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
     if cfg!(feature="search_profile"){
         profiler.push_hit(HitSource::History, IS_PV, depth);
     }
-    let mut sorting_actions = Vec::new();
+    // let mut sorting_actions = Vec::new();
+    let mut sorting_actions: ArrayVec<(i16, usize), 16> = ArrayVec::new();
     let actions = action_mask2vec(valid_mask);
     let att_offset = (is_true_att << 6) as u64;
     if ply >= 6{
@@ -1874,7 +1946,8 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
         }
     }
 
-    sorting_actions.sort_by(|a, b| b.0.cmp(&a.0));
+    // sorting_actions.sort_by(|a, b| b.0.cmp(&a.0));
+    sorting_actions.sort_unstable_by(|a, b| b.0.cmp(&a.0));
     
     for (val, action_idx) in sorting_actions{
         let action = 1 << action_idx;
@@ -1995,6 +2068,10 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
         searched_actions.push(action_idx as u8);
     }
 
+    if cfg!(feature="search_profile"){
+        profiler.push_cut(CutOffSource::None, IS_PV, depth, action_num, action_num - 1);
+    }
+
     if alpha == orig_alpha{
         if max_action == 0{
             let (_, valid_mask, _) = (att, def).get_sgf();
@@ -2059,10 +2136,17 @@ impl<E: LineInfoEvaluator> TestLineAcumModel2<E>{
     }
 }
 
+impl<E: LineInfoEvaluator> EvaluatorF for TestLineAcumModel2<E>{
+    fn eval_func_f32(&self, b: &Board) -> f32 {
+        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, &self.l, 24, self.limit);
+        return val;
+    }
+}
+
 impl<E: LineInfoEvaluator> GetAction for TestLineAcumModel2<E>{
     fn get_action(&self, b: &Board) -> u8 {
         // let (action, val, profiler) = call_negscout_hash_lineinfo(b, self.max_depth as u8, &self.l, 22, self.limit);
-        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, &self.l, 22, self.limit);
+        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, &self.l, 24, self.limit);
         unsafe {
             let k = &mut *self.search_profiler.get();
             k.time += profiler.time;

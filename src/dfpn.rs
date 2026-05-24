@@ -1,7 +1,7 @@
 use crate::board::{
     self, get_2row_mask, get_put_reach_mask, get_reach_mask, pprint_board, pprint_u64, Board,
 };
-use crate::uboard::{
+use crate::board::uboard::{
     UBoard, Action, HalfBoard
 };
 use std::cmp::Ordering;

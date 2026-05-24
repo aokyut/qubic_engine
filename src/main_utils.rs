@@ -12,6 +12,7 @@ use std::io::prelude::*;
 use std::thread::sleep;
 use std::time::{self, Instant};
 
+
 pub fn read_board_from_json(file_name: &str) -> Vec<(u64, u64)> {
     let input_fn = fs::read_to_string(file_name).expect("JSON Read Failed.");
     let deserialized: Vec<(u64, u64)> = serde_json::from_str(&input_fn).unwrap();

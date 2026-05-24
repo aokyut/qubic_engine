@@ -97,3 +97,6 @@
 ### line_acumlator.rs
 - pv_search_lineinfo
     - LineInfo.nextをlazyに処理
+    - profileでhistoryを調整
+- mctsの高速化（暇だったら）
+    - 差分更新によるロールアウトの激高速化

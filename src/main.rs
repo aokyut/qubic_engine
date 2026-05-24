@@ -9,8 +9,7 @@ use qubic_engine::ai::line_nn::{NNLineEvaluator, NNLineEvaluator_, TrainableNLE,
 use qubic_engine::ai::pattern::TrainablePatternEvaluator;
 use qubic_engine::ai::position::{PositionMaskEvaluator, TrainablePME};
 use qubic_engine::ai::{
-    self, pattern, LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PlayoutEvaluator,
-    PlayoutLevel, PositionEvaluator, TrainableLineEvaluator,
+    self, EvaluatorF, LineEvaluator, MateNegAlpha, MateWrapperActor, NegAlphaF, PlayoutEvaluator, PlayoutLevel, PositionEvaluator, TrainableLineEvaluator, pattern
 };
 use qubic_engine::board::{
     count_2row_, get_2row_mask, get_random, mate_check_horizontal, play_actor, pprint_board,
@@ -21,7 +20,7 @@ use qubic_engine::train::{create_db, create_eval_board, train_with_db};
 use qubic_engine::{
     ai::{CoEvaluator, NegAlpha, NNUE},
     board::{compare_agent, Agent},
-    sprt,
+    match_stats::sprt,
 };
 use rand::rngs::ThreadRng;
 use rand::thread_rng;
@@ -31,6 +30,8 @@ use std::collections::HashSet;
 use std::ops::Neg;
 use std::os::unix::thread;
 use std::time::{Duration, Instant};
+
+use crate::main_utils::write_board_to_json;
 
 fn main() {
     use qubic_engine::ai::NegAlpha;
@@ -66,22 +67,11 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut ld = NegAlphaF::new(Box::new(l.clone()), 29);
+    let mut ld = NegAlphaF::new(Box::new(l.clone()), 7);
     // l7_.hashmap = true;
     ld.scout = true;
     ld.timelimit = 100;
-    ld.min_depth = 5;
-    // let l7_ = MateWrapperActor::new(Box::new(l7_));
-    //
-    let mut b = BucketLineEvaluator::new();
-    b.load("bsimple.json".to_string());
-
-    let mut b7 = NegAlphaF::new(Box::new(b.clone()), 29);
-    b7.scout = true;
-    b7.timelimit = 500;
-    b7.min_depth = 5;
-
-    // let b7 = MateWrapperActor::new(Box::new(b7));
+    ld.min_depth = 7;
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
     let po2 = PlayoutEvaluator::new(PlayoutLevel::Attack4);
@@ -101,7 +91,6 @@ fn main() {
     //     println!("action={}:{}", a, action[a]);
     // }
     
-    // use qubic_engine::ai::line_acumlator::*;
     
     // println!("{}, {}", qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[0], qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[64]);
     
@@ -109,13 +98,14 @@ fn main() {
     // let _ = test_l.load("slie_result.json".to_string());
     
     let mut test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel2::new(test_l.clone());
-    test_acum.limit = 100_000;
+    test_acum.limit = 1_000_000;
+    test_acum.max_depth = 29;
 
-    let boards = create_eval_board(10, 6);
-
-    let result = eval_actor_from_boards(&boards, &test_acum, &ld, true);
-            
-    // let _result = play_actor_from(b, &test_acum, &ld, true);
+    
+    // use qubic_engine::match_stats::mle::bayes_elo_from_boards;
+    // let result = bayes_elo_from_boards(&boards, &test_acum, &ld, 1.0, true);
+    
+    let _result = play_actor_from(Board::new(), &test_acum, &test_acum, true);
     return;
 
     // let stats = unsafe { test_acum.search_stats.get().as_ref().unwrap()};
@@ -194,7 +184,7 @@ fn exp_sprt() {
 
 fn evaluate_vs_best(evaluator: impl ai::EvaluatorF + 'static) {
     use qubic_engine::board::eval_actor;
-    use qubic_engine::sprt::{eval_actor_sprt, SPRT};
+    use qubic_engine::match_stats::sprt::{eval_actor_sprt, SPRT};
 
     let mut b = SimplLineEvaluator::new();
     b.load("simple.json".to_string());
@@ -516,11 +506,16 @@ fn use_ai() {
 }
 
 fn get_random_board(size: usize) -> Board {
-    let mut b = Board::new();
-    for i in 0..size {
-        b = b.next(Agent::Random.get_action(&b));
+    'outer: loop {
+        let mut b = Board::new();
+        for _ in 0..size {
+            b = b.next(Agent::Random.get_action(&b));
+            if b.is_win() || b.is_draw(){
+                continue 'outer    
+            }
+        }
+        return b;
     }
-    return b;
 }
 
 fn exp_mate_profile(a1: &impl GetAction, a2: &impl GetAction) {

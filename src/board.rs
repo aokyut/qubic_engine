@@ -1,5 +1,6 @@
 // use std::collections::VecDeque;
 pub mod magic_number;
+pub mod uboard;
 
 use crate::utills::rand;
 use proconio::input;

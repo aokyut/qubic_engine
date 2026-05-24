@@ -1,4 +1,4 @@
-use crate::{ai::line::SimplLineEvaluator, db::StepbackBoardDB, sprt::eval_actor_sqrt_from_boards};
+use crate::{ai::line::SimplLineEvaluator, db::StepbackBoardDB, match_stats::sprt::eval_actor_sqrt_from_boards};
 #[allow(warnings)]
 use crate::db::{BoardDB, WeightedTransition};
 
@@ -1024,7 +1024,7 @@ pub fn train_model_with_db(
             model.eval();
 
             // === SPRT-based evaluation ===
-            use crate::sprt::{eval_actor_sprt, SPRTResult, SPRT};
+            use crate::match_stats::sprt::{eval_actor_sprt, SPRTResult, SPRT};
 
             // Create SPRT with Elo bounds (detect 10+ Elo difference)
             let sprt = SPRT::with_elo_bounds(0.0, 10.0);
