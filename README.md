@@ -7,77 +7,61 @@
 
 ## 探索関数
 ### principle_variation_search
-* **入力** 
-    - const IS_PV: bool...現ノードがPVノードであるか
-    - const IS_TRUE_ATT: bool...現ノードが最初に呼び出された攻撃側であるか、最初に呼び出されたときの手番OR実際の白黒
-    - (att, def): UBoard: (u64, u64)...現盤面
-    - info: &LineInfo...盤面解析のための集積情報
-    - hash: u64...現盤面のハッシュ
-    - depth: u8...この盤面からの探索深度
-    - ply: u8...この盤面までに進んだ深度
-    - max_depth: u8...ルートからの葉までの深さ
-    - alpha: f32...探索の下界。
-    - beta: f32...探索の上界。これを超えたらベータカットが起こる
-    - move_history_stack: &mut Vec<u8>...history heuristicに用いる
-    - tt: &mut TT...トランスポジションテーブル
-    - stats: &mut SearchStats...move orderに用いる統計量。ヒストリーの更新の際は値1 << 14を超えないように加算処理を実装する
-        - killer_moves: [[Option<u8>;2];64]...plyごとに管理
-        - move_history: [i16; 128]...単純にベストムーブの頻度[0~63]はIS_TRUE_ATT
-        - counter_history: [[i16;64];128]...応手の頻度
-        - continuous_history2: [[i16;64];128]...自分の前の手に対する頻度
-        - continuous_history4: [[i16;64];128]...その前の手に対する頻度
-        - continuous_history6: [[i16;64];128]...更に前の手に対する頻度
-    - profiler: &mut SearchProfiler...探索の改善用にデータを集めるプロファイラ。null window searchの失敗確率を調べる
-    - rng: &mut impl Rng...ランダム源
-* **出力**
-    - action: u64...アクションマスク
-    - fail_val: Fail
-
-* **アルゴリズム**
-    1. valid_action_mask <- create_valid_action_mask_from_uboard(att, def)
-    1. valid_action_mask <- valid_action_mask ^ blocking_move_mask (即負けの手を排除)
-    1. winnig move / blocking move(即勝ちなら出力、即負けなら)
-    1. TTEntry <- TT.get(hash)
-        1. alpha-beta窓を使って探索を行う
-        1. PVノードの時、
-            1. 何もしない
-        1. NotPVノード And tt_depth >= depthの時
-            1. High(x) => 
-                beta <= x => return High(x)
-            1. Low(x) =>  
-                alpha >= x => return Low(x) 
-            1. Ex(x) => 
-                return Ex(x)
-        1. その後にbest_moveを取ってきて行動探索
-    1. TTからbestなアクションを取ってきて探索
-        1. PVノードのときはカットオフを起こさない（これより深いノードのTTは存在しないので調べる必要もない）
-    1. killer moveの探索
-        1. killer0が存在するか、その場合にはvalid_mask & killer_mask != 0
-            1. 探索
-        1. killer1でも同様
-        1. killer moveの初期値は64に設定しておく
-    1. history moveの探索(このあたりにラインの数による加重を行いたい)
-        1. 全てのアクションを列挙してソーティング
-        2. それぞれの手について探索
-
-* ** 探索統計量 **
-    * cut_offの場所
-        * cutノード固有
-            * tt_entryによる探索短縮
-                * tt_depth >  depth のカウント
-                * tt_depth == depth のカウント
-                * 下が多ければ>を消すことで探索の厳密性を確保する。
-    * ttのbest_moveがどれぐらいの割合でbest_actionだったか知りたい
-        * そもそもttにhitする確率
-        * ttにhitした中でbest_moveが存在する
-        * それがBestである確率
-    * tt.insert_forceの前
-        * is_pv,depth,tt_hitの有無。
-    * killer_moveの的中率を知りたい
-        * killer_moveが有効だった数 Hit
-        * killer_moveでcutoffが起きた数 CutOff
-    * continuous_historyの重みがどれがベストなのか知りたい
-    * call-cutは一対一の関係。callに対してCutが最低でも一つ存在する
+自己対局におけるNPSは
+```
+[NPS]1473690030[node]/118084894[μs](12479919[nps])
+```
+実行環境は
+```
+Architecture:             x86_64
+  CPU op-mode(s):         32-bit, 64-bit
+  Address sizes:          39 bits physical, 48 bits virtual
+  Byte Order:             Little Endian
+CPU(s):                   16
+  On-line CPU(s) list:    0-15
+Vendor ID:                GenuineIntel
+  Model name:             13th Gen Intel(R) Core(TM) i7-13620H
+    CPU family:           6
+    Model:                186
+    Thread(s) per core:   2
+    Core(s) per socket:   8
+    Socket(s):            1
+    Stepping:             2
+    BogoMIPS:             5836.80
+    Flags:                fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ss ht syscall nx pdpe1gb rdtscp
+                          lm constant_tsc rep_good nopl xtopology tsc_reliable nonstop_tsc cpuid tsc_known_freq pni pclmulqdq vmx ssse3 fma cx16 pcid sse4_1
+                           sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand hypervisor lahf_lm abm 3dnowprefetch ssbd ibrs ibpb stibp
+                           ibrs_enhanced tpr_shadow ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb sha
+                          _ni xsaveopt xsavec xgetbv1 xsaves avx_vnni vnmi umip waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize
+                           flush_l1d arch_capabilities
+Virtualization features:
+  Virtualization:         VT-x
+  Hypervisor vendor:      Microsoft
+  Virtualization type:    full
+Caches (sum of all):
+  L1d:                    384 KiB (8 instances)
+  L1i:                    256 KiB (8 instances)
+  L2:                     10 MiB (8 instances)
+  L3:                     24 MiB (1 instance)
+NUMA:
+  NUMA node(s):           1
+  NUMA node0 CPU(s):      0-15
+Vulnerabilities:
+  Gather data sampling:   Not affected
+  Itlb multihit:          Not affected
+  L1tf:                   Not affected
+  Mds:                    Not affected
+  Meltdown:               Not affected
+  Mmio stale data:        Not affected
+  Reg file data sampling: Vulnerable: No microcode
+  Retbleed:               Mitigation; Enhanced IBRS
+  Spec rstack overflow:   Not affected
+  Spec store bypass:      Mitigation; Speculative Store Bypass disabled via prctl
+  Spectre v1:             Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+  Spectre v2:             Mitigation; Enhanced / Automatic IBRS; IBPB conditional; RSB filling; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S
+  Srbds:                  Not affected
+  Tsx async abort:        Not affected
+```
 
 * **探索部分**
     1. ttあり & depth - 1 >= old_depth
@@ -98,5 +82,7 @@
 - pv_search_lineinfo
     - LineInfo.nextをlazyに処理
     - profileでhistoryを調整
+    - LineInfo.make .unmakeを実装……&mut selfで自身を書き換えるタイプのnext。探索の度にunmakeが必要だが、それがどの程度処理を圧迫するか読めないが現時点でnextの処理が4.23%、LineInfoのキャッシュミスによる遅れが18.5%あるのでこっちの方式の方が良さそうと思われる。あとは毎度unmakeするのではなく、一手戻して一手進める、ようにすれば処理速度はさらに上がりそう、というかnextとほぼ変わらない速度でできそうな気がする。
+    - Actionのソートについて、行動を持ってくるときに最大値を取り出す形の方が良さそう
 - mctsの高速化（暇だったら）
     - 差分更新によるロールアウトの激高速化

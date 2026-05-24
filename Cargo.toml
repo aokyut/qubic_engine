@@ -37,6 +37,7 @@ slow = []
 view = []
 view_detail = []
 search_profile = []
+nps = []
 
 [profile.release]
 opt-level = 3

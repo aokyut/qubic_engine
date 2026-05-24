@@ -100,12 +100,12 @@ fn main() {
     let mut test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel2::new(test_l.clone());
     test_acum.limit = 1_000_000;
     test_acum.max_depth = 29;
-
     
     // use qubic_engine::match_stats::mle::bayes_elo_from_boards;
     // let result = bayes_elo_from_boards(&boards, &test_acum, &ld, 1.0, true);
     
     let _result = play_actor_from(Board::new(), &test_acum, &test_acum, true);
+    test_acum.print_nps();
     return;
 
     // let stats = unsafe { test_acum.search_stats.get().as_ref().unwrap()};

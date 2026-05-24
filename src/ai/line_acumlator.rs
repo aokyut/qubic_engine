@@ -225,6 +225,125 @@ impl LineInfo{
         return half;
     }
 
+    #[inline(always)]
+    pub fn make(&mut self, action: usize){
+        let action_line = ActionLineTable[action];
+        let att_line_info = &self.att;
+        let next_att_line_info = (
+            [
+                att_line_info.0[0] | action_line[0],
+                att_line_info.0[1] | action_line[1],
+                att_line_info.0[2] | action_line[2],
+                att_line_info.0[3] | action_line[3],
+                att_line_info.0[4] | action_line[4],
+                att_line_info.0[5] | action_line[5],
+                att_line_info.0[6] | action_line[6],
+            ],
+            [
+                att_line_info.1[0] | (att_line_info.0[0] & action_line[0]),
+                att_line_info.1[1] | (att_line_info.0[1] & action_line[1]),
+                att_line_info.1[2] | (att_line_info.0[2] & action_line[2]),
+                att_line_info.1[3] | (att_line_info.0[3] & action_line[3]),
+                att_line_info.1[4] | (att_line_info.0[4] & action_line[4]),
+                att_line_info.1[5] | (att_line_info.0[5] & action_line[5]),
+                att_line_info.1[6] | (att_line_info.0[6] & action_line[6]),
+            ],
+            [
+                att_line_info.2[0] | (att_line_info.1[0] & action_line[0]),
+                att_line_info.2[1] | (att_line_info.1[1] & action_line[1]),
+                att_line_info.2[2] | (att_line_info.1[2] & action_line[2]),
+                att_line_info.2[3] | (att_line_info.1[3] & action_line[3]),
+                att_line_info.2[4] | (att_line_info.1[4] & action_line[4]),
+                att_line_info.2[5] | (att_line_info.1[5] & action_line[5]),
+                att_line_info.2[6] | (att_line_info.1[6] & action_line[6]),
+            ]
+        );
+        self.att = next_att_line_info;
+        std::mem::swap(&mut self.att, &mut self.def);
+    }
+    #[inline(always)]
+    pub fn unmake(&mut self, action: usize){
+        let action_line = ActionLineTable[action];
+        let att_line_info = &self.def;
+        let next_att_line_info = (
+            [
+                att_line_info.0[0] & !(!att_line_info.1[0] & action_line[0]),
+                att_line_info.0[1] & !(!att_line_info.1[1] & action_line[1]),
+                att_line_info.0[2] & !(!att_line_info.1[2] & action_line[2]),
+                att_line_info.0[3] & !(!att_line_info.1[3] & action_line[3]),
+                att_line_info.0[4] & !(!att_line_info.1[4] & action_line[4]),
+                att_line_info.0[5] & !(!att_line_info.1[5] & action_line[5]),
+                att_line_info.0[6] & !(!att_line_info.1[6] & action_line[6]),
+            ],
+            [
+                att_line_info.1[0] & !(!att_line_info.2[0] & action_line[0]),
+                att_line_info.1[1] & !(!att_line_info.2[1] & action_line[1]),
+                att_line_info.1[2] & !(!att_line_info.2[2] & action_line[2]),
+                att_line_info.1[3] & !(!att_line_info.2[3] & action_line[3]),
+                att_line_info.1[4] & !(!att_line_info.2[4] & action_line[4]),
+                att_line_info.1[5] & !(!att_line_info.2[5] & action_line[5]),
+                att_line_info.1[6] & !(!att_line_info.2[6] & action_line[6]),
+            ],
+            [
+                att_line_info.2[0] & !action_line[0],
+                att_line_info.2[1] & !action_line[1],
+                att_line_info.2[2] & !action_line[2],
+                att_line_info.2[3] & !action_line[3],
+                att_line_info.2[4] & !action_line[4],
+                att_line_info.2[5] & !action_line[5],
+                att_line_info.2[6] & !action_line[6],
+            ]
+        );
+        self.def = next_att_line_info;
+        std::mem::swap(&mut self.att, &mut self.def);
+    }
+    #[inline(always)]
+    pub fn remake(&mut self, undo_idx: usize, do_idx: usize){
+        let mut ol = ActionLineTable[undo_idx];
+        let mut nl = ActionLineTable[do_idx];
+        // um/rmをスカラー変数に展開 → レジスタに乗りやすい
+        let um0 = ol[0] & !nl[0]; let rm0 = nl[0] & !ol[0];
+        let um1 = ol[1] & !nl[1]; let rm1 = nl[1] & !ol[1];
+        let um2 = ol[2] & !nl[2]; let rm2 = nl[2] & !ol[2];
+        let um3 = ol[3] & !nl[3]; let rm3 = nl[3] & !ol[3];
+        let um4 = ol[4] & !nl[4]; let rm4 = nl[4] & !ol[4];
+        let um5 = ol[5] & !nl[5]; let rm5 = nl[5] & !ol[5];
+        let um6 = ol[6] & !nl[6]; let rm6 = nl[6] & !ol[6];
+
+        let att_line_info = &self.def;
+        let next_att_line_info = (
+            [
+                att_line_info.0[0] & !(!att_line_info.1[0] & um0) | rm0,
+                att_line_info.0[1] & !(!att_line_info.1[1] & um1) | rm1,
+                att_line_info.0[2] & !(!att_line_info.1[2] & um2) | rm2,
+                att_line_info.0[3] & !(!att_line_info.1[3] & um3) | rm3,
+                att_line_info.0[4] & !(!att_line_info.1[4] & um4) | rm4,
+                att_line_info.0[5] & !(!att_line_info.1[5] & um5) | rm5,
+                att_line_info.0[6] & !(!att_line_info.1[6] & um6) | rm6,
+            ],
+            [
+                att_line_info.1[0] & !(!att_line_info.2[0] & um0) | (att_line_info.0[0] & rm0),
+                att_line_info.1[1] & !(!att_line_info.2[1] & um1) | (att_line_info.0[1] & rm1),
+                att_line_info.1[2] & !(!att_line_info.2[2] & um2) | (att_line_info.0[2] & rm2),
+                att_line_info.1[3] & !(!att_line_info.2[3] & um3) | (att_line_info.0[3] & rm3),
+                att_line_info.1[4] & !(!att_line_info.2[4] & um4) | (att_line_info.0[4] & rm4),
+                att_line_info.1[5] & !(!att_line_info.2[5] & um5) | (att_line_info.0[5] & rm5),
+                att_line_info.1[6] & !(!att_line_info.2[6] & um6) | (att_line_info.0[6] & rm6),
+            ],
+            [
+                att_line_info.2[0] & !um0 | (att_line_info.1[0] & rm0),
+                att_line_info.2[1] & !um1 | (att_line_info.1[1] & rm1),
+                att_line_info.2[2] & !um2 | (att_line_info.1[2] & rm2),
+                att_line_info.2[3] & !um3 | (att_line_info.1[3] & rm3),
+                att_line_info.2[4] & !um4 | (att_line_info.1[4] & rm4),
+                att_line_info.2[5] & !um5 | (att_line_info.1[5] & rm5),
+                att_line_info.2[6] & !um6 | (att_line_info.1[6] & rm6),
+            ]
+        );
+        self.def = next_att_line_info;
+    }
+
+    #[inline(always)]
     pub fn next(&self, action: usize) -> Self{
         let action_line = ActionLineTable[action];
         let att_line_info = &self.att;
@@ -257,8 +376,10 @@ impl LineInfo{
                 att_line_info.2[6] | (att_line_info.1[6] & action_line[6]),
             ]
         );
-        return Self { att: self.def.clone(), def: next_att_line_info }
+        return Self { att: self.def.clone(), def: next_att_line_info };
     }
+
+
 
     #[inline(always)]
     pub fn get_reachs(&self, ground: u64) -> Reachs{
@@ -1056,7 +1177,7 @@ pub struct PVSearchProfiler{
     scout_failures: u64,
     events: Vec<PVSearchEvent>,
     call_blocking: u64,
-    call_tt: u64,
+    call_count: u64,
 }
 
 impl PVSearchProfiler{
@@ -1190,21 +1311,27 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, depth: u8, e: &E, 
         profiler = PVSearchProfiler::new(1_000_000);
         let root_entry = tt.get(ZOBRIST_INIT_HASH);
         
+        let dt = Instant::now();
         (action, val) = pv_search_lineinfo::<true, _>(
             (att, def), &lineinfo, ZOBRIST_INIT_HASH, 0, d, 0, d, -1.0, 1.0, 0, e, &mut tt, &mut stats, &mut profiler, &mut rng);
-        let time = t.elapsed().as_micros();
+        let time = dt.elapsed().as_micros();
+        search_profiler.pv_nodes += profiler.call_count;
         if cfg!(feature="view"){
             use PVSearchEvent::*;
             let mut call = 0;
-            let mut catoff = 0;
-            for event in profiler.events.iter(){
-                match event{
-                    Call { is_pv, depth, ply } => {
-                        call += 1;
-                    },
-                    _ => {}
+            if cfg!(feature="nps"){
+                call = profiler.call_count;
+            }else if cfg!(feature="search_profile"){
+                for event in profiler.events.iter(){
+                    match event{
+                        Call { is_pv, depth, ply } => {
+                            call += 1;
+                        },
+                        _ => {}
+                    }
                 }
             }
+            let mut catoff = 0;
             let tt_used = tt.len();
             let tt_len = 1 << tt_size;
 
@@ -1229,6 +1356,9 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, depth: u8, e: &E, 
         }
     }
     let time = t.elapsed().as_micros();
+    if cfg!(feature="view"){
+        println!("whole time:{time}μs");
+    }
 
     if cfg!(feature="search_profile"){
         use PVSearchEvent::*;
@@ -1324,6 +1454,9 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
     rng: &mut impl Rng,
 ) -> (Action, Fail){
     use Fail::*;
+    if cfg!(feature="nps"){
+        profiler.call_count += 1;
+    }
     if cfg!(feature="search_profile"){
         profiler.push_call(IS_PV, depth, ply);
     }
@@ -2133,6 +2266,14 @@ pub struct TestLineAcumModel2<E: LineInfoEvaluator>{
 impl<E: LineInfoEvaluator> TestLineAcumModel2<E>{
     pub fn new(l: E) -> Self{
         return Self { l: l, search_profiler: UnsafeCell::new(SearchProfiler::new()), limit:1, max_depth:29};
+    }
+    pub fn print_nps(&self){
+        unsafe {
+            let profiler = &*self.search_profiler.get();
+            println!("[NPS]{}[node]/{}[μs]({}[nps])",
+                profiler.pv_nodes, profiler.time, 1_000_000 * profiler.pv_nodes / (profiler.time + 1)
+            );
+        }
     }
 }
 
