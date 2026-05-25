@@ -67,10 +67,10 @@ fn main() {
     let l5_ = MateWrapperActor::new(Box::new(l5_));
     l.load("simple.json".to_string());
 
-    let mut ld = NegAlphaF::new(Box::new(l.clone()), 7);
+    let mut ld = NegAlphaF::new(Box::new(l.clone()), 29);
     // l7_.hashmap = true;
     ld.scout = true;
-    ld.timelimit = 100;
+    ld.timelimit = 1000;
     ld.min_depth = 7;
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
@@ -99,12 +99,19 @@ fn main() {
     
     let mut test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel2::new(test_l.clone());
     test_acum.limit = 1_000_000;
-    test_acum.max_depth = 29;
+    test_acum.max_depth = 13;
+    test_acum.min_depth = 13;
     
+    let boards: Vec<Board> = main_utils::read_board_from_json("even_board/8.json").iter().map(|(a, d)| Board::from(*a,*d, Player::Black)).collect();
     // use qubic_engine::match_stats::mle::bayes_elo_from_boards;
-    // let result = bayes_elo_from_boards(&boards, &test_acum, &ld, 1.0, true);
+    // let result = bayes_elo_from_boards(&boards, &test_acum, &ld, 10.0, true);
     
-    let _result = play_actor_from(Board::new(), &test_acum, &test_acum, true);
+    for (i, b) in boards[..50].iter().enumerate(){
+        let _ = test_acum.get_action(b);
+        println!("[{i}]");
+    }
+    
+    // let _result = play_actor_from(Board::new(), &test_acum, &test_acum, true);
     test_acum.print_nps();
     return;
 

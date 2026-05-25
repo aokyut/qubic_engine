@@ -1293,8 +1293,11 @@ impl PVSearchStats{
 }
 
 
-pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, depth: u8, e: &E, tt_size: u64, limit: u64) -> (Action, f32, SearchProfiler){
-    let mut tt = TT::<u8>::new(1 << tt_size, (1 << tt_size) - 1, TTEntry { hash_hi: 0, fail: Fail::Ex(0.0), depth:0, best_move: 0 });
+pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, max_depth: u8, min_depth: u8, e: &E, tt_size: u64, limit: u64) -> (Action, f32, SearchProfiler){
+    // let mut tt = TT::<u8>::new(1 << tt_size, (1 << tt_size) - 1, TTEntry { hash_hi: 0, fail: Fail::Ex(0.0), depth:0, best_move: 0 });
+    let mut tt: Vec<TTEntry<u8>> = vec![TTEntry{hash_hi:0, fail:Fail::Ex(0.0), depth:0, best_move: 0}; 1 << tt_size];
+    let tt_ptr = tt.as_mut_ptr();
+    let mask = (1 << tt_size) - 1;
     let (att, def) = b.get_att_def();
     let lineinfo = LineInfo::from_board(b);
     let mut rng = thread_rng();
@@ -1302,20 +1305,24 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, depth: u8, e: &E, 
     let (mut action, mut val) = (0, Fail::Ex(0.0));
     let t = Instant::now();
     let limit = limit; // 1秒
-    let depth = depth.min((64 - (att.count_ones() + def.count_ones())) as u8);
+    let max_depth = max_depth.min((64 - (att.count_ones() + def.count_ones())) as u8);
+    let min_depth = min_depth.min((64 - (att.count_ones() + def.count_ones())) as u8);
     let mut search_profiler=SearchProfiler::new();
     let mut stats = PVSearchStats::default_from_board(att, def);
     let mut profiler = PVSearchProfiler::new(1_000_000);
-    for d in (1..=depth).step_by(2){
+    let mut whole_time = 0;
+    for d in (1..=max_depth).step_by(2){
         // println!("depth:{d}");
         profiler = PVSearchProfiler::new(1_000_000);
-        let root_entry = tt.get(ZOBRIST_INIT_HASH);
         
         let dt = Instant::now();
         (action, val) = pv_search_lineinfo::<true, _>(
-            (att, def), &lineinfo, ZOBRIST_INIT_HASH, 0, d, 0, d, -1.0, 1.0, 0, e, &mut tt, &mut stats, &mut profiler, &mut rng);
+            (att, def), &lineinfo, ZOBRIST_INIT_HASH, 0, d, 0, d, -1.0, 1.0, 0, e, 
+            tt_ptr, mask, &mut stats, &mut profiler, &mut rng);
         let time = dt.elapsed().as_micros();
+        whole_time += time;
         search_profiler.pv_nodes += profiler.call_count;
+        search_profiler.time += time as u64;
         if cfg!(feature="view"){
             use PVSearchEvent::*;
             let mut call = 0;
@@ -1332,27 +1339,28 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, depth: u8, e: &E, 
                 }
             }
             let mut catoff = 0;
-            let tt_used = tt.len();
+            let mut tt_used = 0;
+            for ttentry in tt.iter(){
+                if ttentry.hash_hi >> 31 == 1{
+                    tt_used += 1;
+                }
+            }
             let tt_len = 1 << tt_size;
 
             let nps = call * 1_000_000 / (1 + time as u64);
             let tt_occupied_rate = 100 * tt_used / tt_len;
             let action = action.trailing_zeros() % 16;
-            println!("[pvsearch:d{d}]action:{action}, val:{val:#?}, call/time:{call}[n]/{time}[μs]-{nps}[nps], tt_use_rate:{tt_used}/{tt_len}[{tt_occupied_rate}%]")
+            println!("[pvsearch:d{d}]action:{action}, val:{val:#?}, call/time:{call}[n]/{time}[μs]-{nps}[nps], tt_use_rate:{tt_used}/{tt_len}[{tt_occupied_rate}%]");
         }
         // println!("time:{time}μs");
-        if time > limit as u128{
+        if whole_time > limit as u128 && d >= min_depth || d == max_depth{
             // println!("pv changes: {:#?}", search_profiler.pv_changes_move_idx);
             // println!("high: {:#?}", search_profiler.pv_changes_move_idx_high);
             // println!("low: {:#?}", search_profiler.pv_changes_move_idx_low);
             // println!("ex: {:#?}", search_profiler.pv_changes_move_idx_ex);
             // println!("pv max_idx: {:#?}", search_profiler.pv_max_idx_frac);
-            search_profiler.time = time as u64;
             // println!("{}", search_profiler.history_moves.iter().sum::<u64>());
             break;
-        }
-        if d != depth{
-            continue;
         }
     }
     let time = t.elapsed().as_micros();
@@ -1436,6 +1444,36 @@ const HIST_MAX: i16 = 1 << 7 ;
 const BONUS_MAX: i16 = HIST_MAX / 4;
 const HISTORY_MASK: u64 = 0xffff_ffff_ffff;
 
+#[inline(always)]
+unsafe fn insert_ttptr(tt_ptr: *mut TTEntry<u8>, mask: u64, hash: u64, fail: Fail, depth: u8, best_move: u8){
+    // 1. メモリオフセット（インデックス）の計算
+    let idx = (hash & mask) as usize;
+
+    assert!(best_move < 64, "best_move out of bounds");
+
+    let entry = TTEntry {
+        hash_hi: (hash >> 32) as u32,
+        fail,     
+        depth,
+        best_move,
+    };
+    let target_ptr = tt_ptr.add(idx);
+    
+    target_ptr.write(entry);
+}
+
+#[inline(always)]
+unsafe fn get_ttptr<'a>(tt_ptr: *mut TTEntry<u8>, mask: u64, hash: u64) -> Option<&'a TTEntry<u8>>{
+    let idx = (hash & mask) as usize;
+    let target_ptr = tt_ptr.add(idx);
+    let entry_ref = &*target_ptr;
+    if entry_ref.hash_hi == (hash >> 32) as u32 {
+        Some(entry_ref)
+    } else {
+        None
+    }
+}
+
 pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
     (att, def): UBoard,
     info: &LineInfo,
@@ -1448,7 +1486,8 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
     beta: f32,
     move_history: u64,
     e: &E,
-    tt: &mut TT<u8>,
+    tt: *mut TTEntry<u8>,
+    ttmask: u64,
     stats: &mut PVSearchStats,
     profiler: &mut PVSearchProfiler,
     rng: &mut impl Rng,
@@ -1460,10 +1499,8 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
     if cfg!(feature="search_profile"){
         profiler.push_call(IS_PV, depth, ply);
     }
-    unsafe {
-        let prefetch_ptr = tt.v.as_ptr().add((hash & tt.mask) as usize);
-        std::arch::x86_64::_mm_prefetch(prefetch_ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
-    }
+
+    
     if depth==0{
         let v = e.evaluate_lineinfo(&(att, def), &info);
         if v <= alpha{
@@ -1474,6 +1511,14 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
             return (0, Ex(v));
         }
     }
+    
+    unsafe {
+        let prefetch_ptr = tt.add((hash & ttmask) as usize);
+        std::arch::x86_64::_mm_prefetch(prefetch_ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
+    }
+    
+
+    
     // LineInfoを使ったリーチ探索を行う
     let (stone, valid_mask, _) = (att, def).get_sgf();
     let Reachs { att_reach, def_reach, att_losing } = info.get_reachs(valid_mask);
@@ -1499,11 +1544,20 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
         }
     }else if def_reach != 0{
         // blocking move
+        if def_reach.count_ones() > 1{
+            return (def_reach.get_lsb(), Low(-1.0));
+        }
         let action = def_reach.get_lsb();
         let next_att = att | action;
         let action_idx = action.trailing_zeros() as usize;
-        let next_info = info.next(action_idx);
         let next_hash = hash ^ ZOBRIST_TABLE[action_idx + (att_offset as usize)];
+        
+        // unsafe {
+        //     let prefetch_ptr = tt.add((next_hash & ttmask) as usize);
+        //     std::arch::x86_64::_mm_prefetch(prefetch_ptr as *const i8, std::arch::x86_64::_MM_HINT_T1);
+        // }
+
+        let next_info = info.next(action_idx);
         let next_move_history = (move_history << 6) | action_idx as u64;
         let (_, v) = pv_search_lineinfo::<IS_PV, E>(
                 (def, next_att), 
@@ -1518,6 +1572,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                 next_move_history,
                 e, 
                 tt, 
+                ttmask,
                 stats, 
                 profiler, 
                 rng
@@ -1543,7 +1598,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
             panic!("att_losing == 0");
         }
         let action_idx = att_losing.trailing_zeros();
-        tt.insert_ttentry(hash, Low(-1.0), depth, action_idx as u8);
+        unsafe {insert_ttptr(tt, ttmask, hash, Low(-1.0), depth, action_idx as u8)};
         return (1 << action_idx, Low(-1.0));
     }
     let action_num = valid_mask.count_ones() as u8;
@@ -1559,7 +1614,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
     let mut max_val = -2.0;
     let mut max_action = 0;
     let mut searched_actions = Vec::new(); // continuous history 更新用
-    let ttentry = tt.get(hash);
+    let ttentry = unsafe { get_ttptr(tt, ttmask, hash) };
     
     match ttentry {
         Some(TTEntry { hash_hi, fail, depth:tt_depth, best_move }) if valid_mask & (1 << *best_move) != 0 => {
@@ -1623,6 +1678,11 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
             let next_uboard = (def, att | action);
             let next_hash = hash ^ ZOBRIST_TABLE[*best_move as usize + (att_offset as usize)];
 
+            // unsafe {
+            //     let prefetch_ptr = tt.add((next_hash & ttmask) as usize);
+            //     std::arch::x86_64::_mm_prefetch(prefetch_ptr as *const i8, std::arch::x86_64::_MM_HINT_T1);
+            // }
+
             let next_info = info.next(*best_move as usize);
             let next_move_history = (move_history << 6) | *best_move as u64;
 
@@ -1638,7 +1698,8 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                     -alpha, 
                     next_move_history, 
                     e,
-                    tt, 
+                    tt,
+                    ttmask,
                     stats, 
                     profiler, 
                     rng
@@ -1656,7 +1717,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                     if cfg!(feature="search_profile"){
                         profiler.push_cut(CutOffSource::TTMove, IS_PV, depth, action_num, 0);
                     }
-                    tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                    unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, action_idx as u8)};
                     stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
                     return (action, High(-x));
                 },
@@ -1712,6 +1773,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                 next_move_history, 
                 e,
                 tt, 
+                ttmask,
                 stats, 
                 profiler, 
                 rng
@@ -1737,6 +1799,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                         next_move_history, 
                         e,
                         tt, 
+                        ttmask,
                         stats, 
                         profiler, 
                         rng
@@ -1747,7 +1810,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                             if cfg!(feature="search_profile"){
                                 profiler.push_cut(CutOffSource::Killer0, IS_PV, depth, action_num, searched_action_num);
                             }
-                            tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                            unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, k0_action_idx)};
                             stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
                             return (k0_action, High(-x));
                         },
@@ -1764,7 +1827,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                                 if cfg!(feature="search_profile"){
                                     profiler.push_cut(CutOffSource::Killer0, IS_PV, depth, action_num, searched_action_num);
                                 }
-                                tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                                unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, k0_action_idx)};
                                 stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
                                 return (k0_action, High(-x));
                             }
@@ -1787,7 +1850,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                         if cfg!(feature="search_profile"){
                             profiler.push_cut(CutOffSource::Killer0, IS_PV, depth, action_num, searched_action_num);
                         }
-                        tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                        unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, k0_action_idx)};
                         stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
                         return (k0_action, High(-x));
                     }
@@ -1807,6 +1870,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                 next_move_history, 
                 e,
                 tt, 
+                ttmask,
                 stats, 
                 profiler, 
                 rng
@@ -1824,7 +1888,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                         profiler.push_cut(CutOffSource::Killer0, false, depth, action_num, searched_action_num);
                     }
 
-                    tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                    unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, k0_action_idx)} ;
                     stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
                     return (k0_action, High(-x));
                 },
@@ -1834,7 +1898,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                             profiler.push_cut(CutOffSource::Killer0, false, depth, action_num, searched_action_num);
                         }
 
-                        tt.insert_ttentry(hash, High(-x), depth, k0_action_idx);
+                        unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, k0_action_idx)};
                         stats.update_history(&searched_actions, k0_action_idx,  move_history, depth, ply, is_true_att);
                         return (k0_action, High(-x));
                     }
@@ -1879,6 +1943,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                 next_move_history, 
                 e,
                 tt, 
+                ttmask,
                 stats, 
                 profiler, 
                 rng
@@ -1904,6 +1969,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                         next_move_history, 
                         e,
                         tt, 
+                        ttmask,
                         stats, 
                         profiler, 
                         rng
@@ -1914,7 +1980,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                             if cfg!(feature="search_profile"){
                                 profiler.push_cut(CutOffSource::Killer1, IS_PV, depth, action_num, searched_action_num);
                             }
-                            tt.insert_ttentry(hash, High(-x), depth, k1_action_idx);
+                            unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, k1_action_idx)};
                             stats.update_history(&searched_actions, k1_action_idx,  move_history, depth, ply, is_true_att);
                             return (k1_action, High(-x));
                         },
@@ -1931,7 +1997,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                                 if cfg!(feature="search_profile"){
                                     profiler.push_cut(CutOffSource::Killer1, IS_PV, depth, action_num, searched_action_num);
                                 }
-                                tt.insert_ttentry(hash, High(-x), depth, k1_action_idx);
+                                unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, k1_action_idx)};
                                 stats.update_history(&searched_actions, k1_action_idx,  move_history, depth, ply, is_true_att);
                                 return (k1_action, High(-x));
                             }
@@ -1976,6 +2042,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                 next_move_history, 
                 e,
                 tt, 
+                ttmask,
                 stats, 
                 profiler, 
                 rng
@@ -1993,7 +2060,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                         profiler.push_cut(CutOffSource::Killer1, false, depth, action_num, searched_action_num);
                     }
 
-                    tt.insert_ttentry(hash, High(-x), depth, k1_action_idx);
+                    unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, k1_action_idx)};
                     stats.update_history(&searched_actions, k1_action_idx,  move_history, depth, ply, is_true_att);
                     return (k1_action, High(-x));
                 },
@@ -2107,6 +2174,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                 next_move_history,
                 e, 
                 tt, 
+                ttmask,
                 stats, 
                 profiler, 
                 rng
@@ -2123,14 +2191,14 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                     -beta,
                     -alpha, 
                     next_move_history, 
-                    e, tt, stats, profiler, rng);
+                    e, tt, ttmask, stats, profiler, rng);
                 match next_fail{
                     Low(x) => {
                         // cut
                         if cfg!(feature="search_profile"){
                             profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
                         }
-                        tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                        unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, action_idx as u8)};
                         stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
                         return (action, High(-x));
                     },
@@ -2152,7 +2220,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                                     if cfg!(feature="search_profile"){
                                         profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
                                     }
-                                    tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                                    unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, action_idx as u8)};
                                     stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
                                     return (action, High(-x));    
                                 }
@@ -2172,7 +2240,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                 if cfg!(feature="search_profile"){
                     profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
                 }
-                tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, action_idx as u8)};
                 stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
                 return (action, High(-x));
             },
@@ -2187,7 +2255,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                     if cfg!(feature="search_profile"){
                         profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
                     }
-                    tt.insert_ttentry(hash, High(-x), depth, action_idx as u8);
+                    unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, action_idx as u8)};
                     stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
                     return (action, High(-x));
                 }
@@ -2215,10 +2283,10 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
             // println!("killer_move:{:#?}", stats.killer_moves);
             println!("{:#?}", profiler.events.rchunks(20).next());
         }
-        tt.insert_ttentry(hash, Low(max_val), depth, max_action.trailing_zeros() as u8);
+        unsafe {insert_ttptr(tt, ttmask, hash, Low(max_val), depth, max_action.trailing_zeros() as u8)};
         return (max_action, Low(max_val));
     }else{
-        tt.insert_ttentry(hash, Ex(max_val), depth, max_action.trailing_zeros() as u8);
+        unsafe {insert_ttptr(tt, ttmask, hash, Ex(max_val), depth, max_action.trailing_zeros() as u8)};
         return (max_action, Ex(max_val))
     }
 }
@@ -2260,12 +2328,13 @@ pub struct TestLineAcumModel2<E: LineInfoEvaluator>{
     l: E,
     pub search_profiler: UnsafeCell<SearchProfiler>,
     pub limit: u64,
-    pub max_depth: u64,
+    pub max_depth: u8,
+    pub min_depth: u8,
 }
 
 impl<E: LineInfoEvaluator> TestLineAcumModel2<E>{
     pub fn new(l: E) -> Self{
-        return Self { l: l, search_profiler: UnsafeCell::new(SearchProfiler::new()), limit:1, max_depth:29};
+        return Self { l: l, search_profiler: UnsafeCell::new(SearchProfiler::new()), limit:1, max_depth:29, min_depth:1};
     }
     pub fn print_nps(&self){
         unsafe {
@@ -2279,7 +2348,7 @@ impl<E: LineInfoEvaluator> TestLineAcumModel2<E>{
 
 impl<E: LineInfoEvaluator> EvaluatorF for TestLineAcumModel2<E>{
     fn eval_func_f32(&self, b: &Board) -> f32 {
-        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, &self.l, 24, self.limit);
+        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, self.min_depth, &self.l, 24, self.limit);
         return val;
     }
 }
@@ -2287,7 +2356,7 @@ impl<E: LineInfoEvaluator> EvaluatorF for TestLineAcumModel2<E>{
 impl<E: LineInfoEvaluator> GetAction for TestLineAcumModel2<E>{
     fn get_action(&self, b: &Board) -> u8 {
         // let (action, val, profiler) = call_negscout_hash_lineinfo(b, self.max_depth as u8, &self.l, 22, self.limit);
-        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, &self.l, 24, self.limit);
+        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, self.min_depth, &self.l, 24, self.limit);
         unsafe {
             let k = &mut *self.search_profiler.get();
             k.time += profiler.time;
