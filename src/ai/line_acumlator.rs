@@ -182,6 +182,7 @@ pub const REDUCTION_TABLE: [[u8; 64]; 64] = {
         while moves < 64 {
             // LMR的な削減量の計算式
             let reduction = (APPROX_LOG[depth as usize] * APPROX_LOG[moves as usize] * REDUCTION_STRENGTH) as u8;
+            let reduction = (reduction | 1) ^ 1;
             table[depth as usize][moves as usize] = if reduction + 3 > depth { 3 } else { depth - reduction };
             moves += 1;
         }
@@ -1136,14 +1137,17 @@ pub enum FailType{
 #[derive(Clone, Debug)]
 pub enum CutOffSource{
     Winning,
+    Draw,
     Blocking,
+    Losing,
     TTValueCut(FailType),
     TTMove,
     Killer0,
     Killer1,
-    History,
+    History(u8, u8),
     None,
 }
+
 
 #[derive(Clone, Debug)]
 pub enum HitSource{
@@ -1161,10 +1165,6 @@ pub enum PVSearchEvent{
     Call{is_pv: bool, depth: u8, ply: u8}
 }
 
-#[derive(Default, Clone, Debug)]
-pub struct CutOffRecord{
-
-}
 
 #[derive(Default, Clone, Debug)]
 pub struct PVSearchProfiler{
@@ -1220,6 +1220,76 @@ impl PVSearchStats{
         };
         return PVSearchStats { killer_moves: [[idx; 2]; 64], move_history: [0;128], continuous_history1: [[0;64];128], continuous_history2: [[0;64];128], continuous_history4: [[0;64];128], continuous_history6: [[0;64];128] };
     }
+    #[inline(always)]
+    fn update_only_history(&mut self, searched_actions:&[u8], last_action: u8, move_history: u64, depth: u8, ply: u8, is_true_att: u8){
+        let offset = (is_true_att << 6) as usize;
+        let bonus = (depth as i16).pow(2).min(BONUS_MAX);
+        let last_action = last_action as usize;
+        update_history_array(&mut self.move_history[offset + last_action], bonus);
+        if ply >= 6{
+            let c1: usize = (move_history & 0x3f) as usize;
+            let c2 = ((move_history >> 6) & 0x3f) as usize;
+            let c4 = ((move_history >> 18) & 0x3f) as usize;
+            let c6 = ((move_history >> 30) & 0x3f) as usize;
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            update_history_array(&mut self.continuous_history1[c1][last_action], bonus);
+            update_history_array(&mut self.continuous_history2[c2][last_action], bonus);
+            update_history_array(&mut self.continuous_history4[c4][last_action], bonus);
+            update_history_array(&mut self.continuous_history6[c6][last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+                update_history_array(&mut self.continuous_history1[c1][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history2[c2][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history4[c4][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history6[c6][searched_action as usize], -bonus);
+            }
+        }else if ply >= 4{
+            let c1: usize = (move_history & 0x3f) as usize;
+            let c2 = ((move_history >> 6) & 0x3f) as usize;
+            let c4 = ((move_history >> 18) & 0x3f) as usize;
+            let c6 = ((move_history >> 30) & 0x3f) as usize;
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            update_history_array(&mut self.continuous_history1[c1][last_action], bonus);
+            update_history_array(&mut self.continuous_history2[c2][last_action], bonus);
+            update_history_array(&mut self.continuous_history4[c4][last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+                update_history_array(&mut self.continuous_history1[c1][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history2[c2][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history4[c4][searched_action as usize], -bonus);
+            }
+        }else if ply >= 2{
+            let c1: usize = (move_history & 0x3f) as usize;
+            let c2 = ((move_history >> 6) & 0x3f) as usize;
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            update_history_array(&mut self.continuous_history1[c1][last_action], bonus);
+            update_history_array(&mut self.continuous_history2[c2][last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+                update_history_array(&mut self.continuous_history1[c1][searched_action as usize], -bonus);
+                update_history_array(&mut self.continuous_history2[c2][searched_action as usize], -bonus);
+            }
+        }else if ply >= 1{
+            let c1: usize = (move_history & 0x3f) as usize;
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            update_history_array(&mut self.continuous_history1[c1][last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+                update_history_array(&mut self.continuous_history1[c1][searched_action as usize], -bonus);
+            }
+        }else{
+            update_history_array(&mut self.move_history[offset + last_action], bonus);
+            
+            for &searched_action in searched_actions{
+                update_history_array(&mut self.move_history[offset + last_action], -bonus);
+            }
+        }
+    }   
+
     #[inline(always)]
     fn update_history(&mut self, searched_actions:&[u8], last_action: u8, move_history: u64, depth: u8, ply: u8, is_true_att: u8){
         // update killer
@@ -1292,6 +1362,37 @@ impl PVSearchStats{
     }
 }
 
+pub struct MovePicker {
+    moves: ArrayVec<(i16, usize), 16>,
+    pos: usize,
+}
+
+impl MovePicker {
+    #[inline(always)]
+    pub fn new(moves: ArrayVec<(i16, usize), 16>) -> Self {
+        Self { moves, pos: 0 }
+    }
+
+    #[inline(always)]
+    pub fn next_move(&mut self) -> Option<(i16, usize)> {
+        let len = self.moves.len();
+        if self.pos >= len {
+            return None;
+        }
+        // pos以降で最大スコアを探す
+        let mut best = self.pos;
+        for i in (self.pos + 1)..len {
+            if self.moves[i].0 > self.moves[best].0 {
+                best = i;
+            }
+        }
+        self.moves.swap(self.pos, best);
+        let result = self.moves[self.pos];
+        self.pos += 1;
+        Some(result)
+    }
+}
+
 
 pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, max_depth: u8, min_depth: u8, e: &E, tt_size: u64, limit: u64) -> (Action, f32, SearchProfiler){
     // let mut tt = TT::<u8>::new(1 << tt_size, (1 << tt_size) - 1, TTEntry { hash_hi: 0, fail: Fail::Ex(0.0), depth:0, best_move: 0 });
@@ -1311,6 +1412,7 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, max_depth: u8, min
     let mut stats = PVSearchStats::default_from_board(att, def);
     let mut profiler = PVSearchProfiler::new(1_000_000);
     let mut whole_time = 0;
+    let mut last_depth = 0;
     for d in (1..=max_depth).step_by(2){
         // println!("depth:{d}");
         profiler = PVSearchProfiler::new(1_000_000);
@@ -1354,6 +1456,7 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, max_depth: u8, min
         }
         // println!("time:{time}μs");
         if whole_time > limit as u128 && d >= min_depth || d == max_depth{
+            last_depth = d;
             // println!("pv changes: {:#?}", search_profiler.pv_changes_move_idx);
             // println!("high: {:#?}", search_profiler.pv_changes_move_idx_high);
             // println!("low: {:#?}", search_profiler.pv_changes_move_idx_low);
@@ -1375,6 +1478,10 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, max_depth: u8, min
         let mut hit_k0 = 0;
         let mut hit_k1 = 0;
         let mut hit_h = 0;
+        let mut winning_cut = 0;
+        let mut losing_cut = 0;
+        let mut draw_cut = 0;
+        let mut blocking_cut = 0;
         let mut cut_tvalue = 0;
         let mut cut_ttable = 0;
         let mut cut_k0 = 0;
@@ -1382,60 +1489,195 @@ pub fn call_pvsearch_lineinfo<E: LineInfoEvaluator>(b:&Board, max_depth: u8, min
         let mut cut_h = 0;
         let mut non_cut = 0;
         let mut call = 0;
+        let mut nodes = [0; 30];
+        let mut cutoff_map = [[0u64; 17]; 17];  
+        let tar_pv = false;
+        let tar_depth = 1;
         println!("ttentry:eq:{}, gt:{}",profiler.cut_node_tt_depth_eq, profiler.cut_node_tt_depth_gt);
         for event in profiler.events.iter(){
             match event{
-                Call { .. } => {
-                    call += 1;
-                }
-                PVSearchEvent::Hit { source: HitSource::TTable, .. } => {
-                    hit_ttable += 1;
+                CutOff { source: CutOffSource::None, .. } => {},
+                CutOff { is_pv: is_pv, action_num: num, action_idx: idx, .. } => {
+                    if tar_pv == *is_pv{
+                        cutoff_map[*num as usize][*idx as usize] += 1;
+                    }
                 },
-                Hit {source: K1, ..} => {
-                    hit_k1 += 1;
-                },
-                Hit {source: K0, ..} => {
-                    hit_k0 += 1;
-                },
-                Hit {source: History, ..} => {
-                    hit_h += 1;
-                },
-                CutOff { source: CutOffSource::TTValueCut(_), .. } => {
-                    cut_tvalue += 1;
-                },
-                CutOff { source: CutOffSource::TTMove, .. } => {
-                    cut_ttable += 1;
-                },
-                CutOff { source: CutOffSource::Killer0, .. } => {
-                    cut_k0 += 1;
-                },
-                CutOff { source: CutOffSource::Killer1, .. } => {
-                    cut_k1 += 1;
-                },
-                CutOff { source: CutOffSource::History, .. } => {
-                    cut_h += 1;
-                },
-                CutOff { source: CutOffSource::None, .. } => {
-                    non_cut += 1;
+                _ => {}
+            }
+            match event{
+                Call { depth: d, ply: p, is_pv: is_pv } => {
+                    nodes[*p as usize] += 1;
                 },
                 _ => {}
             }
         }
 
-        println!("hit:{}/{call}", cut_tvalue+cut_ttable+cut_k1+cut_k0+cut_h+non_cut);
-        println!("cutoff_rate:[tvalue]{cut_tvalue}/{hit_ttable}[{}%], [ttable]{cut_ttable}/{hit_ttable}[{}%], [k0]{cut_k0}/{hit_k0}[{}%], [k1]{cut_k1}/{hit_k1}[{}%], [h]{cut_h}/{hit_h}[{}%], [non]{non_cut}/{call}[{}%]",
-            100 * cut_tvalue / (hit_ttable + 1),
-            100 * cut_ttable / (hit_ttable + 1),
-            100 * cut_k0 / (hit_k0 + 1),
-            100 * cut_k1 / (hit_k1 + 1),
-            100 * cut_h / (hit_h + 1),
-            100 * non_cut / (call + 1),
-        );
+        for d in 0..29{
+            if nodes[d+1] == 0{
+                break;
+            }
+            println!("[depth {d}] ratio: {}", nodes[d+1] as f64 / (nodes[d] as f64 + 1.0));
+        }
+
+        for num in 0..17{
+            let total: u64 = cutoff_map[num].iter().sum();
+            if total == 0{
+                continue;
+            }
+            println!("[action num {num}] cut idx: count (ratio)");
+            for idx in 0..17{
+                if cutoff_map[num][idx] == 0{
+                    continue;
+                }
+                println!("  idx {idx}: {count} ({ratio}%)", count=cutoff_map[num][idx], ratio=100 * cutoff_map[num][idx] / total);
+            }
+        }
+
+        for i in 0..last_depth{
+            println!("-----------[depth:{i}]------------");
+            print_search_profile(i, tar_pv, &mut profiler);
+        }
+            
     }
     // println!("time:{time}μs");
 
 
     return (action, val.get_val(), search_profiler);
+}
+
+fn print_search_profile(tar_depth: u8, tar_pv: bool, profiler: &mut PVSearchProfiler){
+    use PVSearchEvent::*;
+    use HitSource::*;
+    let mut hit_ttable = 0;
+    let mut hit_k0 = 0;
+    let mut hit_k1 = 0;
+    let mut hit_h = 0;
+    let mut winning_cut = 0;
+    let mut losing_cut = 0;
+    let mut draw_cut = 0;
+    let mut blocking_cut = 0;
+    let mut cut_tvalue = 0;
+    let mut cut_ttable = 0;
+    let mut cut_k0 = 0;
+    let mut cut_k1 = 0;
+    let mut cut_h = 0;
+    let mut non_cut = 0;
+    let mut call = 0;
+    let mut history_max_indices = [[0u64; 17]; 17];
+    println!("ttentry:eq:{}, gt:{}",profiler.cut_node_tt_depth_eq, profiler.cut_node_tt_depth_gt);
+    for event in profiler.events.iter(){
+        match event{
+            Call { depth: d, ply: p, is_pv: is_pv } => {
+                if *d > 0 && *d == tar_depth && *is_pv == tar_pv{
+                    call += 1;
+                }
+            }
+            Hit { source: HitSource::TTable, depth: d, is_pv: is_pv } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    hit_ttable += 1;
+                }
+            },
+            Hit {source: K1, depth: d, is_pv: is_pv} => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    hit_k1 += 1;
+                }
+            },
+            Hit {source: K0, depth: d, is_pv: is_pv} => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    hit_k0 += 1;
+                }
+            },
+            Hit {source: History, depth: d, is_pv: is_pv} => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    hit_h += 1;
+                }
+            },
+            CutOff { source: CutOffSource::Blocking, depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    blocking_cut += 1;
+                }
+            },
+            CutOff { source: CutOffSource::Winning, depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    winning_cut += 1;
+                }
+            },
+            CutOff { source: CutOffSource::Losing, depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    losing_cut += 1;
+                }
+            },
+            CutOff { source: CutOffSource::Draw, depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    draw_cut += 1;
+                }
+            },
+            CutOff { source: CutOffSource::TTValueCut(_), depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    cut_tvalue += 1;
+                }
+            },
+            CutOff { source: CutOffSource::TTMove, depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    cut_ttable += 1;
+                }
+            },
+            CutOff { source: CutOffSource::Killer0, depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    cut_k0 += 1;
+                }
+            },
+            CutOff { source: CutOffSource::Killer1, depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    cut_k1 += 1;
+                }
+            },
+            CutOff { source: CutOffSource::History(idx, num), depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    history_max_indices[*num as usize][*idx as usize] += 1;
+                    cut_h += 1;
+                }
+            },
+            CutOff { source: CutOffSource::None, depth: d, is_pv: is_pv, .. } => {
+                if *d == tar_depth && *is_pv == tar_pv{
+                    non_cut += 1;
+                }
+            },
+            _ => {}
+        }
+    }
+
+    println!("hit:{:>10}/{call:>10}", cut_tvalue+cut_ttable+cut_k1+cut_k0+cut_h+non_cut);
+
+    println!(" [winning]cut:{winning_cut:>10}/{call:>10}[{:>2}%, All:{:>2}%]", 100 * winning_cut / (call + 1), 100 * winning_cut / (call + 1));
+    println!("    [draw]cut:{draw_cut:>10}/{call:>10}[{:>2}%, All:{:>2}%]", 100 * draw_cut / (call + 1), 100 * draw_cut / (call + 1));
+    println!("  [losing]cut:{losing_cut:>10}/{call:>10}[{:>2}%, All:{:>2}%]", 100 * losing_cut / (call + 1), 100 * losing_cut / (call + 1));
+    println!("[blocking]cut:{blocking_cut:>10}/{call:>10}[{:>2}%, All:{:>2}%]", 100 * blocking_cut / (call + 1), 100 * blocking_cut / (call + 1));
+    let rest = call - winning_cut - draw_cut - losing_cut - blocking_cut;
+    println!("  [tvalue]hit:{hit_ttable:>10}/{rest:>10}[{:>2}%] cut:{cut_tvalue:>10}/{hit_ttable:>10}[{:>2}%, All:{:>2}%]", 100 * hit_ttable / (rest + 1), 100 * cut_tvalue / (hit_ttable + 1), 100 * cut_tvalue / (call + 1));
+    let hit_ttmove = hit_ttable - cut_tvalue;
+    let rest = rest - cut_tvalue;
+    println!("  [ttable]hit:{hit_ttmove:>10}/{rest:>10}[{:>2}%] cut:{cut_ttable:>10}/{hit_ttable:>10}[{:>2}%, All:{:>2}%]", 100 * hit_ttmove / (rest + 1), 100 * cut_ttable / (hit_ttmove + 1), 100 * cut_ttable / (call + 1));
+    let rest = rest - cut_ttable;
+    println!("      [k0]hit:{hit_k0:>10}/{rest:>10}[{:>2}%] cut:{cut_k0:>10}/{hit_k0:>10}[{:>2}%, All:{:>2}%]", 100 * hit_k0 / (rest + 1), 100 * cut_k0 / (hit_k0 + 1), 100 * cut_k0 / (call + 1));
+    let rest = rest - cut_k0;
+    println!("      [k1]hit:{hit_k1:>10}/{rest:>10}[{:>2}%] cut:{cut_k1:>10}/{hit_k1:>10}[{:>2}%, All:{:>2}%]", 100 * hit_k1 / (rest + 1), 100 * cut_k1 / (hit_k1 + 1), 100 * cut_k1 / (call + 1));
+    let rest = rest - cut_k1;
+    println!(" [history]hit:{hit_h:>10}/{rest:>10}[{:>2}%] cut:{cut_h:>10}/{hit_h:>10}[{:>2}%, All:{:>2}%]", 100 * hit_h / (rest + 1), 100 * cut_h / (hit_h + 1), 100 * cut_h / (call + 1));
+
+    for num in 0..17{
+        let mut total = 0;
+        for idx in 0..17{
+            total += history_max_indices[num][idx];
+        }
+        if total == 0{
+            continue;
+        }
+        println!("  [history]num:{num} cut max num: count (ratio)");
+        for idx in 0..17{
+            println!("    idx {idx}: {count} ({ratio}%)", count=history_max_indices[num][idx], ratio=100 * history_max_indices[num][idx] / total);
+        }
+    }
 }
 
 
@@ -1535,6 +1777,10 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
         return (action, High(1.0));
     }else if stone.count_ones() == 63{
         // def_reachの後に置くと一手飛ばして終了盤面が入力される可能性がある。
+        if cfg!(feature="search_profile"){
+            profiler.push_cut(
+                CutOffSource::Draw, IS_PV, depth, valid_mask.count_ones() as u8, 0);
+        }
         if 0.0 <= alpha{
             return (!stone, Low(0.0));
         }else if 0.0 >= beta{
@@ -1545,6 +1791,10 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
     }else if def_reach != 0{
         // blocking move
         if def_reach.count_ones() > 1{
+            if cfg!(feature="search_profile"){
+                profiler.push_cut(
+                    CutOffSource::Losing, IS_PV, depth, valid_mask.count_ones() as u8, 0);
+            }
             return (def_reach.get_lsb(), Low(-1.0));
         }
         let action = def_reach.get_lsb();
@@ -1552,10 +1802,10 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
         let action_idx = action.trailing_zeros() as usize;
         let next_hash = hash ^ ZOBRIST_TABLE[action_idx + (att_offset as usize)];
         
-        // unsafe {
-        //     let prefetch_ptr = tt.add((next_hash & ttmask) as usize);
-        //     std::arch::x86_64::_mm_prefetch(prefetch_ptr as *const i8, std::arch::x86_64::_MM_HINT_T1);
-        // }
+        unsafe {
+            let prefetch_ptr = tt.add((next_hash & ttmask) as usize);
+            std::arch::x86_64::_mm_prefetch(prefetch_ptr as *const i8, std::arch::x86_64::_MM_HINT_T0);
+        }
 
         let next_info = info.next(action_idx);
         let next_move_history = (move_history << 6) | action_idx as u64;
@@ -1583,6 +1833,7 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
             profiler.push_cut(
                 CutOffSource::Blocking, IS_PV, depth, valid_mask.count_ones() as u8, 0);
         }
+        // stats.update_only_history(&Vec::new(), action_idx as u8,  move_history, depth, ply, is_true_att);
         match v{
             High(x) => return(action, Low(-x)),
             Low(x) => return(action, High(-x)),
@@ -1596,6 +1847,10 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
         if att_losing == 0{
             pprint_uboard((att, def));
             panic!("att_losing == 0");
+        }
+        if cfg!(feature="search_profile"){
+            profiler.push_cut(
+                CutOffSource::Losing, IS_PV, depth, att_losing.count_ones() as u8, 0);
         }
         let action_idx = att_losing.trailing_zeros();
         unsafe {insert_ttptr(tt, ttmask, hash, Low(-1.0), depth, action_idx as u8)};
@@ -1704,11 +1959,6 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                     profiler, 
                     rng
                 );
-
-            if cfg!(feature="search_profile"){
-                profiler.call_blocking += 1;
-            }
-
             let action_idx = action.trailing_zeros();
 
             match next_val{
@@ -1736,7 +1986,79 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
             searched_action_num += 1;
         },
         _ => {
+            if IS_PV && depth >= 4{
+                // Internal Iterative Deeping
+                let (iid_action, next_val) = pv_search_lineinfo::<IS_PV, E>(
+                    (att, def), 
+                    info, 
+                    hash, 
+                    is_true_att,
+                    depth - 2, 
+                    ply, 
+                    max_depth, 
+                    alpha, 
+                    beta, 
+                    move_history, 
+                    e,
+                    tt,
+                    ttmask,
+                    stats, 
+                    profiler, 
+                    rng
+                );
 
+                valid_mask ^= iid_action;
+
+                let iid_action_idx = iid_action.trailing_zeros();
+                let next_uboard = (def, att | iid_action);
+                let next_hash = hash ^ ZOBRIST_TABLE[iid_action_idx as usize + (att_offset as usize)];
+
+                let next_info = info.next(iid_action_idx as usize);
+                let next_move_history = (move_history << 6) | iid_action_idx as u64;
+
+                let (next_action, next_val) = pv_search_lineinfo::<IS_PV, E>(
+                    next_uboard, 
+                    &next_info, 
+                    next_hash, 
+                    1- is_true_att,
+                    depth - 1, 
+                    ply + 1, 
+                    max_depth, 
+                    -beta, 
+                    -alpha, 
+                    next_move_history, 
+                    e,
+                    tt,
+                    ttmask,
+                    stats, 
+                    profiler, 
+                    rng
+                );
+
+                match next_val{
+                    Low(x) => {
+                        // update tt
+                        if cfg!(feature="search_profile"){
+                            profiler.push_cut(CutOffSource::TTMove, IS_PV, depth, action_num, 0);
+                        }
+                        unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, iid_action_idx as u8)};
+                        stats.update_history(&searched_actions, iid_action_idx as u8,  move_history, depth, ply, is_true_att);
+                        return (iid_action, High(-x));
+                    },
+                    High(x) => {
+                        max_val = -x;
+                        max_action = iid_action;
+                    },
+                    Ex(x) => {
+                        // alpha < x < beta
+                        max_val = -x;
+                        max_action = iid_action;
+                        alpha = -x;
+                    },
+                }
+                searched_actions.push(iid_action_idx as u8);
+                searched_action_num += 1;
+            }
         }
     }
 
@@ -2147,9 +2469,10 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
     }
 
     // sorting_actions.sort_by(|a, b| b.0.cmp(&a.0));
-    sorting_actions.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+    // sorting_actions.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+    let mut picker = MovePicker::new(sorting_actions);
     
-    for (val, action_idx) in sorting_actions{
+    while let Some((val, action_idx)) = picker.next_move() {
         let action = 1 << action_idx;
         let next_att = att | action;
         let next_info = info.next(action_idx);
@@ -2161,12 +2484,13 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                 profiler.scout_attempt += 1;
             }
         }
+        let reduction_depth = REDUCTION_TABLE[(depth - 1) as usize][searched_action_num as usize];
         let (next_action, next_fail) = pv_search_lineinfo::<false, E>(
                 (def, next_att), 
                 &next_info, 
                 next_hash, 
                 1- is_true_att,
-                depth - 1, 
+                reduction_depth, 
                 ply + 1, 
                 max_depth, 
                 -(alpha.next_up()), 
@@ -2196,7 +2520,9 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                     Low(x) => {
                         // cut
                         if cfg!(feature="search_profile"){
-                            profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
+                            let history_action_num = picker.moves.len() as u8;
+                            let history_action_idx = picker.pos as u8 - 1;
+                            profiler.push_cut(CutOffSource::History(history_action_idx, history_action_num), IS_PV, depth, action_num, searched_action_num);
                         }
                         unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, action_idx as u8)};
                         stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
@@ -2218,7 +2544,9 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
                                 alpha = max_val;
                                 if alpha >= beta{
                                     if cfg!(feature="search_profile"){
-                                        profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
+                                        let history_action_num = picker.moves.len() as u8;
+                                        let history_action_idx = picker.pos as u8 - 1;
+                                        profiler.push_cut(CutOffSource::History(history_action_idx, history_action_num), IS_PV, depth, action_num, searched_action_num);
                                     }
                                     unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, action_idx as u8)};
                                     stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
@@ -2238,7 +2566,9 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
             },
             (false, Low(x)) => {
                 if cfg!(feature="search_profile"){
-                    profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
+                    let history_action_num = picker.moves.len() as u8;
+                    let history_action_idx = picker.pos as u8 - 1;
+                    profiler.push_cut(CutOffSource::History(history_action_idx, history_action_num), IS_PV, depth, action_num, searched_action_num);
                 }
                 unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, action_idx as u8)};
                 stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
@@ -2253,7 +2583,9 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
             (_, Ex(x)) => {
                 if -x >= beta{
                     if cfg!(feature="search_profile"){
-                        profiler.push_cut(CutOffSource::History, IS_PV, depth, action_num, searched_action_num);
+                        let history_action_num = picker.moves.len() as u8;
+                        let history_action_idx = picker.pos as u8 - 1;
+                        profiler.push_cut(CutOffSource::History(history_action_idx, history_action_num), IS_PV, depth, action_num, searched_action_num);
                     }
                     unsafe {insert_ttptr(tt, ttmask, hash, High(-x), depth, action_idx as u8)};
                     stats.update_history(&searched_actions, action_idx as u8,  move_history, depth, ply, is_true_att);
@@ -2279,7 +2611,6 @@ pub fn pv_search_lineinfo<const IS_PV: bool, E:LineInfoEvaluator>(
             pprint_uboard((att, def));
             pprint_u64(valid_mask);
             println!("[depth:{depth}, ply:{ply}, is_pv:{IS_PV}]");
-            println!("k0:{k0_action_idx}, k1:{k1_action_idx}, max_val:{max_val}");
             // println!("killer_move:{:#?}", stats.killer_moves);
             println!("{:#?}", profiler.events.rchunks(20).next());
         }
@@ -2330,11 +2661,12 @@ pub struct TestLineAcumModel2<E: LineInfoEvaluator>{
     pub limit: u64,
     pub max_depth: u8,
     pub min_depth: u8,
+    pub tt_size: u64,
 }
 
 impl<E: LineInfoEvaluator> TestLineAcumModel2<E>{
     pub fn new(l: E) -> Self{
-        return Self { l: l, search_profiler: UnsafeCell::new(SearchProfiler::new()), limit:1, max_depth:29, min_depth:1};
+        return Self { l: l, search_profiler: UnsafeCell::new(SearchProfiler::new()), limit:1, max_depth:29, min_depth:1, tt_size:24};
     }
     pub fn print_nps(&self){
         unsafe {
@@ -2348,7 +2680,7 @@ impl<E: LineInfoEvaluator> TestLineAcumModel2<E>{
 
 impl<E: LineInfoEvaluator> EvaluatorF for TestLineAcumModel2<E>{
     fn eval_func_f32(&self, b: &Board) -> f32 {
-        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, self.min_depth, &self.l, 24, self.limit);
+        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, self.min_depth, &self.l, self.tt_size, self.limit);
         return val;
     }
 }
@@ -2356,7 +2688,7 @@ impl<E: LineInfoEvaluator> EvaluatorF for TestLineAcumModel2<E>{
 impl<E: LineInfoEvaluator> GetAction for TestLineAcumModel2<E>{
     fn get_action(&self, b: &Board) -> u8 {
         // let (action, val, profiler) = call_negscout_hash_lineinfo(b, self.max_depth as u8, &self.l, 22, self.limit);
-        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, self.min_depth, &self.l, 24, self.limit);
+        let (action, val, profiler) = call_pvsearch_lineinfo(b, self.max_depth as u8, self.min_depth, &self.l, self.tt_size, self.limit);
         unsafe {
             let k = &mut *self.search_profiler.get();
             k.time += profiler.time;

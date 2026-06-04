@@ -14,6 +14,9 @@ pub mod pattern;
 pub mod position;
 pub mod timeout;
 pub mod nn;
+// #[cfg(feature="gpu_mcts")]
+pub mod gpu_mcts;
+pub mod cpu_mcts;
 
 use crate::ai::line::SimplLineEvaluator;
 use crate::board::{

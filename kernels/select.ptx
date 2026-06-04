@@ -1,0 +1,256 @@
+// ============================================================
+// phase1_select.ptx — 選択フェーズ
+//
+// 【分岐発散の解決策】
+//   問題: 子ノード数がノードごとに違う → スレッドごとに処理量が異なる
+//   解法: 1 warp = 1 探索路
+//         warp内32スレッドが子ノードのUCBを並列計算
+//         子が32未満 → 余りスレッドはUCB=-INFでマスク (自然に除外)
+//         → warp内全スレッドが同じ命令を実行 = 発散ゼロ！
+//
+//   Virtual Loss:
+//         複数warpが同じノードを選ばないよう、選択時に
+//         仮の負の報酬をアトミックに付与する
+//         → ロック不要で木の並列探索が可能
+//
+// 引数:
+//   n_visits    : u32* — 各ノードの訪問回数
+//   total_val   : f32* — 各ノードの累積価値
+//   first_child : u32* — 最初の子ノードインデックス
+//   n_children  : u32* — 子ノード数
+//   parent      : u32* — 親ノードインデックス
+//   virtual_loss: i32* — 仮損失カウンタ
+//   leaf_out    : u32* — 結果: 各warpが到達したリーフノードID
+//   path_out    : u32* — 結果: 各warpの探索パス (バックプロパゲーション用)
+//   path_len    : u32* — 各warpのパス長
+//   n_warps     : u32  — 同時探索warp数 (= バッチサイズ W)
+//   explore_c   : f32  — UCB探索定数 c (通常 √2 ≈ 1.414)
+// ============================================================
+
+.version 8.0
+.target  sm_86
+.address_size 64
+
+// ── 定数 ────────────────────────────────────────────────────
+// 木の最大ノード数・最大深さ (コンパイル時定数)
+// 実際は param で渡すほうが柔軟だが、説明のため定数で示す
+
+.visible .entry mcts_select(
+    .param .u64 p_visits,
+    .param .u64 p_total_val,
+    .param .u64 p_first_child,
+    .param .u64 p_n_children,
+    .param .u64 p_parent,
+    .param .u64 p_virtual_loss,
+    .param .u64 p_leaf_out,
+    .param .u64 p_path_out,
+    .param .u64 p_path_len,
+    .param .u32 p_n_warps,
+    .param .f32 p_explore_c
+)
+{
+    // ── レジスタ宣言 ──────────────────────────────────────────
+    .reg .pred  %p0, %p1, %p2, %p3;
+    .reg .u32   %r<20>;
+    .reg .u64   %rd<16>;
+    .reg .f32   %f<12>;
+    .reg .s32   %s0;               // 符号付き (virtual loss 用)
+
+    // ── パラメータロード ──────────────────────────────────────
+    ld.param.u64 %rd0,  [p_visits];
+    ld.param.u64 %rd1,  [p_total_val];
+    ld.param.u64 %rd2,  [p_first_child];
+    ld.param.u64 %rd3,  [p_n_children];
+    ld.param.u64 %rd4,  [p_parent];
+    ld.param.u64 %rd5,  [p_virtual_loss];
+    ld.param.u64 %rd6,  [p_leaf_out];
+    ld.param.u64 %rd7,  [p_path_out];
+    ld.param.u64 %rd8,  [p_path_len];
+    ld.param.u32 %r0,   [p_n_warps];
+    ld.param.f32 %f0,   [p_explore_c];  // explore_c
+
+    // ── スレッドID・warpID ────────────────────────────────────
+    mov.u32 %r1, %tid.x;              // スレッドID (0..blockDim-1)
+    mov.u32 %r2, %ntid.x;
+    mov.u32 %r3, %ctaid.x;
+    mad.lo.u32 %r4, %r3, %r2, %r1;   // グローバルスレッドID
+
+    shr.u32 %r5, %r4, 5;              // warpID = globalID / 32
+    and.b32 %r6, %r4, 31;             // lane = globalID % 32 (0..31)
+
+    // 担当warpが存在するか確認
+    setp.ge.u32 %p0, %r5, %r0;
+    @%p0 bra EXIT;
+
+    // ── path_out バッファのベースアドレス計算 ────────────────
+    // 各warpは最大256深さのパスを保存する
+    mov.u32      %r7, 256;
+    mul.lo.u32   %r8, %r5, %r7;       // warpID * 256
+    mul.wide.u32 %rd9, %r8, 4;
+    add.u64      %rd9, %rd7, %rd9;    // path_out[warpID * 256]
+
+    // ── 選択ループ: ルートから下に向かって降下 ───────────────
+    mov.u32 %r9, 0;     // current_node = root (インデックス0)
+    mov.u32 %r10, 0;    // depth = 0
+
+SELECT_LOOP:
+    // ── 子ノード数を取得 ──────────────────────────────────────
+    // %rd10 = current*4 (オフセットとして保持し続ける)
+    mul.wide.u32 %rd10, %r9, 4;
+    add.u64      %rd11, %rd3, %rd10;  // p_n_children + current*4
+    ld.global.u32 %r11, [%rd11];      // n_children[current]
+
+    // リーフ判定: 子がない → 選択終了
+    setp.eq.u32 %p1, %r11, 0;
+    @%p1 bra LEAF_FOUND;
+
+    // ── 現ノードの訪問回数 ────────────────────────────────────
+    add.u64      %rd11, %rd0, %rd10;  // p_visits + current*4
+    ld.global.u32 %r12, [%rd11];      // N = n_visits[current]
+
+    // ── Virtual Lossを加算した実効訪問数 ─────────────────────
+    add.u64      %rd12, %rd5, %rd10;  // p_vl + current*4
+    ld.global.s32 %s0, [%rd12];       // virtual_loss[current]
+    add.s32      %r12, %r12, %s0;     // N_eff = N + virtual_loss
+
+    // log(N_eff) の近似計算 (探索項用)
+    // PTXにlog命令はないので、lg2.approx + 定数変換を使う
+    cvt.rn.f32.u32 %f1, %r12;
+    lg2.approx.f32 %f2, %f1;          // log2(N_eff)
+    mul.f32        %f2, %f2, 0f3F317218; // × ln2 ≈ log(N_eff)
+
+    // ── UCBをwarp内で並列計算 (lane i → child i) ─────────────
+    // 【分岐発散解決の核心】
+    // lane が担当する子インデックス
+    add.u64      %rd13, %rd2, %rd10;  // p_first_child + current*4
+    ld.global.u32 %r13, [%rd13];      // first_child[current]
+    add.u32      %r14, %r13, %r6;     // child_idx = first_child + lane
+
+    // lane < n_children かどうか判定
+    setp.lt.u32  %p2, %r6, %r11;
+
+    // ── 子の統計を取得 (担当laneのみ有効) ─────────────────────
+    mov.f32      %f3, 0fFF800000;     // UCB = -INF (無効スロットのデフォルト)
+    @!%p2 bra UCB_SKIP;              // 担当なし → スキップ (-INFのまま)
+
+    // n_visits[child]
+    mul.wide.u32 %rd14, %r14, 4;
+    add.u64      %rd14, %rd0, %rd14;
+    ld.global.u32 %r15, [%rd14];      // ni = n_visits[child]
+
+    // virtual_loss[child]  (child*4 オフセットを再計算)
+    mul.wide.u32 %rd15, %r14, 4;
+    add.u64      %rd15, %rd5, %rd15;
+    ld.global.s32 %s0, [%rd15];
+    add.s32      %r15, %r15, %s0;    // ni_eff = ni + vl
+
+    // total_val[child]
+    mul.wide.u32 %rd15, %r14, 4;
+    add.u64      %rd15, %rd1, %rd15;
+    ld.global.f32 %f4, [%rd15];       // wi = total_val[child]
+    cvt.rn.f32.s32 %f5, %s0;          // (float)vl  (%s0 still holds vl)
+    add.f32        %f4, %f4, %f5;     // wi_eff = wi + vl (virtual loss = child wins → parent loses)
+
+    // ── UCB公式: (1-Q) + c * sqrt(ln(N)/n) ──────────────────
+    // Q = wi_eff / ni_eff  (子ノード手番プレイヤーの勝率 = 親から見た敗率)
+    // UCBは親の勝率 = 1-Q を最大化する
+    cvt.rn.f32.u32 %f5, %r15;         // (float)ni_eff  (%f5 を上書き)
+    div.rn.f32     %f6, %f4, %f5;     // Q = wi_eff / ni_eff
+    mov.f32        %f11, 0f3F800000;  // 1.0f
+    sub.f32        %f6, %f11, %f6;    // 1 - Q = P(親手番プレイヤー勝率)
+
+    // 探索項: c * sqrt(ln(N) / ni_eff)
+    div.rn.f32     %f7, %f2, %f5;     // ln(N) / ni_eff
+    sqrt.approx.f32 %f7, %f7;         // sqrt(...)
+    fma.rn.f32     %f3, %f0, %f7, %f6; // UCB = (1-Q) + c * sqrt(ln(N)/ni)
+
+UCB_SKIP:
+    // ── Warp内argmax (shfl.sync.downで木構造リダクション) ────
+    // 【発散解決: 全32スレッドが同じshfl命令を実行】
+    // step=16: lane[i] vs lane[i+16]
+    shfl.sync.down.b32 %f8, %f3, 16, 31, 0xffffffff;
+    setp.gt.f32 %p3, %f8, %f3;
+    // 値とlaneIDを同時にリダクション
+    // laneIDをfloatとして一時的に転用
+    cvt.rn.f32.u32 %f9, %r6;           // lane_id as float
+    shfl.sync.down.b32 %f10, %f9, 16, 31, 0xffffffff;
+    selp.f32 %f3, %f8, %f3, %p3;       // max(ucb)
+    selp.f32 %f9, %f10, %f9, %p3;      // argmax lane
+
+    // step=8
+    shfl.sync.down.b32 %f8, %f3, 8, 31, 0xffffffff;
+    shfl.sync.down.b32 %f10, %f9, 8, 31, 0xffffffff;
+    setp.gt.f32 %p3, %f8, %f3;
+    selp.f32 %f3, %f8, %f3, %p3;
+    selp.f32 %f9, %f10, %f9, %p3;
+
+    // step=4
+    shfl.sync.down.b32 %f8, %f3, 4, 31, 0xffffffff;
+    shfl.sync.down.b32 %f10, %f9, 4, 31, 0xffffffff;
+    setp.gt.f32 %p3, %f8, %f3;
+    selp.f32 %f3, %f8, %f3, %p3;
+    selp.f32 %f9, %f10, %f9, %p3;
+
+    // step=2
+    shfl.sync.down.b32 %f8, %f3, 2, 31, 0xffffffff;
+    shfl.sync.down.b32 %f10, %f9, 2, 31, 0xffffffff;
+    setp.gt.f32 %p3, %f8, %f3;
+    selp.f32 %f3, %f8, %f3, %p3;
+    selp.f32 %f9, %f10, %f9, %p3;
+
+    // step=1
+    shfl.sync.down.b32 %f8, %f3, 1, 31, 0xffffffff;
+    shfl.sync.down.b32 %f10, %f9, 1, 31, 0xffffffff;
+    setp.gt.f32 %p3, %f8, %f3;
+    selp.f32 %f3, %f8, %f3, %p3;
+    selp.f32 %f9, %f10, %f9, %p3;
+
+    // lane0 が最終結果を持つ
+    // best_lane = (u32)f9, best_child = first_child + best_lane
+    setp.ne.u32 %p2, %r6, 0;
+    @%p2 bra NEXT_ITER;             // lane0 以外はループ先頭へ
+
+    cvt.rzi.u32.f32 %r16, %f9;      // best_lane
+    add.u32        %r9, %r13, %r16; // best_child_node
+
+    // ── Virtual Loss をアトミックに付与 ───────────────────────
+    // 他warpが同じパスを選ばないよう仮の負値を付与
+    mul.wide.u32 %rd14, %r9, 4;
+    add.u64      %rd14, %rd5, %rd14;
+    mov.s32      %s0, 1;
+    atom.global.add.s32 %s0, [%rd14], %s0; // virtual_loss[best] += 1
+
+    // ── パスをpath_outに記録 ──────────────────────────────────
+    mul.wide.u32 %rd14, %r10, 4;
+    add.u64      %rd14, %rd9, %rd14;
+    st.global.u32 [%rd14], %r9;          // path[depth] = best_child
+
+    add.u32 %r10, %r10, 1;               // depth++
+
+NEXT_ITER:
+    // 全32スレッドにbest_childをブロードキャスト
+    shfl.sync.idx.b32 %r9, %r9, 0, 31, 0xffffffff;
+    shfl.sync.idx.b32 %r10, %r10, 0, 31, 0xffffffff;
+
+    // 深さ上限チェック (無限ループ防止)
+    setp.lt.u32 %p1, %r10, 256;
+    @%p1 bra SELECT_LOOP;
+
+LEAF_FOUND:
+    // lane0 のみ結果を書き出す
+    setp.ne.u32 %p2, %r6, 0;
+    @%p2 bra EXIT;
+
+    // leaf_out[warpID] = current_node
+    mul.wide.u32 %rd14, %r5, 4;
+    add.u64      %rd14, %rd6, %rd14;
+    st.global.u32 [%rd14], %r9;
+
+    // path_len[warpID] = depth  (warpID*4 オフセットを再計算)
+    mul.wide.u32 %rd15, %r5, 4;
+    add.u64      %rd15, %rd8, %rd15;
+    st.global.u32 [%rd15], %r10;
+
+EXIT:
+    ret;
+}

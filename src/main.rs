@@ -1,5 +1,6 @@
 mod main_utils;
 use proconio::input;
+use qubic_engine::ai::cpu_mcts::CpuMcts;
 use qubic_engine::ai::line::{
     BucketLineEvaluator, SimplLineEvaluator, SimplePatternEvaluator, TrainableBLE, TrainableSLE,
     TrainableSPE,
@@ -55,9 +56,6 @@ fn main() {
     let m5 = Agent::Struct(String::from("m5"), Box::new(m5));
     let mut l = SimplLineEvaluator::new();
     l.load("sle_tl50.json".to_string());
-    // let l3 = wrapping_line_eval(l.clone(), 3);
-    // let l4 = wrapping_line_eval(l.clone(), 4);
-    // let l5 = wrapping_line_eval(l.clone(), 5);
     let mut l3_ = NegAlphaF::new(Box::new(l.clone()), 1);
     let mut l5_ = NegAlphaF::new(Box::new(l.clone()), 29);
     // l5_.scout = true;
@@ -74,9 +72,9 @@ fn main() {
     ld.min_depth = 7;
 
     let po = PlayoutEvaluator::new(PlayoutLevel::Defence4);
-    let po2 = PlayoutEvaluator::new(PlayoutLevel::Attack4);
-    // let mcts = ai::mcts::Mcts::new(10_000, 3, 10000, po);
-    let mcts2 = ai::mcts::Mcts::new(100_000, 3, 1000000, po2);
+    let po2 = PlayoutEvaluator::new(PlayoutLevel::Defence4);
+    let mcts = ai::mcts::Mcts::new(1_000_000, 16, 100000, po);
+    let mcts2 = ai::mcts::Mcts::new(1_000_000, 8, 100000, po2);
 
     
     // let b = Board::new().next(0).next(15).next(12);
@@ -93,27 +91,37 @@ fn main() {
     
     
     // println!("{}, {}", qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[0], qubic_engine::ai::line_acumlator::ZOBRIST_TABLE[64]);
+
+    // let mcts = qubic_engine::ai::gpu_mcts::GpuMcts::new(100, 8);
+    // let mcts2 = qubic_engine::ai::gpu_mcts::GpuMcts::new(1000, 8);
+    let mcts = qubic_engine::ai::cpu_mcts::CpuMcts::new(1_000_000, 1);
+    // let mcts2 = qubic_engine::ai::cpu_mcts::CpuMcts::new(1_000_000, 32);
     
     let mut test_l = SimpleLineInfoEvaluator::from_sle(&l);
     // let _ = test_l.load("slie_result.json".to_string());
     
     let mut test_acum = qubic_engine::ai::line_acumlator::TestLineAcumModel2::new(test_l.clone());
-    test_acum.limit = 1_000_000;
-    test_acum.max_depth = 13;
-    test_acum.min_depth = 13;
+    test_acum.limit = 1000_000;
+    test_acum.max_depth = 29;
+    test_acum.min_depth = 7;
+    // test_acum.tt_size = 21;
     
-    let boards: Vec<Board> = main_utils::read_board_from_json("even_board/8.json").iter().map(|(a, d)| Board::from(*a,*d, Player::Black)).collect();
-    // use qubic_engine::match_stats::mle::bayes_elo_from_boards;
-    // let result = bayes_elo_from_boards(&boards, &test_acum, &ld, 10.0, true);
+    let mut boards: Vec<Board> = main_utils::read_board_from_json("even_board/8.json").iter().map(|(a, d)| Board::from(*a,*d, Player::Black)).collect();
+    use qubic_engine::match_stats::mle::bayes_elo_from_boards;
+    // let mut boards: Vec<Board> = vec![Board::new()];
+    // let result = bayes_elo_from_boards(&boards, &mcts, &test_acum, 10.0, true);
+    // let result = play_actor(&mcts, &test_acum, true);
     
-    for (i, b) in boards[..50].iter().enumerate(){
-        let _ = test_acum.get_action(b);
-        println!("[{i}]");
-    }
+    // for (i, b) in boards[..50].iter().enumerate(){
+    //     let t = Instant::now();
+    //     let _ = test_acum.get_action(b);
+    //     let time = t.elapsed().as_millis();
+    //     println!("[{i}]time:{time}");
+    // }
     
     // let _result = play_actor_from(Board::new(), &test_acum, &test_acum, true);
-    test_acum.print_nps();
-    return;
+    // test_acum.print_nps();
+    // return;
 
     // let stats = unsafe { test_acum.search_stats.get().as_ref().unwrap()};
     // println!("test_acum search stats: {:#?},\nnps:{}/{}[{}]", stats.pv_max_idx_frac, stats.pv_nodes, stats.time, 1000_000 * stats.pv_nodes / stats.time);
@@ -856,8 +864,9 @@ fn make_db() {
     le.timelimit = 1;
 
     let model = Some(le);
+    let mcts = Some(qubic_engine::ai::cpu_mcts::CpuMcts::new(1_000_000, 1));
 
-    create_stepback_db(&model, &db_name, 4, 4, 0.9, 1.0 / 10.0, play_num);
+    create_stepback_db(&mcts, &db_name, 4, 4, 0.9, 1.0 / 10.0, play_num);
 }
 
 fn train_line_eval(train_db: String, valid_db: String) {

@@ -1438,11 +1438,11 @@ fn play_stepback(
 
         // Check for mate
         // let end = proof_number_search(b.clone());
-        let end = threat_space_search(b.get_att_def());
-        if end.is_some(){
-            reward = 1;
-            break;
-        }
+        // let end = threat_space_search(b.get_att_def());
+        // if end.is_some(){
+        //     reward = 1;
+        //     break;
+        // }
         // if let MateType::Three(_) = end.typ {
         //     reward = 1;
         //     break;

@@ -4,7 +4,7 @@ use crate::utills::rand::get_random_usize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub struct Node {
     board: Board,
@@ -76,6 +76,7 @@ impl Node {
             }
         }
 
+        
         let mut scores = Vec::new();
         for (action, node) in self.children.iter() {
             scores.push(Score {
@@ -208,6 +209,7 @@ impl Mcts {
         if cfg!(feature = "view") {
             println!("total_time:{}ms, {}μs", t / 1000, t);
         }
+        // std::thread::sleep(Duration::from_secs(1));
         return (
             max_actions[get_random_usize() % max_actions.len()],
             max_score,

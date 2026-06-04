@@ -1,0 +1,519 @@
+// ============================================================
+// simulate.ptx — シミュレーション（ロールアウト）フェーズ
+//
+// 1スレッド = 1ロールアウト
+// リーチマスク優先ランダムロールアウト:
+//   1. 自分にリーチがある → そこに置く (勝利手)
+//   2. 相手にリーチがある → 止める (防御手)
+//   3. ランダムな合法手
+//
+// 引数:
+//   p_att, p_def : u64* (配列, 要素サイズ8)
+//   p_terminal   : u8*
+//   p_leaf_out   : u32*
+//   p_sim_results: f32*
+//   n_warps      : u32
+//   seed         : u64
+// ============================================================
+
+.version 8.0
+.target  sm_86
+.address_size 64
+
+// ---- helper macro: _get_reach_one_dir(src, s1,m1, s2,m2, s3,m3, s4,m4, s5,m5, s6,m6, blank, out)
+// out |= blank & (((src>>3s)&ma & (src>>2s)&mb & ((src>>s)&mc | (src<<s)&me)) |
+//                 ((src<<s)&me & (src<<2s)&mf & ((src>>s)&mc | (src<<3s)&mg)))
+// inlined per direction below for clarity
+
+.visible .entry mcts_simulate(
+    .param .u64 p_att,
+    .param .u64 p_def,
+    .param .u64 p_terminal,
+    .param .u64 p_leaf_out,
+    .param .u64 p_sim_results,
+    .param .u32 n_warps,
+    .param .u64 seed
+)
+{
+    .reg .pred  %p0, %p1, %p2, %p3, %p4;
+    .reg .u32   %r_tid, %r_ntid, %r_ctaid, %gid, %leaf, %term, %depth;
+    .reg .u32   %pc_lo, %pc_hi, %pc_tot, %nb_n, %nb_cnt;
+    .reg .u32   %rnd32, %wflag, %r_tmp;
+    .reg .u64   %rd_base, %rd_off, %rd_ptr;
+    .reg .u64   %att, %def, %stone, %valid, %tmp64;
+    .reg .u64   %sr, %or_, %mask;          // self_reach, opp_reach
+    .reg .u64   %ra, %rb, %rc, %re, %rf, %rg, %rblank, %rout, %rt1, %rt2;  // reach tmp
+    .reg .u64   %nb_mask, %nb_lsb, %nb_neg; // nth_setbit
+    .reg .u64   %rng;
+    .reg .u64   %wbit, %wt1, %wt2;          // is_win_on
+    .reg .u64   %p_att_base, %p_def_base, %p_term_base, %p_leaf_base, %p_res_base;
+    .reg .f32   %result, %f_zero, %f_half, %f_one;
+
+    ld.param.u64 %rd_base, [p_att];
+    ld.param.u64 %rd_off,  [p_def];
+    ld.param.u64 %rd_ptr,  [p_terminal];
+    mov.u64  %p_att_base,  %rd_base;
+    mov.u64  %p_def_base,  %rd_off;
+    mov.u64  %p_term_base, %rd_ptr;
+    ld.param.u64 %p_leaf_base, [p_leaf_out];
+    ld.param.u64 %p_res_base,  [p_sim_results];
+    ld.param.u32 %r_tmp, [n_warps];
+    ld.param.u64 %rng, [seed];
+
+    mov.u32 %r_tid,   %tid.x;
+    mov.u32 %r_ntid,  %ntid.x;
+    mov.u32 %r_ctaid, %ctaid.x;
+    mad.lo.u32 %gid, %r_ctaid, %r_ntid, %r_tid;
+
+    setp.ge.u32 %p0, %gid, %r_tmp;
+    @%p0 bra EXIT_SILENT;
+
+    // leaf = leaf_out[gid]
+    mul.wide.u32 %rd_off, %gid, 4;
+    add.u64  %rd_ptr, %p_leaf_base, %rd_off;
+    ld.global.u32 %leaf, [%rd_ptr];
+
+    // terminal チェック
+    cvt.u64.u32 %rd_off, %leaf;
+    add.u64  %rd_ptr, %p_term_base, %rd_off;
+    ld.global.u8 %term, [%rd_ptr];
+
+    mov.f32 %f_zero, 0f00000000;
+    mov.f32 %f_half, 0f3F000000;
+    mov.f32 %f_one,  0f3F800000;
+
+    setp.eq.u32 %p0, %term, 1;
+    @%p0 mov.f32 %result, %f_zero;
+    @%p0 bra STORE_RESULT;
+
+    setp.eq.u32 %p0, %term, 2;
+    @%p0 mov.f32 %result, %f_half;
+    @%p0 bra STORE_RESULT;
+
+    // att, def ロード
+    mul.wide.u32 %rd_off, %leaf, 8;
+    add.u64  %rd_ptr, %p_att_base, %rd_off;
+    ld.global.u64 %att, [%rd_ptr];
+    add.u64  %rd_ptr, %p_def_base, %rd_off;
+    ld.global.u64 %def, [%rd_ptr];
+
+    // RNG 初期化: rng ^= gid * 0x9e3779b97f4a7c15
+    cvt.u64.u32 %rd_off, %gid;
+    mul.lo.u64  %rd_off, %rd_off, 0x9e3779b97f4a7c15;
+    xor.b64     %rng, %rng, %rd_off;
+
+    mov.u32 %depth, 0;
+
+// ==============================================================
+ROLLOUT:
+    // get_valid
+    or.b64  %stone, %att, %def;
+    shl.b64 %valid, %stone, 16;
+    or.b64  %valid, %valid, 0x000000000000ffff;
+    not.b64 %tmp64, %stone;
+    and.b64 %valid, %tmp64, %valid;
+
+    setp.eq.u64 %p0, %valid, 0;
+    @%p0 mov.f32 %result, %f_half;
+    @%p0 bra STORE_RESULT;
+
+    // ======================================================
+    // get_reach_mask(att, def) → sr
+    // ======================================================
+    // blank = valid (共通)
+    mov.b64 %rblank, %valid;
+    mov.b64 %rout, 0;
+
+    // X (s=1)
+    shr.b64 %ra,%att,3; and.b64 %ra,%ra,0x1111111111111111;
+    shr.b64 %rb,%att,2; and.b64 %rb,%rb,0x3333333333333333;
+    shr.b64 %rc,%att,1; and.b64 %rc,%rc,0x7777777777777777;
+    shl.b64 %re,%att,1; and.b64 %re,%re,0xeeeeeeeeeeeeeeee;
+    shl.b64 %rf,%att,2; and.b64 %rf,%rf,0xcccccccccccccccc;
+    shl.b64 %rg,%att,3; and.b64 %rg,%rg,0x8888888888888888;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // Y (s=4)
+    shr.b64 %ra,%att,12; and.b64 %ra,%ra,0x000f000f000f000f;
+    shr.b64 %rb,%att,8;  and.b64 %rb,%rb,0x00ff00ff00ff00ff;
+    shr.b64 %rc,%att,4;  and.b64 %rc,%rc,0x0fff0fff0fff0fff;
+    shl.b64 %re,%att,4;  and.b64 %re,%re,0xfff0fff0fff0fff0;
+    shl.b64 %rf,%att,8;  and.b64 %rf,%rf,0xff00ff00ff00ff00;
+    shl.b64 %rg,%att,12; and.b64 %rg,%rg,0xf000f000f000f000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // Z (s=16, マスク不要)
+    shr.b64 %ra,%att,48;
+    shr.b64 %rb,%att,32;
+    shr.b64 %rc,%att,16;
+    shl.b64 %re,%att,16;
+    shl.b64 %rf,%att,32;
+    shl.b64 %rg,%att,48;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XY+ (s=5)
+    shr.b64 %ra,%att,15; and.b64 %ra,%ra,0x0001000100010001;
+    shr.b64 %rb,%att,10; and.b64 %rb,%rb,0x0033003300330033;
+    shr.b64 %rc,%att,5;  and.b64 %rc,%rc,0x0777077707770777;
+    shl.b64 %re,%att,5;  and.b64 %re,%re,0xeee0eee0eee0eee0;
+    shl.b64 %rf,%att,10; and.b64 %rf,%rf,0xcc00cc00cc00cc00;
+    shl.b64 %rg,%att,15; and.b64 %rg,%rg,0x8000800080008000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XY- (s=3, yx)
+    shr.b64 %ra,%att,9;  and.b64 %ra,%ra,0x0008000800080008;
+    shr.b64 %rb,%att,6;  and.b64 %rb,%rb,0x00cc00cc00cc00cc;
+    shr.b64 %rc,%att,3;  and.b64 %rc,%rc,0x0eee0eee0eee0eee;
+    shl.b64 %re,%att,3;  and.b64 %re,%re,0x7770777077707770;
+    shl.b64 %rf,%att,6;  and.b64 %rf,%rf,0x3300330033003300;
+    shl.b64 %rg,%att,9;  and.b64 %rg,%rg,0x1000100010001000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XZ+ (s=17, xz)
+    shr.b64 %ra,%att,51; and.b64 %ra,%ra,0x0000000000001111;
+    shr.b64 %rb,%att,34; and.b64 %rb,%rb,0x0000000033333333;
+    shr.b64 %rc,%att,17; and.b64 %rc,%rc,0x0000777777777777;
+    shl.b64 %re,%att,17; and.b64 %re,%re,0xeeeeeeeeeeee0000;
+    shl.b64 %rf,%att,34; and.b64 %rf,%rf,0xcccccccc00000000;
+    shl.b64 %rg,%att,51; and.b64 %rg,%rg,0x8888000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XZ- (s=15, zx)
+    shr.b64 %ra,%att,45; and.b64 %ra,%ra,0x0000000000008888;
+    shr.b64 %rb,%att,30; and.b64 %rb,%rb,0x00000000cccccccc;
+    shr.b64 %rc,%att,15; and.b64 %rc,%rc,0x0000eeeeeeeeeeee;
+    shl.b64 %re,%att,15; and.b64 %re,%re,0x7777777777770000;
+    shl.b64 %rf,%att,30; and.b64 %rf,%rf,0x3333333300000000;
+    shl.b64 %rg,%att,45; and.b64 %rg,%rg,0x1111000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // YZ+ (s=20, yz)
+    shr.b64 %ra,%att,60; and.b64 %ra,%ra,0x000000000000000f;
+    shr.b64 %rb,%att,40; and.b64 %rb,%rb,0x0000000000ff00ff;
+    shr.b64 %rc,%att,20; and.b64 %rc,%rc,0x00000fff0fff0fff;
+    shl.b64 %re,%att,20; and.b64 %re,%re,0xfff0fff0fff00000;
+    shl.b64 %rf,%att,40; and.b64 %rf,%rf,0xff00ff0000000000;
+    shl.b64 %rg,%att,60; and.b64 %rg,%rg,0xf000000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // YZ- (s=12, zy)
+    shr.b64 %ra,%att,36; and.b64 %ra,%ra,0x000000000000f000;
+    shr.b64 %rb,%att,24; and.b64 %rb,%rb,0x00000000ff00ff00;
+    shr.b64 %rc,%att,12; and.b64 %rc,%rc,0x0000fff0fff0fff0;
+    shl.b64 %re,%att,12; and.b64 %re,%re,0x0fff0fff0fff0000;
+    shl.b64 %rf,%att,24; and.b64 %rf,%rf,0x00ff00ff00000000;
+    shl.b64 %rg,%att,36; and.b64 %rg,%rg,0x000f000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XYZ+ (s=21, xyz)
+    shr.b64 %ra,%att,63; and.b64 %ra,%ra,0x0000000000000001;
+    shr.b64 %rb,%att,42; and.b64 %rb,%rb,0x0000000000330033;
+    shr.b64 %rc,%att,21; and.b64 %rc,%rc,0x0000077707770777;
+    shl.b64 %re,%att,21; and.b64 %re,%re,0xeee0eee0eee00000;
+    shl.b64 %rf,%att,42; and.b64 %rf,%rf,0xcc00cc0000000000;
+    shl.b64 %rg,%att,63; and.b64 %rg,%rg,0x8000000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // YZX- (s=19, yzx)
+    shr.b64 %ra,%att,57; and.b64 %ra,%ra,0x0000000000000008;
+    shr.b64 %rb,%att,38; and.b64 %rb,%rb,0x0000000000cc00cc;
+    shr.b64 %rc,%att,19; and.b64 %rc,%rc,0x00000eee0eee0eee;
+    shl.b64 %re,%att,19; and.b64 %re,%re,0x7770777077700000;
+    shl.b64 %rf,%att,38; and.b64 %rf,%rf,0x3300330000000000;
+    shl.b64 %rg,%att,57; and.b64 %rg,%rg,0x1000000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XZY+ (s=13, xzy)
+    shr.b64 %ra,%att,39; and.b64 %ra,%ra,0x0000000000001000;
+    shr.b64 %rb,%att,26; and.b64 %rb,%rb,0x0000000033003300;
+    shr.b64 %rc,%att,13; and.b64 %rc,%rc,0x0000777077707770;
+    shl.b64 %re,%att,13; and.b64 %re,%re,0x0eee0eee0eee0000;
+    shl.b64 %rf,%att,26; and.b64 %rf,%rf,0x00cc00cc00000000;
+    shl.b64 %rg,%att,39; and.b64 %rg,%rg,0x0008000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // ZYX- (s=11, zyx)
+    shr.b64 %ra,%att,33; and.b64 %ra,%ra,0x0000000000008000;
+    shr.b64 %rb,%att,22; and.b64 %rb,%rb,0x00000000cc00cc00;
+    shr.b64 %rc,%att,11; and.b64 %rc,%rc,0x0000eee0eee0eee0;
+    shl.b64 %re,%att,11; and.b64 %re,%re,0x0777077707770000;
+    shl.b64 %rf,%att,22; and.b64 %rf,%rf,0x0033003300000000;
+    shl.b64 %rg,%att,33; and.b64 %rg,%rg,0x0001000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    and.b64 %sr, %rout, %valid;     // self_reach
+
+    // ======================================================
+    // get_reach_mask(def, att) → or_
+    // ======================================================
+    mov.b64 %rout, 0;
+
+    // X
+    shr.b64 %ra,%def,3; and.b64 %ra,%ra,0x1111111111111111;
+    shr.b64 %rb,%def,2; and.b64 %rb,%rb,0x3333333333333333;
+    shr.b64 %rc,%def,1; and.b64 %rc,%rc,0x7777777777777777;
+    shl.b64 %re,%def,1; and.b64 %re,%re,0xeeeeeeeeeeeeeeee;
+    shl.b64 %rf,%def,2; and.b64 %rf,%rf,0xcccccccccccccccc;
+    shl.b64 %rg,%def,3; and.b64 %rg,%rg,0x8888888888888888;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // Y
+    shr.b64 %ra,%def,12; and.b64 %ra,%ra,0x000f000f000f000f;
+    shr.b64 %rb,%def,8;  and.b64 %rb,%rb,0x00ff00ff00ff00ff;
+    shr.b64 %rc,%def,4;  and.b64 %rc,%rc,0x0fff0fff0fff0fff;
+    shl.b64 %re,%def,4;  and.b64 %re,%re,0xfff0fff0fff0fff0;
+    shl.b64 %rf,%def,8;  and.b64 %rf,%rf,0xff00ff00ff00ff00;
+    shl.b64 %rg,%def,12; and.b64 %rg,%rg,0xf000f000f000f000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // Z
+    shr.b64 %ra,%def,48;
+    shr.b64 %rb,%def,32;
+    shr.b64 %rc,%def,16;
+    shl.b64 %re,%def,16;
+    shl.b64 %rf,%def,32;
+    shl.b64 %rg,%def,48;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XY+
+    shr.b64 %ra,%def,15; and.b64 %ra,%ra,0x0001000100010001;
+    shr.b64 %rb,%def,10; and.b64 %rb,%rb,0x0033003300330033;
+    shr.b64 %rc,%def,5;  and.b64 %rc,%rc,0x0777077707770777;
+    shl.b64 %re,%def,5;  and.b64 %re,%re,0xeee0eee0eee0eee0;
+    shl.b64 %rf,%def,10; and.b64 %rf,%rf,0xcc00cc00cc00cc00;
+    shl.b64 %rg,%def,15; and.b64 %rg,%rg,0x8000800080008000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XY-
+    shr.b64 %ra,%def,9;  and.b64 %ra,%ra,0x0008000800080008;
+    shr.b64 %rb,%def,6;  and.b64 %rb,%rb,0x00cc00cc00cc00cc;
+    shr.b64 %rc,%def,3;  and.b64 %rc,%rc,0x0eee0eee0eee0eee;
+    shl.b64 %re,%def,3;  and.b64 %re,%re,0x7770777077707770;
+    shl.b64 %rf,%def,6;  and.b64 %rf,%rf,0x3300330033003300;
+    shl.b64 %rg,%def,9;  and.b64 %rg,%rg,0x1000100010001000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XZ+
+    shr.b64 %ra,%def,51; and.b64 %ra,%ra,0x0000000000001111;
+    shr.b64 %rb,%def,34; and.b64 %rb,%rb,0x0000000033333333;
+    shr.b64 %rc,%def,17; and.b64 %rc,%rc,0x0000777777777777;
+    shl.b64 %re,%def,17; and.b64 %re,%re,0xeeeeeeeeeeee0000;
+    shl.b64 %rf,%def,34; and.b64 %rf,%rf,0xcccccccc00000000;
+    shl.b64 %rg,%def,51; and.b64 %rg,%rg,0x8888000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XZ-
+    shr.b64 %ra,%def,45; and.b64 %ra,%ra,0x0000000000008888;
+    shr.b64 %rb,%def,30; and.b64 %rb,%rb,0x00000000cccccccc;
+    shr.b64 %rc,%def,15; and.b64 %rc,%rc,0x0000eeeeeeeeeeee;
+    shl.b64 %re,%def,15; and.b64 %re,%re,0x7777777777770000;
+    shl.b64 %rf,%def,30; and.b64 %rf,%rf,0x3333333300000000;
+    shl.b64 %rg,%def,45; and.b64 %rg,%rg,0x1111000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // YZ+
+    shr.b64 %ra,%def,60; and.b64 %ra,%ra,0x000000000000000f;
+    shr.b64 %rb,%def,40; and.b64 %rb,%rb,0x0000000000ff00ff;
+    shr.b64 %rc,%def,20; and.b64 %rc,%rc,0x00000fff0fff0fff;
+    shl.b64 %re,%def,20; and.b64 %re,%re,0xfff0fff0fff00000;
+    shl.b64 %rf,%def,40; and.b64 %rf,%rf,0xff00ff0000000000;
+    shl.b64 %rg,%def,60; and.b64 %rg,%rg,0xf000000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // YZ-
+    shr.b64 %ra,%def,36; and.b64 %ra,%ra,0x000000000000f000;
+    shr.b64 %rb,%def,24; and.b64 %rb,%rb,0x00000000ff00ff00;
+    shr.b64 %rc,%def,12; and.b64 %rc,%rc,0x0000fff0fff0fff0;
+    shl.b64 %re,%def,12; and.b64 %re,%re,0x0fff0fff0fff0000;
+    shl.b64 %rf,%def,24; and.b64 %rf,%rf,0x00ff00ff00000000;
+    shl.b64 %rg,%def,36; and.b64 %rg,%rg,0x000f000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XYZ+
+    shr.b64 %ra,%def,63; and.b64 %ra,%ra,0x0000000000000001;
+    shr.b64 %rb,%def,42; and.b64 %rb,%rb,0x0000000000330033;
+    shr.b64 %rc,%def,21; and.b64 %rc,%rc,0x0000077707770777;
+    shl.b64 %re,%def,21; and.b64 %re,%re,0xeee0eee0eee00000;
+    shl.b64 %rf,%def,42; and.b64 %rf,%rf,0xcc00cc0000000000;
+    shl.b64 %rg,%def,63; and.b64 %rg,%rg,0x8000000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // YZX-
+    shr.b64 %ra,%def,57; and.b64 %ra,%ra,0x0000000000000008;
+    shr.b64 %rb,%def,38; and.b64 %rb,%rb,0x0000000000cc00cc;
+    shr.b64 %rc,%def,19; and.b64 %rc,%rc,0x00000eee0eee0eee;
+    shl.b64 %re,%def,19; and.b64 %re,%re,0x7770777077700000;
+    shl.b64 %rf,%def,38; and.b64 %rf,%rf,0x3300330000000000;
+    shl.b64 %rg,%def,57; and.b64 %rg,%rg,0x1000000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // XZY+
+    shr.b64 %ra,%def,39; and.b64 %ra,%ra,0x0000000000001000;
+    shr.b64 %rb,%def,26; and.b64 %rb,%rb,0x0000000033003300;
+    shr.b64 %rc,%def,13; and.b64 %rc,%rc,0x0000777077707770;
+    shl.b64 %re,%def,13; and.b64 %re,%re,0x0eee0eee0eee0000;
+    shl.b64 %rf,%def,26; and.b64 %rf,%rf,0x00cc00cc00000000;
+    shl.b64 %rg,%def,39; and.b64 %rg,%rg,0x0008000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    // ZYX-
+    shr.b64 %ra,%def,33; and.b64 %ra,%ra,0x0000000000008000;
+    shr.b64 %rb,%def,22; and.b64 %rb,%rb,0x00000000cc00cc00;
+    shr.b64 %rc,%def,11; and.b64 %rc,%rc,0x0000eee0eee0eee0;
+    shl.b64 %re,%def,11; and.b64 %re,%re,0x0777077707770000;
+    shl.b64 %rf,%def,22; and.b64 %rf,%rf,0x0033003300000000;
+    shl.b64 %rg,%def,33; and.b64 %rg,%rg,0x0001000000000000;
+    or.b64 %rt1,%ra,%re; and.b64 %rt1,%rb,%rt1; and.b64 %rt1,%rc,%rt1;
+    or.b64 %rt2,%rc,%rg; and.b64 %rt2,%re,%rt2; and.b64 %rt2,%rf,%rt2;
+    or.b64 %rt1,%rt1,%rt2; and.b64 %rt1,%rblank,%rt1; or.b64 %rout,%rout,%rt1;
+
+    and.b64 %or_, %rout, %valid;    // opp_reach
+
+    // ======================================================
+    // 優先 mask 選択
+    // ======================================================
+    mov.b64      %mask, %valid;
+    setp.ne.u64  %p1, %or_, 0;
+    @%p1 mov.b64 %mask, %or_;      // opp_reach 優先
+    setp.ne.u64  %p2, %sr, 0;
+    @%p2 mov.b64 %mask, %sr;       // self_reach 最優先
+
+    // ======================================================
+    // LCG 乱数更新
+    // ======================================================
+    mul.lo.u64  %rng, %rng, 0x5851f42d4c957f2d;
+    add.u64     %rng, %rng, 0x14057b7ef767814f;
+
+    // ======================================================
+    // mask の n 番目のセットビット選択
+    // ======================================================
+    cvt.u32.u64 %pc_lo, %mask;
+    shr.b64     %tmp64, %mask, 32;
+    cvt.u32.u64 %pc_hi, %tmp64;
+    popc.b32    %pc_lo, %pc_lo;
+    popc.b32    %pc_hi, %pc_hi;
+    add.u32     %pc_tot, %pc_lo, %pc_hi;
+
+    shr.b64     %tmp64, %rng, 33;
+    cvt.u32.u64 %nb_n, %tmp64;
+    rem.u32     %nb_n, %nb_n, %pc_tot;
+
+    mov.b64  %nb_mask, %mask;
+    mov.u32  %nb_cnt, 0;
+NTH_LOOP:
+    not.b64  %nb_neg, %nb_mask;
+    add.u64  %nb_neg, %nb_neg, 1;
+    and.b64  %nb_lsb, %nb_mask, %nb_neg;
+    setp.eq.u32 %p3, %nb_cnt, %nb_n;
+    @%p3 bra NTH_DONE;
+    sub.u64  %nb_neg, %nb_mask, 1;
+    and.b64  %nb_mask, %nb_mask, %nb_neg;
+    add.u32  %nb_cnt, %nb_cnt, 1;
+    bra NTH_LOOP;
+NTH_DONE:
+    // action = nb_lsb
+
+    // ======================================================
+    // 着手と勝敗判定
+    // ======================================================
+    or.b64  %tmp64, %att, %nb_lsb;     // new_def = att | action
+
+    // is_win_on(new_def)
+    mov.u32 %wflag, 0;
+    mov.b64 %wbit, %tmp64;
+
+    shr.b64 %wt1,%wbit,1;  and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,2;  and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,3;  and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x1111111111111111; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,4;  and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,8;  and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,12; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x000f000f000f000f; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,16; and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,32; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,48; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x000000000000ffff; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,5;  and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,10; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,15; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x0001000100010001; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,3;  and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,6;  and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,9;  and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x0008000800080008; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,17; and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,34; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,51; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x0000000000001111; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,15; and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,30; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,45; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x0000000000008888; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,20; and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,40; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,60; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x000000000000000f; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,12; and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,24; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,36; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x000000000000f000; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,21; and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,42; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,63; and.b64 %wt1,%wt1,%wt2; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,19; and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,38; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,57; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x0000000000000008; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,13; and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,26; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,39; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x0000000000001000; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+    shr.b64 %wt1,%wbit,11; and.b64 %wt1,%wbit,%wt1; shr.b64 %wt2,%wbit,22; and.b64 %wt1,%wt1,%wt2; shr.b64 %wt2,%wbit,33; and.b64 %wt1,%wt1,%wt2; and.b64 %wt1,%wt1,0x0000000000008000; setp.ne.u64 %p4,%wt1,0; selp.u32 %wflag,1,%wflag,%p4;
+
+    setp.ne.u32 %p4, %wflag, 0;
+    @%p4 bra WIN_DETECTED;
+
+    // 引き分け: (new_def | def) >> 48 == 0xffff
+    or.b64  %wt1, %tmp64, %def;
+    shr.b64 %wt1, %wt1, 48;
+    and.b64 %wt1, %wt1, 0x000000000000ffff;
+    setp.eq.u64 %p4, %wt1, 0x000000000000ffff;
+    @%p4 mov.f32 %result, %f_half;
+    @%p4 bra STORE_RESULT;
+
+    // 次の手番へ
+    mov.b64  %stone, %def;
+    mov.b64  %def, %tmp64;
+    mov.b64  %att, %stone;
+    add.u32  %depth, %depth, 1;
+    bra ROLLOUT;
+
+WIN_DETECTED:
+    and.b32  %r_tmp, %depth, 1;
+    setp.eq.u32 %p4, %r_tmp, 0;
+    selp.f32 %result, %f_one, %f_zero, %p4;
+
+STORE_RESULT:
+    mul.wide.u32 %rd_off, %gid, 4;
+    add.u64  %rd_ptr, %p_res_base, %rd_off;
+    st.global.f32 [%rd_ptr], %result;
+
+EXIT_SILENT:
+    ret;
+}

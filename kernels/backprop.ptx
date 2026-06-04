@@ -1,0 +1,114 @@
+// ============================================================
+// backprop.ptx — バックプロパゲーションフェーズ
+//
+// 1スレッド = 1探索パス
+// パスを末尾（リーフ側）から辿り、各ノードの
+// total_val と visits をアトミック更新し virtual_loss を除去。
+// 一手ごとに val = 1.0 - val で価値を反転。
+//
+// 引数:
+//   p_visits    : u32* — 各ノードの訪問回数
+//   p_total_val : f32* — 各ノードの累積価値
+//   p_vl        : i32* — virtual loss カウンタ
+//   p_path_out  : u32* — 探索パス [warp_id * 256 + step]
+//   p_path_len  : u32* — 各パスの長さ
+//   p_sim_results: f32* — シミュレーション結果
+//   n_warps     : u32  — パス数
+// ============================================================
+
+.version 8.0
+.target  sm_86
+.address_size 64
+
+.visible .entry mcts_backprop(
+    .param .u64 p_visits,
+    .param .u64 p_total_val,
+    .param .u64 p_vl,
+    .param .u64 p_path_out,
+    .param .u64 p_path_len,
+    .param .u64 p_sim_results,
+    .param .u32 n_warps
+)
+{
+    .reg .pred  %p0, %p1;
+    .reg .u32   %r<16>;
+    .reg .u64   %rd<16>;
+    .reg .f32   %f<4>;
+    .reg .s32   %s0;
+
+    ld.param.u64 %rd0, [p_visits];
+    ld.param.u64 %rd1, [p_total_val];
+    ld.param.u64 %rd2, [p_vl];
+    ld.param.u64 %rd3, [p_path_out];
+    ld.param.u64 %rd4, [p_path_len];
+    ld.param.u64 %rd5, [p_sim_results];
+    ld.param.u32 %r0,  [n_warps];
+
+    // グローバルスレッドID
+    mov.u32 %r1, %tid.x;
+    mov.u32 %r2, %ntid.x;
+    mov.u32 %r3, %ctaid.x;
+    mad.lo.u32 %r4, %r3, %r2, %r1;   // thread_id
+
+    setp.ge.u32 %p0, %r4, %r0;
+    @%p0 bra EXIT;
+
+    // val = sim_results[thread_id]
+    mul.wide.u32 %rd6, %r4, 4;
+    add.u64      %rd6, %rd5, %rd6;
+    ld.global.f32 %f0, [%rd6];
+
+    // len = path_len[thread_id]
+    mul.wide.u32 %rd7, %r4, 4;
+    add.u64      %rd7, %rd4, %rd7;
+    ld.global.u32 %r5, [%rd7];
+
+    setp.eq.u32 %p0, %r5, 0;
+    @%p0 bra EXIT;
+
+    // root.visits を常に +1 (1シミュレーション = root通過1回)
+    mov.u32      %r10, 1;
+    atom.global.add.u32 %r10, [%rd0], %r10;
+
+    // base = &path_out[thread_id * 256]
+    mul.lo.u32   %r6, %r4, 256;
+    mul.wide.u32 %rd8, %r6, 4;
+    add.u64      %rd8, %rd3, %rd8;
+
+    sub.u32 %r8, %r5, 1;             // i = len - 1
+    mov.f32 %f1, 0f3F800000;         // 1.0f
+
+BP_LOOP:
+    // node = path_out[base + i]
+    mul.wide.u32 %rd9, %r8, 4;
+    add.u64      %rd9, %rd8, %rd9;
+    ld.global.u32 %r9, [%rd9];
+
+    // 各配列のオフセット = node * 4 (u32/f32 は同サイズ)
+    mul.wide.u32 %rd10, %r9, 4;
+
+    // total_val[node] += val
+    add.u64      %rd11, %rd1, %rd10;
+    atom.global.add.f32 %f2, [%rd11], %f0;
+
+    // visits[node] += 1
+    add.u64      %rd12, %rd0, %rd10;
+    mov.u32      %r10, 1;
+    atom.global.add.u32 %r10, [%rd12], %r10;
+
+    // vl[node] -= 1
+    add.u64      %rd13, %rd2, %rd10;
+    mov.s32      %s0, -1;
+    atom.global.add.s32 %s0, [%rd13], %s0;
+
+    // val = 1.0 - val
+    sub.f32 %f0, %f1, %f0;
+
+    setp.eq.u32 %p1, %r8, 0;
+    @%p1 bra EXIT;
+    sub.u32 %r8, %r8, 1;
+    bra BP_LOOP;
+
+EXIT:
+    ret;
+}

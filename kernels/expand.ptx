@@ -1,0 +1,538 @@
+// ============================================================
+// expand.ptx — 展開フェーズ
+//
+// 1スレッド = 1リーフノード
+// valid moves を計算し、子ノードをアトミックに確保して初期化する。
+// expand_th 未満の訪問数 or すでに子あり or 終端は何もしない。
+//
+// 引数:
+//   p_att, p_def          : u64* — ボード
+//   p_visits              : u32*
+//   p_total_val           : f32*
+//   p_first_child         : u32*
+//   p_n_children          : u32*
+//   p_parent              : u32*
+//   p_vl                  : i32*
+//   p_terminal            : u8*
+//   p_leaf_out            : u32* — SELECT が出力したリーフ一覧
+//   p_node_count          : u32* — アトミックカウンタ
+//   n_warps               : u32
+//   expand_th             : u32
+// ============================================================
+//
+// is_win_on(bit) — ビットボードの13方向4連チェック
+// get_valid(att,def) — 合法手マスク計算
+//
+// ============================================================
+
+.version 8.0
+.target  sm_86
+.address_size 64
+
+.visible .entry mcts_expand(
+    .param .u64 p_att,
+    .param .u64 p_def,
+    .param .u64 p_visits,
+    .param .u64 p_total_val,
+    .param .u64 p_first_child,
+    .param .u64 p_n_children,
+    .param .u64 p_parent,
+    .param .u64 p_vl,
+    .param .u64 p_terminal,
+    .param .u64 p_leaf_out,
+    .param .u64 p_node_count,
+    .param .u32 n_warps,
+    .param .u32 expand_th
+)
+{
+    .reg .pred   %p0, %p1, %p2, %p3;
+    .reg .u32    %r<32>;
+    .reg .u32    %term_val;
+    .reg .u64    %rd<32>;
+    .reg .f32    %f0, %f1;
+    .reg .s32    %s0;
+    .reg .u64    %att, %def, %stone, %valid, %action, %tmp64;
+    .reg .u64    %bit, %t1, %t2;
+    .reg .u32    %vlo, %vhi, %bpos, %half, %child_pos;
+
+    // パラメータロード
+    ld.param.u64 %rd0,  [p_att];
+    ld.param.u64 %rd1,  [p_def];
+    ld.param.u64 %rd2,  [p_visits];
+    ld.param.u64 %rd3,  [p_total_val];
+    ld.param.u64 %rd4,  [p_first_child];
+    ld.param.u64 %rd5,  [p_n_children];
+    ld.param.u64 %rd6,  [p_parent];
+    ld.param.u64 %rd7,  [p_vl];
+    ld.param.u64 %rd8,  [p_terminal];
+    ld.param.u64 %rd9,  [p_leaf_out];
+    ld.param.u64 %rd10, [p_node_count];
+    ld.param.u32 %r0,   [n_warps];
+    ld.param.u32 %r1,   [expand_th];
+
+    // グローバルスレッドID
+    mov.u32 %r2, %tid.x;
+    mov.u32 %r3, %ntid.x;
+    mov.u32 %r4, %ctaid.x;
+    mad.lo.u32 %r5, %r4, %r3, %r2;    // thread_id
+
+    setp.ge.u32 %p0, %r5, %r0;
+    @%p0 bra EXIT;
+
+    // leaf = leaf_out[thread_id]
+    mul.wide.u32 %rd11, %r5, 4;
+    add.u64      %rd11, %rd9, %rd11;
+    ld.global.u32 %r6, [%rd11];        // leaf index
+
+    // terminal[leaf] == 0 か確認 (u8 アクセス)
+    cvt.u64.u32  %rd12, %r6;
+    add.u64      %rd12, %rd8, %rd12;
+    ld.global.u8 %r7, [%rd12];
+    setp.ne.u32  %p0, %r7, 0;
+    @%p0 bra EXIT;
+
+    // n_children[leaf] == 0 かを atom.cas で確認し同時に「展開中」を宣言
+    // これにより 1 スレッドだけが展開を実行する
+    mul.wide.u32 %rd13, %r6, 4;
+    add.u64      %rd14, %rd5, %rd13;
+    atom.global.cas.b32 %r8, [%rd14], 0, 0xffffffff;
+    setp.ne.u32  %p0, %r8, 0;
+    @%p0 bra EXIT;
+
+    // visits[leaf] >= expand_th か確認
+    add.u64      %rd15, %rd2, %rd13;
+    ld.global.u32 %r9, [%rd15];
+    setp.lt.u32  %p0, %r9, %r1;
+    @%p0 bra RESET_SENTINEL;
+
+    // att, def をロード (u64, オフセット = leaf * 8)
+    mul.wide.u32 %rd16, %r6, 8;
+    add.u64      %rd17, %rd0, %rd16;
+    ld.global.u64 %att, [%rd17];
+    add.u64      %rd18, %rd1, %rd16;
+    ld.global.u64 %def, [%rd18];
+
+    // get_valid: stone = att | def; valid = ~stone & ((stone << 16) | 0xffff)
+    or.b64       %stone, %att, %def;
+    shl.b64      %valid, %stone, 16;
+    or.b64       %valid, %valid, 0x000000000000ffff;
+    not.b64      %tmp64, %stone;
+    and.b64      %valid, %tmp64, %valid;
+
+    // n_valid = popc(valid_lo) + popc(valid_hi)
+    cvt.u32.u64  %vlo, %valid;
+    shr.b64      %tmp64, %valid, 32;
+    cvt.u32.u64  %vhi, %tmp64;
+    popc.b32     %r10, %vlo;
+    popc.b32     %r11, %vhi;
+    add.u32      %r12, %r10, %r11;    // n_valid
+
+    setp.eq.u32  %p0, %r12, 0;
+    @%p0 bra RESET_SENTINEL;
+
+    // base = atomicAdd(node_count, n_valid)
+    atom.global.add.u32 %r13, [%rd10], %r12;   // base = old count
+
+    // MAX_NODES 超過チェック: base + n_valid > 2_000_000 なら展開を中止
+    add.u32      %r14, %r13, %r12;
+    setp.gt.u32  %p0, %r14, 2000000;
+    @%p0 bra EXPAND_OVERFLOW;
+
+    // first_child[leaf] = base
+    add.u64      %rd19, %rd4, %rd13;
+    st.global.u32 [%rd19], %r13;
+    // n_children[leaf] は子初期化後に書く (sentinel 0xffffffff を上書き)
+
+    // ---- 各子ノードを初期化 ----
+    // valid マスクのセットビットを1つずつ取り出す
+    mov.u32      %child_pos, 0;
+
+    // 下位 32 ビット処理
+    mov.u32      %half, %vlo;
+    setp.eq.u32  %p1, %half, 0;
+    @%p1 bra SKIP_LO;
+
+LO_LOOP:
+    // LSB を抽出: lsb = half & (-half) = half & (~half + 1)
+    not.b32      %bpos, %half;
+    add.u32      %bpos, %bpos, 1;
+    and.b32      %bpos, %half, %bpos;  // bpos = lsb mask (u32)
+    // ビット位置: clz を使って計算 (bfind は MSB)
+    // bfind.u32 は最上位セットビット位置を返す。LSB のみなので bfind で OK。
+    bfind.u32    %r20, %bpos;          // bit position in lo32 (0..31)
+
+    // action (u64) = 1ULL << r20  (shift amount must be u32)
+    mov.u64      %action, 1;
+    shl.b64      %action, %action, %r20;
+
+    // child index = base + child_pos
+    add.u32      %r21, %r13, %child_pos;
+
+    // child ノード初期化を呼び出し (インライン)
+    // new_att = def, new_def = att | action
+    or.b64       %tmp64, %att, %action;   // new_def = att | action
+
+    // is_win_on(att | action) チェック → terminal
+    // --- is_win_on: 13方向 ---
+    // 結果を %r22 に格納 (0 = not win, 非0 = win)
+    mov.u32      %r22, 0;
+    mov.u64  %bit, %tmp64;
+
+    // X: bit & (bit>>1) & (bit>>2) & (bit>>3) & 0x1111111111111111
+    shr.b64      %t1, %bit, 1;  and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 2;  and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 3;  and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x1111111111111111;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // Y: bit & (bit>>4) & (bit>>8) & (bit>>12) & 0x000f000f000f000f
+    shr.b64      %t1, %bit, 4;  and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 8;  and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 12; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x000f000f000f000f;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // Z: bit & (bit>>16) & (bit>>32) & (bit>>48) & 0x000000000000ffff
+    shr.b64      %t1, %bit, 16; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 32; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 48; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x000000000000ffff;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // XY+: bit & (bit>>5) & (bit>>10) & (bit>>15) & 0x0001000100010001
+    shr.b64      %t1, %bit, 5;  and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 10; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 15; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0001000100010001;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // XY-: bit & (bit>>3) & (bit>>6) & (bit>>9) & 0x0008000800080008
+    shr.b64      %t1, %bit, 3;  and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 6;  and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 9;  and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0008000800080008;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // XZ+: bit & (bit>>17) & (bit>>34) & (bit>>51) & 0x0000000000001111
+    shr.b64      %t1, %bit, 17; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 34; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 51; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000001111;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // XZ-: bit & (bit>>15) & (bit>>30) & (bit>>45) & 0x0000000000008888
+    shr.b64      %t1, %bit, 15; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 30; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 45; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000008888;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // YZ+: bit & (bit>>20) & (bit>>40) & (bit>>60) & 0x000000000000000f
+    shr.b64      %t1, %bit, 20; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 40; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 60; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x000000000000000f;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // YZ-: bit & (bit>>12) & (bit>>24) & (bit>>36) & 0x000000000000f000
+    shr.b64      %t1, %bit, 12; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 24; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 36; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x000000000000f000;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // XYZ+: bit & (bit>>21) & (bit>>42) & (bit>>63)
+    shr.b64      %t1, %bit, 21; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 42; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 63; and.b64 %t1, %t1, %t2;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // XYZ-: bit & (bit>>19) & (bit>>38) & (bit>>57) & 0x0000000000000008
+    shr.b64      %t1, %bit, 19; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 38; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 57; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000000008;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // XZY+: bit & (bit>>13) & (bit>>26) & (bit>>39) & 0x0000000000001000
+    shr.b64      %t1, %bit, 13; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 26; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 39; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000001000;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    // XZY-: bit & (bit>>11) & (bit>>22) & (bit>>33) & 0x0000000000008000
+    shr.b64      %t1, %bit, 11; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 22; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 33; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000008000;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+    // --- is_win_on 終了 ---
+
+    // is_draw チェック: (att | action | def) >> 48 == 0xffff
+    or.b64       %t1, %tmp64, %def;
+    shr.b64      %t1, %t1, 48;
+    and.b64      %t1, %t1, 0x000000000000ffff;
+    setp.eq.u64  %p3, %t1, 0x000000000000ffff;
+
+    // terminal 値を決定: win=1, draw=2, else=0
+    mov.u32      %term_val, 0;
+    setp.ne.u32  %p2, %r22, 0;
+    selp.u32     %term_val, 1, %term_val, %p2;   // win → 1
+    // draw かつ non-win の場合 → 2
+    not.pred     %p1, %p2;                       // p1 = !win
+    and.pred     %p2, %p3, %p1;                  // p2 = draw && !win
+    selp.u32     %term_val, 2, %term_val, %p2;
+
+    // child ノードのオフセット (各配列 u64=8byte, u32/f32/i32=4byte, u8=1byte)
+    mul.wide.u32 %rd20, %r21, 8;    // for u64 arrays (att, def)
+    mul.wide.u32 %rd21, %r21, 4;    // for u32/f32/i32 arrays
+    cvt.u64.u32  %rd22, %r21;       // for u8 array (terminal)
+
+    // d_att[child] = def
+    add.u64      %rd23, %rd0, %rd20;
+    st.global.u64 [%rd23], %def;
+
+    // d_def[child] = att | action
+    add.u64      %rd24, %rd1, %rd20;
+    st.global.u64 [%rd24], %tmp64;
+
+    // d_visits[child] = 1
+    add.u64      %rd25, %rd2, %rd21;
+    mov.u32      %r24, 1;
+    st.global.u32 [%rd25], %r24;
+
+    // d_total_val[child] = 0.5
+    add.u64      %rd26, %rd3, %rd21;
+    mov.f32      %f0, 0f3F000000;   // 0.5f
+    st.global.f32 [%rd26], %f0;
+
+    // d_first_child[child] = 0
+    add.u64      %rd27, %rd4, %rd21;
+    mov.u32      %r24, 0;
+    st.global.u32 [%rd27], %r24;
+
+    // d_n_children[child] = 0
+    add.u64      %rd28, %rd5, %rd21;
+    st.global.u32 [%rd28], %r24;
+
+    // d_parent[child] = leaf
+    add.u64      %rd29, %rd6, %rd21;
+    st.global.u32 [%rd29], %r6;
+
+    // d_vl[child] = 0
+    add.u64      %rd30, %rd7, %rd21;
+    mov.s32      %s0, 0;
+    st.global.s32 [%rd30], %s0;
+
+    // d_terminal[child] = term_val (u8)
+    add.u64      %rd31, %rd8, %rd22;
+    mov.u32      %r24, %term_val;
+    st.global.u8 [%rd31], %r24;
+
+    // half から lsb を消す: half &= half - 1
+    sub.u32      %r30, %half, 1;
+    and.b32      %half, %half, %r30;
+
+    add.u32      %child_pos, %child_pos, 1;
+
+    setp.ne.u32  %p1, %half, 0;
+    @%p1 bra LO_LOOP;
+
+SKIP_LO:
+    // 上位 32 ビット処理
+    mov.u32      %half, %vhi;
+    setp.eq.u32  %p1, %half, 0;
+    @%p1 bra WRITE_NC;
+
+HI_LOOP:
+    not.b32      %bpos, %half;
+    add.u32      %bpos, %bpos, 1;
+    and.b32      %bpos, %half, %bpos;
+    bfind.u32    %r20, %bpos;
+    add.u32      %r20, %r20, 32;      // 上位32bitなのでオフセット+32
+
+    mov.u64      %action, 1;
+    shl.b64      %action, %action, %r20;
+
+    add.u32      %r21, %r13, %child_pos;
+
+    or.b64       %tmp64, %att, %action;   // new_def = att | action
+
+    // is_win_on (再度インライン展開)
+    mov.u32      %r22, 0;
+    mov.u64  %bit, %tmp64;
+
+    shr.b64      %t1, %bit, 1;  and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 2;  and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 3;  and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x1111111111111111;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 4;  and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 8;  and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 12; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x000f000f000f000f;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 16; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 32; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 48; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x000000000000ffff;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 5;  and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 10; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 15; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0001000100010001;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 3;  and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 6;  and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 9;  and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0008000800080008;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 17; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 34; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 51; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000001111;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 15; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 30; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 45; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000008888;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 20; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 40; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 60; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x000000000000000f;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 12; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 24; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 36; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x000000000000f000;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 21; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 42; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 63; and.b64 %t1, %t1, %t2;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 19; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 38; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 57; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000000008;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 13; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 26; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 39; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000001000;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    shr.b64      %t1, %bit, 11; and.b64 %t1, %bit, %t1;
+    shr.b64      %t2, %bit, 22; and.b64 %t1, %t1, %t2;
+    shr.b64      %t2, %bit, 33; and.b64 %t1, %t1, %t2;
+    and.b64      %t1, %t1, 0x0000000000008000;
+    setp.ne.u64  %p2, %t1, 0;
+    selp.u32     %r22, 1, %r22, %p2;
+
+    or.b64       %t1, %tmp64, %def;
+    shr.b64      %t1, %t1, 48;
+    and.b64      %t1, %t1, 0x000000000000ffff;
+    setp.eq.u64  %p3, %t1, 0x000000000000ffff;
+
+    mov.u32      %term_val, 0;
+    setp.ne.u32  %p2, %r22, 0;
+    selp.u32     %term_val, 1, %term_val, %p2;
+    not.pred     %p1, %p2;
+    and.pred     %p2, %p3, %p1;
+    selp.u32     %term_val, 2, %term_val, %p2;
+
+    mul.wide.u32 %rd20, %r21, 8;
+    mul.wide.u32 %rd21, %r21, 4;
+    cvt.u64.u32  %rd22, %r21;
+
+    add.u64      %rd23, %rd0, %rd20;
+    st.global.u64 [%rd23], %def;
+    add.u64      %rd24, %rd1, %rd20;
+    st.global.u64 [%rd24], %tmp64;
+
+    add.u64      %rd25, %rd2, %rd21;
+    mov.u32      %r24, 1;
+    st.global.u32 [%rd25], %r24;
+
+    add.u64      %rd26, %rd3, %rd21;
+    mov.f32      %f0, 0f3F000000;
+    st.global.f32 [%rd26], %f0;
+
+    add.u64      %rd27, %rd4, %rd21;
+    mov.u32      %r24, 0;
+    st.global.u32 [%rd27], %r24;
+    add.u64      %rd28, %rd5, %rd21;
+    st.global.u32 [%rd28], %r24;
+    add.u64      %rd29, %rd6, %rd21;
+    st.global.u32 [%rd29], %r6;
+    add.u64      %rd30, %rd7, %rd21;
+    mov.s32      %s0, 0;
+    st.global.s32 [%rd30], %s0;
+
+    add.u64      %rd31, %rd8, %rd22;
+    mov.u32      %r24, %term_val;
+    st.global.u8 [%rd31], %r24;
+
+    sub.u32      %r30, %half, 1;
+    and.b32      %half, %half, %r30;
+    add.u32      %child_pos, %child_pos, 1;
+
+    setp.ne.u32  %p1, %half, 0;
+    @%p1 bra HI_LOOP;
+
+WRITE_NC:
+    // 全子ノード初期化完了: sentinel を実際の子数で上書き
+    st.global.u32 [%rd14], %r12;
+    bra EXIT;
+
+EXPAND_OVERFLOW:
+    // ノード数上限超過: sentinel を 0 に戻す
+    mov.u32      %r8, 0;
+    st.global.u32 [%rd14], %r8;
+    bra EXIT;
+
+RESET_SENTINEL:
+    // CAS 勝利後に展開を中止: sentinel を 0 に戻す
+    mov.u32      %r8, 0;
+    st.global.u32 [%rd14], %r8;
+
+EXIT:
+    ret;
+}
